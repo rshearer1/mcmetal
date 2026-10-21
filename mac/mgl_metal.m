@@ -284,11 +284,26 @@ static void commit(void)
     }
 }
 
+/* MGL_PROFILE=3: like 2, but every pass runs alone (its own command buffer, waited for), so the per-pass times
+   don't overlap. On Apple's tile GPUs consecutive passes run concurrently and level 2's shares come out nearly
+   flat. Frame rate drops a lot in this mode; only the shares mean anything. */
+static void prof_serialize(void)
+{
+    static int busy;
+    if (opt_profile < 3 || busy || !cb)
+        return;
+    busy = 1;
+    commit();
+    [last_cb waitUntilCompleted];
+    busy = 0;
+}
+
 static id<MTLBlitCommandEncoder> blit_encoder(void)
 {
     gs_flush();
     if (benc)
         return benc;
+    prof_serialize();
     end_encoders();
     id<MTLCommandBuffer> c = current_cb();
     int k = pt_pass("blits");
@@ -311,6 +326,7 @@ static id<MTLComputeCommandEncoder> compute_encoder(void)
         gs_flush();
     if (cenc)
         return cenc;
+    prof_serialize();
     end_encoders();
     id<MTLCommandBuffer> c = current_cb();
     int k = pt_pass("pass compute");
@@ -1793,6 +1809,7 @@ static unsigned pass_dontcare; /* colour attachments the next begin_pass needn't
 static id<MTLRenderCommandEncoder> begin_pass(const mgl_target *t, unsigned clear_colors, const float *rgba,
                                               int clear_depth, float depth)
 {
+    prof_serialize();
     end_encoders();
     MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
     for (int i = 0; i < MGL_MAX_ATTACHMENTS; i++) {
