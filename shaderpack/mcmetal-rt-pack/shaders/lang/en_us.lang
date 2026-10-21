@@ -22,3 +22,4 @@ option.WATER_SHADOWS=Shadows on Water
 option.shadowMapResolution=Shadow Map Size
 option.shadowDistance=Shadow Map Distance
 option.AUTO_EXPOSURE=Eye Adaptation
+option.GI_HALF_RES=Half-Res Bounce Light

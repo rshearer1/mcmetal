@@ -20,7 +20,7 @@ if [ "${GAME_BENCH:-}" = true ]; then
     sed -i.bak 's/^enableVsync:.*/enableVsync:false/; s/^maxFps:.*/maxFps:260/; s/^renderDistance:.*/renderDistance:12/' "$G/options.txt"
     export MCMETAL_FPS_LOG=1 MCMETAL_FPS_EVERY=1 MGL_SHOT_EVERY=0 # screenshots only after measuring: each one stalls the GPU
 fi
-mkdir -p "$G/shaderpacks" && rm -rf "$G/shaderpacks/mcmetal-rt-"* && cp -r "$SRC/tests/game/packs/"mcmetal-rt-* "$SRC/shaderpack/mcmetal-rt-pack" "$G/shaderpacks/"
+mkdir -p "$G/shaderpacks" && find "$G/shaderpacks" -maxdepth 1 -name "mcmetal-rt-*" ! -name "*.txt" -exec rm -rf {} + && cp -r "$SRC/tests/game/packs/"mcmetal-rt-* "$SRC/shaderpack/mcmetal-rt-pack" "$G/shaderpacks/"
 rm -rf "$G/saves/metal" && tar xzf "$SRC/tests/game/world-metal.tgz" -C "$G/saves"
 # The game loads mcmetal the way players will: through the mod jar in mods/, no JVM arguments.
 # GAME_JVM_ARGS=true uses the old -Dorg.lwjgl.*.libname route instead.
@@ -46,6 +46,8 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     printf 'enableShaders=%s\nshaderPack=%s\ncolorSpace=SRGB\ndisableUpdateMessage=true\n' \
         "$shaders" "${PACK:-ComplementaryReimagined_r5.9.3.zip}" > "$G/config/iris.properties"
     mkdir -p "$OUT/$name"
+    # PACK_OPTS="A=1 B=false": options for the pack in use (Iris reads shaderpacks/<pack>.txt)
+    [ -n "${PACK_OPTS:-}" ] && printf '%s\n' $PACK_OPTS > "$G/shaderpacks/${PACK:-ComplementaryReimagined_r5.9.3.zip}.txt"
     local wargs=(--xmx 3G --size "${GAME_SIZE:-$([ "${GAME_BENCH:-}" = true ] && echo 1920x1200 || echo 1280x720)}")
     [ -n "$world" ] && wargs+=(--world "$world")
     mkdir -p "$OUT/$name/glsl"

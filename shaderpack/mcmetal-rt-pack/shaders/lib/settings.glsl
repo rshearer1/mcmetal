@@ -6,6 +6,12 @@
 #endif
 
 #define RT_GI // ray-traced global illumination: bounce light, colour bleeding, sky light through openings
+#define GI_HALF_RES 1 // [0 1] trace GI and AO for every 2x2 pixels (about half the cost), then upscale
+#if GI_HALF_RES == 1
+    #define GI_SCALE 0.5
+#else
+    #define GI_SCALE 1.0
+#endif
 #define RT_GI_DISTANCE 32.0 // [8.0 16.0 32.0 64.0]
 #define RT_AO // ray-traced ambient occlusion (replaces Minecraft's corner shading)
 #define RT_AO_RADIUS 1.5 // [0.75 1.0 1.5 2.0 3.0]
