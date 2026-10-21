@@ -3082,6 +3082,8 @@ typedef struct mgl_ctx {
     int paced_fps;
     uint64_t window_start_ns, stepped_up_ns, no_up_until_ns; /* see choose_paced_fps */
     double avg_swap_ms;     /* smoothed time between swaps (real frames), for frame interpolation */
+    uint64_t grace_until_ns;
+    int bad_windows, blocked_fps;
     unsigned up_backoff_s;
 } mgl_ctx;
 
@@ -3089,12 +3091,13 @@ typedef struct mgl_ctx {
    turn (judder, measured 70-80% of frames for SEUS on an M3). Presenting with a minimum duration at one of
    120/60/40/30 keeps every frame on screen equally long. With vsync off, pacing stays off.
    The rate follows missed deadlines, not a cost estimate alone: Apple GPUs clock down when pacing leaves them idle,
-   so a frame measured at 25 ms while paced at 30 may well fit 40. Every half second (a window):
-   - down one rate when over 10% of the window's frames stayed on screen longer than 1.25x the target
-     (a lone hitch doesn't count);
-   - up one rate when the window's smoothed cost fits the faster rate's budget, unless a try at that rate failed
-     recently (a failed try is a step down within 2 s of stepping up; the wait doubles from 10 s to 80 s while
-     tries keep failing, so a pack sitting just at a boundary hitches rarely rather than every few seconds). */
+   so a frame measured at 22 ms while paced at 30 still fits 40. Every half second (a window):
+   - down one rate after two windows in a row where over 10% of frames stayed on screen longer than 1.25x the
+     target, and only when the cost is over 60% of the budget (cheap frames that miss are hitches, e.g. chunk
+     loading, which a slower rate wouldn't fix); misses in the first second after a change don't count;
+   - up straight to the fastest rate the cost fits with 25% to spare, or else one rate up if it fits at all,
+     unless a try at that rate failed recently (a step down within 3 s of stepping up: that rate is left alone
+     for 10, 20, 40, then 80 s while tries keep failing, so a pack right at a boundary rarely hitches). */
 static _Atomic double pace_target_ms;     /* read by the presented handler */
 static _Atomic unsigned pace_shown, pace_missed;
 
@@ -3143,12 +3146,14 @@ static int choose_paced_fps(mgl_ctx *c)
     if (forced && atoi(forced) > 0)
         return atoi(forced);
     int cap = power_cap_fps(), cur = 3;
+    uint64_t t = now_ns();
     if (!c->paced_fps) { /* start at the fastest rate the cost fits */
         int fit = 3;
         for (int i = 3; i >= 0; i--)
             if ((!cap || rates[i] <= cap) && c->avg_frame_ms <= 1000.0 / rates[i])
                 fit = i;
-        c->window_start_ns = now_ns();
+        c->window_start_ns = t;
+        c->grace_until_ns = t + 1000000000ull;
         return rates[fit];
     }
     for (int i = 0; i < 4; i++)
@@ -3157,26 +3162,41 @@ static int choose_paced_fps(mgl_ctx *c)
     if (cap && c->paced_fps > cap) {
         for (cur = 0; cur < 3 && rates[cur] > cap; cur++)
             ;
+        c->grace_until_ns = t + 1000000000ull;
         return rates[cur];
     }
-    uint64_t t = now_ns();
     if (t - c->window_start_ns < 500000000ull)
         return c->paced_fps;
     c->window_start_ns = t;
     unsigned shown = atomic_exchange(&pace_shown, 0), missed = atomic_exchange(&pace_missed, 0);
-    if (shown >= 4 && missed * 10 > shown && cur < 3) {
-        if (t - c->stepped_up_ns < 2000000000ull) { /* the try at the faster rate failed: wait 10, 20, 40, 80 s */
+    double budget = 1000.0 / c->paced_fps;
+    int bad = t >= c->grace_until_ns && shown >= 4 && missed * 10 > shown && c->avg_frame_ms > 0.6 * budget;
+    c->bad_windows = bad ? c->bad_windows + 1 : 0;
+    if (c->bad_windows >= 2 && cur < 3) {
+        if (t - c->stepped_up_ns < 3000000000ull) { /* the try at this rate failed */
             c->up_backoff_s = c->up_backoff_s ? (c->up_backoff_s < 80 ? c->up_backoff_s * 2 : 80) : 10;
+            c->blocked_fps = c->paced_fps;
             c->no_up_until_ns = t + c->up_backoff_s * 1000000000ull;
         }
+        c->bad_windows = 0;
+        c->grace_until_ns = t + 1000000000ull;
         return rates[cur + 1];
     }
-    if (c->stepped_up_ns && t - c->stepped_up_ns > 5000000000ull)
+    if (c->stepped_up_ns && t - c->stepped_up_ns > 10000000000ull)
         c->up_backoff_s = 0; /* the last step up held */
-    if (cur > 0 && (!cap || rates[cur - 1] <= cap) && t >= c->no_up_until_ns &&
-        c->avg_frame_ms <= 1000.0 / rates[cur - 1]) {
+    int best = cur;
+    for (int i = cur - 1; i >= 0; i--) {
+        if ((cap && rates[i] > cap) || (t < c->no_up_until_ns && rates[i] >= c->blocked_fps))
+            break;
+        double b = 1000.0 / rates[i];
+        if (c->avg_frame_ms * 1.25 <= b || (i == cur - 1 && c->avg_frame_ms <= b))
+            best = i;
+    }
+    if (best < cur) {
         c->stepped_up_ns = t;
-        return rates[cur - 1];
+        c->bad_windows = 0;
+        c->grace_until_ns = t + 1000000000ull;
+        return rates[best];
     }
     return c->paced_fps;
 }
