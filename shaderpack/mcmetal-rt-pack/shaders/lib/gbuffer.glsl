@@ -117,9 +117,20 @@ void main() {
     if (!gl_FrontFacing) n = -n;
 
 #if defined OPAQUE
+    float puddle = 0.0;
+  #if defined TERRAIN && defined RAIN_PUDDLES
+    // rain wets what the sky reaches: darker, richer colours; on flat ground, water gathers in patches
+    float wet = wetness * smoothstep(0.75, 0.95, lmcoord.y) * float(mat == MAT_NONE);
+    if (wet > 0.001) {
+        vec2 w = playerPos.xz + cameraPosition.xz;
+        float shape = valueNoise(w * 0.35) * 0.7 + valueNoise(w * 1.3) * 0.3;
+        puddle = wet * smoothstep(0.55, 0.62, shape + 0.12 * (PUDDLE_AMOUNT - 1.0) + 0.1 * wetness) * smoothstep(0.9, 0.98, n.y);
+        c.rgb = pow(c.rgb, vec3(1.0 + 0.4 * wet)) * (1.0 - 0.25 * wet - 0.3 * puddle);
+    }
+  #endif
     outAlbedo = vec4(c.rgb, 1.0);
     outNormalLight = vec4(octEncode(n), lmcoord);
-    outMaterial = vec4(float(mat) / 255.0, ao, 0.0, 1.0);
+    outMaterial = vec4(float(mat) / 255.0, ao, puddle, 1.0);
 #else
     vec3 albedo = toLinear(c.rgb);
   #ifdef UNLIT

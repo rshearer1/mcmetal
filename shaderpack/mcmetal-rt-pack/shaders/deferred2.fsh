@@ -14,9 +14,13 @@ const vec4 colortex2ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 #include "/lib/uniforms.glsl"
 #include "/lib/sky.glsl"
 #include "/lib/lighting.glsl"
-#ifndef USE_RT
-    // (the ray-traced shadow comes from deferred1.fsh)
+#if !defined USE_RT || (defined RAIN_PUDDLES && defined RT_REFLECTIONS)
+    // (the ray-traced shadow comes from deferred1.fsh; with RT this is only for what puddles reflect)
     #include "/lib/shadow.glsl"
+#endif
+#if defined USE_RT && defined RAIN_PUDDLES && defined RT_REFLECTIONS
+    #define PUDDLE_RT
+    #include "/lib/reflect.glsl"
 #endif
 
 uniform sampler2D colortex0, colortex1, colortex2, colortex3, colortex4, colortex5, depthtex0;
@@ -100,6 +104,22 @@ void main() {
   #endif
 #else
         col = a * surfaceLight(p, n, nl.zw, ao, mat, lightDir, sunCol, skyAmb, sh) + emission(a, mat);
+#endif
+#ifdef RAIN_PUDDLES
+        // puddles: a flat water surface on top, mirroring what's above it (ray traced, or the sky without RT)
+        if (m.b > 0.01) {
+            vec3 v = normalize(p);
+            vec3 pn = vec3(0.0, 1.0, 0.0);
+            vec3 rd = reflect(v, pn);
+            float f = 0.02 + 0.98 * pow(1.0 - clamp(-v.y, 0.0, 1.0), 5.0);
+            float skyOpen = smoothstep(0.3, 0.9, nl.w);
+            vec3 refl = skyColor(rd, sunDir) * skyOpen;
+  #ifdef PUDDLE_RT
+            if (f > 0.04) refl = traceReflection(p + pn * 0.02, rd, lightDir, sunCol, skyAmb, sunDir, skyOpen);
+  #endif
+            refl /= 1.0 + luma(refl) * 0.08;
+            col = mix(col, refl, f * m.b);
+        }
 #endif
 #if DEBUG_VIEW == 1
         col = sh * max(dot(n, lightDir), 0.0);
