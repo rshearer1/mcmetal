@@ -502,9 +502,11 @@ void mglb_texture_copy(mglb_texture *src, int src_level, int sx, int sy, int sz,
 
 struct mglb_program {
     void *vfn, *ffn;
+    void *vlib;      /* MTLLibrary of the vertex stage when it has scaled-attribute constants (else NULL) */
+    void *vscaled;   /* NSMutableDictionary: scale mask -> specialised vertex MTLFunction */
     void *compute;   /* MTLComputePipelineState */
     uint32_t id;
-    char label[48];  /* "GL program N", for error reports */
+    char label[112]; /* "GL program N [app name]", for error reports and MGL_*_PROGRAMS */
 };
 
 void mglb_program_label(mglb_program *p, const char *label)
@@ -648,7 +650,81 @@ static void debug_sync(const char *what, const mgl_draw *d, long a, long b)
 }
 
 
+/* GL converts integer vertex data to float when glVertexAttribPointer isn't normalising (Iris feeds Sodium's
+   mid-texture coordinate as plain unsigned shorts and scales it in the shader). Metal has no such "scaled"
+   formats: integer data only reaches integer inputs. So such attributes are fetched normalised (0..1) and the
+   vertex function multiplies them back up: every float input N reads in.NAME * mgl_vscale_N, a function constant
+   that defaults to 1 and is specialised per pipeline (255, 127, 65535 or 32767) when the attribute needs it. */
+#define MGL_VSCALE_FC 100 /* function constant index base */
+static char *scale_vertex_inputs(const char *msl)
+{
+    const char *st = strstr(msl, "struct main0_in\n{\n");
+    const char *end = st ? strstr(st, "\n};") : NULL;
+    if (!end)
+        return NULL;
+    struct { char name[96]; int loc; } in[MGL_MAX_VERTEX_ATTRIBS];
+    int n = 0;
+    for (const char *l = strchr(st, '{') + 2; l < end && n < MGL_MAX_VERTEX_ATTRIBS;) {
+        const char *nl = strchr(l, '\n');
+        char type[32], name[96];
+        int loc;
+        if (sscanf(l, " %31s %95s [[attribute(%d)]];", type, name, &loc) == 3 && !strncmp(type, "float", 5) &&
+            loc >= 0 && loc < MGL_MAX_VERTEX_ATTRIBS) {
+            snprintf(in[n].name, sizeof in[n].name, "%s", name);
+            in[n++].loc = loc;
+        }
+        l = nl ? nl + 1 : end;
+    }
+    if (!n)
+        return NULL;
+    size_t len = strlen(msl), cap = len * 2 + 4096, o = 0;
+    char *out = malloc(cap);
+    /* constants go right before the input struct */
+    memcpy(out, msl, (size_t)(st - msl));
+    o = (size_t)(st - msl);
+    for (int i = 0; i < n; i++)
+        o += (size_t)snprintf(out + o, cap - o,
+                              "constant float mgl_vscale_%d_fc [[function_constant(%d)]];\n"
+                              "constant float mgl_vscale_%d = is_function_constant_defined(mgl_vscale_%d_fc) ? "
+                              "mgl_vscale_%d_fc : 1.0;\n",
+                              in[i].loc, MGL_VSCALE_FC + in[i].loc, in[i].loc, in[i].loc, in[i].loc);
+    const char *body = end;
+    memcpy(out + o, st, (size_t)(body - st));
+    o += (size_t)(body - st);
+    #define IDCH(c) ((c) == '_' || ((c) >= 'a' && (c) <= 'z') || ((c) >= 'A' && (c) <= 'Z') || ((c) >= '0' && (c) <= '9'))
+    for (const char *c = body; *c;) {
+        if (o + 256 > cap) {
+            cap *= 2;
+            out = realloc(out, cap);
+        }
+        int hit = -1;
+        if (!strncmp(c, "in.", 3) && !IDCH(c[-1]) && c[-1] != '.') /* c > body: c[-1] is in the string */
+            for (int i = 0; i < n; i++) {
+                size_t k = strlen(in[i].name);
+                if (!strncmp(c + 3, in[i].name, k) && !IDCH(c[3 + k])) {
+                    hit = i;
+                    break;
+                }
+            }
+        if (hit >= 0) {
+            o += (size_t)snprintf(out + o, cap - o, "(in.%s * mgl_vscale_%d)", in[hit].name, in[hit].loc);
+            c += 3 + strlen(in[hit].name);
+        } else {
+            out[o++] = *c++;
+        }
+    }
+    #undef IDCH
+    out[o] = 0;
+    return out;
+}
+
+static id<MTLFunction> compile_fn_lib(const char *msl, NSString *what, char **err, id<MTLLibrary> *lib_out);
 static id<MTLFunction> compile_fn(const char *msl, NSString *what, char **err)
+{
+    return compile_fn_lib(msl, what, err, NULL);
+}
+
+static id<MTLFunction> compile_fn_lib(const char *msl, NSString *what, char **err, id<MTLLibrary> *lib_out)
 {
     NSError *e = nil;
     MTLCompileOptions *o = [[MTLCompileOptions alloc] init];
@@ -662,6 +738,12 @@ static id<MTLFunction> compile_fn(const char *msl, NSString *what, char **err)
         if (err)
             *err = strdup([NSString stringWithFormat:@"%@: %@", what, e.localizedDescription].UTF8String);
         return nil;
+    }
+    if (strstr(msl, "mgl_vscale_")) {
+        if (lib_out)
+            *lib_out = lib;
+        /* no constants set: every scale is 1 (a function with constants must come from this call) */
+        return [lib newFunctionWithName:@"main0" constantValues:[[MTLFunctionConstantValues alloc] init] error:&e];
     }
     return [lib newFunctionWithName:@"main0"];
 }
@@ -792,7 +874,10 @@ mglb_program *mglb_program_new(const char *msl_vertex, const char *msl_fragment,
             if (!msl_vertex) /* geometry-shader programs carry a compute stage plus the passthrough vertex stage */
                 return p;
         }
-        id<MTLFunction> v = msl_vertex ? compile_fn(msl_vertex, @"vertex", err) : nil;
+        char *scaled = msl_vertex ? scale_vertex_inputs(msl_vertex) : NULL;
+        id<MTLLibrary> vlib = nil;
+        id<MTLFunction> v = msl_vertex ? compile_fn_lib(scaled ? scaled : msl_vertex, @"vertex", err, &vlib) : nil;
+        free(scaled);
         id<MTLFunction> f = v && msl_fragment ? compile_fn(msl_fragment, @"fragment", err) : nil;
         if (!v || (msl_fragment && !f)) {
             release_obj(p->compute);
@@ -801,6 +886,10 @@ mglb_program *mglb_program_new(const char *msl_vertex, const char *msl_fragment,
         }
         p->vfn = retain_obj(v);
         p->ffn = f ? retain_obj(f) : NULL;
+        if (vlib) {
+            p->vlib = retain_obj(vlib);
+            p->vscaled = retain_obj([NSMutableDictionary dictionary]);
+        }
     }
     return p;
 }
@@ -811,6 +900,8 @@ void mglb_program_release(mglb_program *p)
         return;
     release_obj(p->vfn);
     release_obj(p->ffn);
+    release_obj(p->vlib);
+    release_obj(p->vscaled);
     release_obj(p->compute);
     free(p);
 }
@@ -864,6 +955,20 @@ static MTLCompareFunction compare_fn(int f)
     return MTLCompareFunctionAlways;
 }
 
+/* The scale a float input needs when GL converts this attribute's integers without normalising (0 = none). */
+static int vertex_scale(const mgl_vertex_attr *a)
+{
+    if (a->integer || a->normalized)
+        return 0;
+    switch (a->type) {
+    case MGLV_UBYTE: return 255;
+    case MGLV_BYTE: return 127;
+    case MGLV_USHORT: return 65535;
+    case MGLV_SHORT: return 32767;
+    default: return 0;
+    }
+}
+
 static MTLVertexFormat vertex_format(const mgl_vertex_attr *a)
 {
     int n = a->size < 1 ? 1 : a->size > 4 ? 4 : a->size;
@@ -904,7 +1009,7 @@ typedef struct pipe_key {
     uint32_t color[MGL_MAX_ATTACHMENTS];
     uint32_t depth, stencil;
     struct { uint16_t on, mask, eq_rgb, eq_a, src_rgb, dst_rgb, src_a, dst_a; } blend[MGL_MAX_ATTACHMENTS];
-    struct { uint16_t format; uint8_t buffer, enabled; uint32_t offset; } attr[MGL_MAX_VERTEX_ATTRIBS];
+    struct { uint16_t format; uint8_t buffer, enabled; uint32_t offset; uint32_t scale; } attr[MGL_MAX_VERTEX_ATTRIBS];
     struct { uint32_t stride, divisor; uint8_t constant; } layout[MGL_MAX_VERTEX_BUFFERS];
     uint32_t probe; /* MGL_PROBE_PROGRAMS: solid magenta fragment stage */
 } pipe_key;
@@ -933,6 +1038,32 @@ static int program_listed(const mgl_draw *d, const char *var, int *n, unsigned *
         for (int i = 0; i < *n; i++)
             if (ids[i] == gl)
                 return 1;
+    /* names also work: MGL_LOG_PROGRAMS=gbuffers_water matches "GL program 57 gbuffers_water" */
+    static const char *vars[8], *vals[8]; /* getenv once per variable, not per draw */
+    int vi = 0;
+    while (vi < 8 && vars[vi] && vars[vi] != var)
+        vi++;
+    if (vi < 8 && !vars[vi]) {
+        vars[vi] = var;
+        vals[vi] = getenv(var);
+    }
+    const char *e = vi < 8 ? vals[vi] : NULL;
+    if (e && d->program) {
+        char want[128];
+        while (*e) {
+            size_t k = strcspn(e, ", ");
+            if (k && k < sizeof want && !(*e >= '0' && *e <= '9')) {
+                memcpy(want, e, k);
+                want[k] = 0;
+                const char *l = strchr(d->program->label + 11, ' ');
+                if (l && !strcmp(l + 1, want))
+                    return 1;
+            }
+            e += k;
+            while (*e == ',' || *e == ' ')
+                e++;
+        }
+    }
     return 0;
 }
 
@@ -1089,6 +1220,7 @@ static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_targ
             k.attr[i].format = (uint16_t)vertex_format(&d->attrs[i]);
             k.attr[i].buffer = (uint8_t)d->attrs[i].buffer;
             k.attr[i].offset = (uint32_t)d->attrs[i].offset;
+            k.attr[i].scale = d->program->vlib ? (uint32_t)vertex_scale(&d->attrs[i]) : 0;
         }
     for (int i = 0; i < d->num_vbufs; i++) {
         k.layout[i].stride = (uint32_t)d->vbufs[i].stride;
@@ -1119,6 +1251,38 @@ static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_targ
 
     MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
     pd.vertexFunction = OBJ(id<MTLFunction>, d->program->vfn);
+    if (d->program->vlib) {
+        NSMutableString *mask = [NSMutableString string];
+        for (int i = 0; i < MGL_MAX_VERTEX_ATTRIBS; i++)
+            if (k.attr[i].enabled && k.attr[i].scale)
+                [mask appendFormat:@"%d:%u,", i, k.attr[i].scale];
+        if (mask.length) {
+            NSMutableDictionary *cache = OBJ(NSMutableDictionary *, d->program->vscaled);
+            id<MTLFunction> fn;
+            @synchronized(cache) {
+                fn = cache[mask];
+            }
+            if (!fn) {
+                MTLFunctionConstantValues *cv = [[MTLFunctionConstantValues alloc] init];
+                for (int i = 0; i < MGL_MAX_VERTEX_ATTRIBS; i++)
+                    if (k.attr[i].enabled && k.attr[i].scale) {
+                        float sc = (float)k.attr[i].scale;
+                        [cv setConstantValue:&sc type:MTLDataTypeFloat atIndex:MGL_VSCALE_FC + i];
+                    }
+                NSError *e = nil;
+                fn = [OBJ(id<MTLLibrary>, d->program->vlib) newFunctionWithName:@"main0" constantValues:cv error:&e];
+                if (!fn)
+                    mgl_log("%s: scaled vertex inputs (%s) failed: %s", d->program->label, mask.UTF8String,
+                            e.localizedDescription.UTF8String);
+                else
+                    @synchronized(cache) {
+                        cache[mask] = fn;
+                    }
+            }
+            if (fn)
+                pd.vertexFunction = fn;
+        }
+    }
     pd.fragmentFunction = d->program->ffn ? OBJ(id<MTLFunction>, d->program->ffn) : nil;
     if (k.probe)
         pd.fragmentFunction = probe_fragment();

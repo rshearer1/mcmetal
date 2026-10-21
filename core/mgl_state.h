@@ -118,6 +118,7 @@ typedef struct mgl_program {
     int ubo_binding[12];        /* GL binding point per x.ubos[] entry */
     int ssbo_binding[8];        /* GL binding point per x.ssbos[] entry */
     int delete_pending;
+    char debug_name[64];        /* glObjectLabel (Iris names its programs, e.g. "gbuffers_water") */
 } mgl_program;
 
 typedef struct mgl_query {

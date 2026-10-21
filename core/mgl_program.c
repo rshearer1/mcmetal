@@ -134,6 +134,16 @@ static double now_ms(void)
 }
 static double wait_ms; /* render-thread time spent waiting on jobs */
 
+/* "GL program 12 gbuffers_water": the GL name plus the name the app gave it, for logs and MGL_*_PROGRAMS */
+static void label_gpu(mgl_program *p, GLuint name)
+{
+    if (!p->gpu)
+        return;
+    char label[112];
+    snprintf(label, sizeof label, "GL program %u%s%s", name, p->debug_name[0] ? " " : "", p->debug_name);
+    mglb_program_label(p->gpu, label);
+}
+
 /* Applies a finished (or synchronous) job to its program. */
 static void apply_job(mgl_program *p, mgl_link_job *j)
 {
@@ -142,11 +152,7 @@ static void apply_job(mgl_program *p, mgl_link_job *j)
         p->x.msl[s] = j->msl[s];
     }
     p->gpu = j->gpu;
-    if (p->gpu) {
-        char label[48];
-        snprintf(label, sizeof label, "GL program %u", j->name);
-        mglb_program_label(p->gpu, label);
-    }
+    label_gpu(p, j->name);
     if (!p->gpu) {
         p->linked = 0; /* Iris already saw a successful link; draws with this program are skipped */
         free(p->info_log);
@@ -186,6 +192,19 @@ static int stage_of(GLenum type)
 
 static mgl_shader *shader_obj(GLuint name) { return mgl_table_get(&mgl->shaders, name); }
 static mgl_program *program_obj(GLuint name) { return mgl_table_get(&mgl->programs, name); }
+
+void glObjectLabel(GLenum identifier, GLuint name, GLsizei length, const GLchar *label)
+{
+    mgl_program *p = identifier == GL_PROGRAM ? program_obj(name) : NULL;
+    if (!p || !label)
+        return;
+    size_t n = length < 0 ? strlen(label) : (size_t)length;
+    if (n >= sizeof p->debug_name)
+        n = sizeof p->debug_name - 1;
+    memcpy(p->debug_name, label, n);
+    p->debug_name[n] = 0;
+    label_gpu(p, name);
+}
 
 /* Shaders and programs share one name space in GL. */
 GLuint glCreateShader(GLenum type)

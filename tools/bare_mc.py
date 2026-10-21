@@ -102,7 +102,7 @@ def setup(work, java):
     print("setup done", flush=True)
 
 
-def launch(work, java, world, gl, glfw, xmx, extra):
+def launch(work, java, world, gl, glfw, xmx, extra, size="1280x720"):
     inst = json.load(open(os.path.join(work, "install.json")))
     mc, game = os.path.join(work, "mc"), os.path.join(work, "game")
     libdir = os.path.join(mc, "libraries")
@@ -152,7 +152,7 @@ def launch(work, java, world, gl, glfw, xmx, extra):
     if glfw:
         jvm.append("-Dorg.lwjgl.glfw.libname=" + os.path.abspath(glfw))
     jvm += extra + expand(van["arguments"]["jvm"]) + expand(nf["arguments"]["jvm"])
-    gargs = expand(van["arguments"]["game"]) + expand(nf["arguments"]["game"]) + ["--width", "1280", "--height", "720"]
+    gargs = expand(van["arguments"]["game"]) + expand(nf["arguments"]["game"]) + ["--width", size.split("x")[0], "--height", size.split("x")[1]]
     if world:
         gargs += ["--quickPlaySingleplayer", world]
     os.makedirs(os.path.join(work, "natives"), exist_ok=True)
@@ -177,4 +177,4 @@ if __name__ == "__main__":
     if cmd == "setup":
         setup(work, java)
     else:
-        launch(work, java, opt("--world"), opt("--gl"), opt("--glfw"), opt("--xmx", "4G"), extra)
+        launch(work, java, opt("--world"), opt("--gl"), opt("--glfw"), opt("--xmx", "4G"), extra, opt("--size", "1280x720"))

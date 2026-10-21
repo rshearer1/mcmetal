@@ -221,7 +221,6 @@ void glPixelStorei(GLenum pname, GLint v)
 void glDebugMessageCallback(GLDEBUGPROC callback, const void *user) {}
 void glDebugMessageControl(GLenum source, GLenum type, GLenum severity, GLsizei count, const GLuint *ids, GLboolean enabled) {}
 void glDebugMessageInsert(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar *buf) {}
-void glObjectLabel(GLenum identifier, GLuint name, GLsizei length, const GLchar *label) {}
 void glPushDebugGroup(GLenum source, GLuint id, GLsizei length, const GLchar *message) {}
 void glPopDebugGroup(void) {}
 void glHint(GLenum target, GLenum mode) {}

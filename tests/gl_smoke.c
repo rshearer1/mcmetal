@@ -609,6 +609,43 @@ int main(int argc, char **argv)
         }
     }
 
+    /* 11. integer vertex data into a float input without normalising (Iris's mc_midTexCoord on Sodium terrain):
+       GL hands the shader 100.0 and 200.0, not 100/65535 */
+    {
+        GLuint scaled = program("#version 330 core\nlayout(location = 0) in vec2 pos;\nlayout(location = 1) in vec2 raw;\n"
+                                "out vec2 v;\nvoid main() { v = raw; gl_Position = vec4(pos, 0.0, 1.0); }\n",
+                                "#version 330 core\nin vec2 v;\nout vec4 frag;\n"
+                                "void main() { frag = vec4(v.x / 255.0, v.y / 255.0, 0.0, 1.0); }\n", NULL);
+        check(really_linked(scaled), "scaled-attribute program links");
+        unsigned short raw[12];
+        for (int i = 0; i < 6; i++) {
+            raw[2 * i] = 100;
+            raw[2 * i + 1] = 200;
+        }
+        GLuint rbuf;
+        glGenBuffers(1, &rbuf);
+        glBindVertexArray(vao);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof quad, quad, GL_STATIC_DRAW);
+        glBindBuffer(GL_ARRAY_BUFFER, rbuf);
+        glBufferData(GL_ARRAY_BUFFER, sizeof raw, raw, GL_STATIC_DRAW);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 2, GL_UNSIGNED_SHORT, GL_FALSE, 4, (void *)0);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_BLEND);
+        glClearColor(0, 0, 1, 1);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glUseProgram(scaled);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glDisableVertexAttribArray(1);
+        read_texture(rb, tex, ssbo, px);
+        char what[160];
+        snprintf(what, sizeof what, "unnormalised unsigned shorts reach a float input as 100, 200 (pixel %08x)", px[32 * 64 + 32]);
+        check(near(px[32 * 64 + 32], rgba(100, 200, 0, 255)), what);
+    }
+
     /* 5. hardware ray tracing: a shader using mcm_trace must compile on Metal (no scene bound: no hits) */
     GLuint rt = program(NULL, NULL,
                         "#version 430\nlayout(local_size_x = 1) in;\n"
