@@ -2417,10 +2417,13 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
         free(p);
         return;
     }
-    NSData *u0 = p->uniforms[0] ? [NSData dataWithBytes:p->uniforms[0] length:(NSUInteger)p->uniform_size[0]] : nil;
-    NSData *u1 = p->uniforms[1] ? [NSData dataWithBytes:p->uniforms[1] length:(NSUInteger)p->uniform_size[1]] : nil;
-    p->uniforms[0] = u0.bytes;
-    p->uniforms[1] = u1.bytes;
+    /* plain malloc copies, freed with p: autoreleased objects are never drained on the game's render thread */
+    void *u0 = p->uniforms[0] && p->uniform_size[0] ? malloc((size_t)p->uniform_size[0]) : NULL;
+    void *u1 = p->uniforms[1] && p->uniform_size[1] ? malloc((size_t)p->uniform_size[1]) : NULL;
+    if (u0) memcpy(u0, p->uniforms[0], (size_t)p->uniform_size[0]);
+    if (u1) memcpy(u1, p->uniforms[1], (size_t)p->uniform_size[1]);
+    p->uniforms[0] = u0;
+    p->uniforms[1] = u1;
     for (int i = 0; i < 12; i++) /* busy from now, so a glBufferSubData before the flush can't write in place */
         use_buffer(p->ubo[i]);
     for (int i = 0; i < MGL_MAX_SSBOS; i++)
@@ -2429,7 +2432,6 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
                                                   p->depth_test && p->depth_write && p->target.depth, p->depth_func);
     NSUInteger vertices = (NSUInteger)triangles * (NSUInteger)(max_vertices - 2) * 3;
     gs_play play = ^(id<MTLRenderCommandEncoder> e) {
-        (void)u0; (void)u1;
         [e setRenderPipelineState:ps];
         [e setDepthStencilState:ds];
         [e setViewport:(MTLViewport){p->viewport[0], p->viewport[1], p->viewport[2], p->viewport[3], 0, 1}];
@@ -2461,6 +2463,8 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
             [e setVertexBuffer:ocb offset:oco atIndex:MGL_BUF_INTERNAL_BASE + 7];
             [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:vertices];
         }
+        free(u0);
+        free(u1);
         free(p);
     };
     if (!gs_pending)
