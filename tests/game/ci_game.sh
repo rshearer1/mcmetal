@@ -50,6 +50,7 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     [ -n "$world" ] && wargs+=(--world "$world")
     mkdir -p "$OUT/$name/glsl"
     echo "=== phase $name: ${secs}s, world=${world:-none}, shaders=$shaders"
+    MCMETAL_BACKGROUND=${MCMETAL_BACKGROUND-behind} \
     MGL_LOG="$OUT/$name/mgl.log" MGL_SHOT_DIR="$OUT/$name" MGL_SHOT_EVERY=${MGL_SHOT_EVERY-10} \
     MGL_CACHE_DIR="$WORK/cache" MGL_DUMP_DIR="$OUT/$name/glsl" env ${GAME_ENV:-} "$@" \
         python3 -I "$SRC/tools/bare_mc.py" launch "$WORK" --java "$JAVA" "${wargs[@]}" \

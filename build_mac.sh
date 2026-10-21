@@ -33,6 +33,29 @@ if [ ! -d build/glfw-3.4 ]; then
 fi
 G=build/glfw-3.4/src
 cp glfw/mtl_context.m $G/nsgl_context.m
+# MCMETAL_BACKGROUND=behind|front (test runs): the game never takes focus or the Dock; "behind" also opens the
+# window behind other windows. Patched in once; the markers keep it idempotent.
+grep -q MCMETAL_BACKGROUND $G/cocoa_window.m || python3 - "$G" <<'PY'
+import sys
+g = sys.argv[1]
+w = open(g + "/cocoa_window.m").read()
+w = w.replace("    [window->ns.object orderFront:nil];\n",
+              "    const char* bg = getenv(\"MCMETAL_BACKGROUND\");\n"
+              "    if (bg && !strcmp(bg, \"behind\")) [window->ns.object orderBack:nil];\n"
+              "    else [window->ns.object orderFront:nil];\n", 1)
+w = w.replace("    [NSApp activateIgnoringOtherApps:YES];\n    [window->ns.object makeKeyAndOrderFront:nil];\n",
+              "    if (getenv(\"MCMETAL_BACKGROUND\")) return; // test runs: never steal focus\n"
+              "    [NSApp activateIgnoringOtherApps:YES];\n    [window->ns.object makeKeyAndOrderFront:nil];\n", 1)
+open(g + "/cocoa_window.m", "w").write(w)
+i = open(g + "/cocoa_init.m").read()
+i = i.replace("        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];\n",
+              "        [NSApp setActivationPolicy:getenv(\"MCMETAL_BACKGROUND\") ? NSApplicationActivationPolicyAccessory\n"
+              "                                                                : NSApplicationActivationPolicyRegular];\n"
+              "    if (getenv(\"MCMETAL_BACKGROUND\")) // no App Nap throttling while in the background\n"
+              "        [[[NSProcessInfo processInfo] beginActivityWithOptions:NSActivityUserInitiated | NSActivityLatencyCritical\n"
+              "                                                       reason:@\"mcmetal test run\"] retain];\n", 1)
+open(g + "/cocoa_init.m", "w").write(i)
+PY
 GLFW_SRC=(context.c init.c input.c monitor.c platform.c vulkan.c window.c egl_context.c osmesa_context.c
           null_init.c null_monitor.c null_window.c null_joystick.c cocoa_time.c posix_module.c posix_thread.c
           cocoa_init.m cocoa_joystick.m cocoa_monitor.m cocoa_window.m nsgl_context.m)
