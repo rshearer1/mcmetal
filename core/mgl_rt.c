@@ -99,6 +99,8 @@ static void rt_debug_tick(void)
     }
 }
 
+mglb_texture *mgl_rt_atlas;
+
 void mgl_rt_record(mgl_program *p, const mgl_draw *d)
 {
     rt_debug_tick();
@@ -132,6 +134,14 @@ void mgl_rt_record(mgl_program *p, const mgl_draw *d)
         return;
     }
     rtd.taken++;
+    for (int i = 0; i < p->x.num_textures; i++) { /* the block atlas, for mcm_trace's alpha test */
+        const mgl_texture_slot *slot = &p->x.textures[i];
+        int idx = slot->msl_index[MGL_FRAGMENT];
+        if (idx >= 0 && idx < MGL_MAX_TEXTURES && d->textures[MGL_FRAGMENT][idx].tex &&
+            (!strcmp(slot->name, "u_BlockTex") || !strcmp(slot->name, "gtexture") || !strcmp(slot->name, "tex") ||
+             !strcmp(slot->name, "texture")))
+            mgl_rt_atlas = d->textures[MGL_FRAGMENT][idx].tex;
+    }
     const mgl_vertex_buf *vb = &d->vbufs[a->buffer];
     const float *region = (const float *)(p->ublock[MGL_VERTEX] + p->rt_region_off);
     double t = now_s();

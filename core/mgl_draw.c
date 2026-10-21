@@ -155,6 +155,10 @@ static void gather_textures(mgl_draw *d, mgl_program *p, int compute)
                 mgl_texture *t = unit >= 0 && unit < MGL_MAX_IMAGE_UNITS ? mgl_texture_obj(mgl->images[unit].texture) : NULL;
                 bt->tex = t ? t->mem : NULL;
                 bt->image_level = unit >= 0 && unit < MGL_MAX_IMAGE_UNITS ? mgl->images[unit].level : 0;
+            } else if (p->x.uses_scene && !strcmp(slot->name, "mcm_atlas")) {
+                bt->tex = mgl_rt_atlas; /* mcm_trace's alpha test reads the terrain's block atlas */
+                mgl_sampler_defaults(&bt->sampler);
+                bt->sampler.min_filter = bt->sampler.mag_filter = GL_NEAREST;
             } else {
                 int unit = p->unit_of[i];
                 if (unit < 0 || unit >= MGL_MAX_UNITS)
@@ -199,6 +203,12 @@ static void gather_uniforms(mgl_draw *d, mgl_program *p)
         d->ssbo[i] = buf ? buf->mem : NULL;
         d->ssbo_offset[i] = mgl->ssbo[b].offset;
     }
+    if (p->x.uses_scene) /* mcm_trace's own storage block: the scene's per-instance triangle data */
+        for (int i = 0; i < p->x.num_ssbos && i < 8; i++)
+            if (!strcmp(p->x.ssbos[i].name, "McmInstances")) {
+                d->ssbo[i] = mglb_rt_instances();
+                d->ssbo_offset[i] = 0;
+            }
 }
 
 /* Returns 0 when the draw can't happen (no program, no target). */

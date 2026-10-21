@@ -1768,12 +1768,17 @@ static const char *builtin_msl =
 "fragment CO clear_fs(constant float4 &c [[buffer(0)]]) { CO o; o.c0 = o.c1 = o.c2 = o.c3 = o.c4 = o.c5 = o.c6 = o.c7 = c; return o; }\n"
     /* ray tracing: Sodium/Iris terrain vertices -> region-local float3 triangle list (see mgl_rt.c for the layout) */
     "struct RtInfo { uint vbase, stride, ioff, itype, count; int base_vertex; };\n"
+    /* per triangle for the alpha test in mcm_trace: 3 packed texture coordinates (Sodium's 15-bit u/v) and the
+       alpha cutoff index from Sodium's material bits (0 = none) */
     "kernel void rt_decode(device const uchar *vb [[buffer(0)]], device const uchar *ib [[buffer(1)]],\n"
-    "    device packed_float3 *out [[buffer(2)]], constant RtInfo &n [[buffer(3)]], uint i [[thread_position_in_grid]]) {\n"
+    "    device packed_float3 *out [[buffer(2)]], constant RtInfo &n [[buffer(3)]], device uint *tri [[buffer(4)]],\n"
+    "    uint i [[thread_position_in_grid]]) {\n"
     "  if (i >= n.count) return;\n"
     "  uint idx = n.itype == 2 ? uint(((device const ushort *)(ib + n.ioff))[i]) : ((device const uint *)(ib + n.ioff))[i];\n"
     "  device const uint *w = (device const uint *)(vb + n.vbase + uint(int(idx) + n.base_vertex) * n.stride);\n"
     "  uint hi = w[0], lo = w[1], sec = w[4] >> 24;\n"
+    "  tri[(i / 3) * 4 + i % 3] = w[3] & 0x7FFF7FFFu;\n"
+    "  if (i % 3 == 0) tri[(i / 3) * 4 + 3] = (w[4] >> 17) & 3u;\n"
     "  uint3 q = (((uint3(hi) >> uint3(0, 10, 20)) & 0x3FF) << 10) | ((uint3(lo) >> uint3(0, 10, 20)) & 0x3FF);\n"
     "  float3 p = float3(q) * (32.0 / 1048576.0) - 8.0;\n"
     "  out[i] = p + 16.0 * float3((sec >> 5) & 7, sec & 3, (sec >> 2) & 7); }\n";
@@ -2296,9 +2301,19 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
 @interface RtSection : NSObject
 @property(nonatomic, strong) id<MTLAccelerationStructure> as;
 @property(nonatomic) uint64_t last_frame;
+@property(nonatomic) mglb_buffer *tris; /* per-triangle texture coordinates + alpha cutoff (rt_decode) */
 @end
 @implementation RtSection
+- (void)dealloc
+{
+    mglb_buffer_release(_tris);
+}
 @end
+static mglb_buffer *rt_inst;                    /* GPU address of each scene instance's triangle data */
+static __unsafe_unretained id<MTLResource> *rt_tris_c;
+static NSUInteger rt_tris_n;
+
+mglb_buffer *mglb_rt_instances(void) { return rt_inst; }
 
 typedef struct rt_key {
     void *vbuf, *ibuf;
@@ -2345,7 +2360,7 @@ static id<MTLAccelerationStructure> build_as(MTLAccelerationStructureDescriptor 
     return as;
 }
 
-static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g)
+static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer **tris_out)
 {
     rt_key k;
     memset(&k, 0, sizeof k);
@@ -2362,6 +2377,7 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g)
     RtSection *s = rt_sections[key];
     if (s) {
         s.last_frame = rt_frame;
+        *tris_out = s.tris;
         return s.as;
     }
     id<MTLComputePipelineState> ps = rt_decode_pipeline();
@@ -2370,8 +2386,12 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g)
         return nil;
     /* 1. decode the section's vertices into a float3 triangle list */
     mglb_buffer *pos = mglb_buffer_new((size_t)tris * 3 * 12);
-    if (!pos)
+    mglb_buffer *tri = mglb_buffer_new((size_t)tris * 16);
+    if (!pos || !tri) {
+        mglb_buffer_release(pos);
+        mglb_buffer_release(tri);
         return nil;
+    }
     struct { uint32_t vbase, stride, ioff, itype, count; int32_t base_vertex; } info = {
         (uint32_t)g->vbase, (uint32_t)g->stride, (uint32_t)g->ioff, g->itype == GL_UNSIGNED_SHORT ? 2u : 4u,
         (uint32_t)(tris * 3), g->base_vertex};
@@ -2381,6 +2401,8 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g)
     [c setBuffer:OBJ(id<MTLBuffer>, g->ibuf->mtl) offset:0 atIndex:1];
     [c setBuffer:OBJ(id<MTLBuffer>, pos->mtl) offset:0 atIndex:2];
     [c setBytes:&info length:sizeof info atIndex:3];
+    [c setBuffer:OBJ(id<MTLBuffer>, tri->mtl) offset:0 atIndex:4];
+    use_buffer(tri);
     [c dispatchThreads:MTLSizeMake((NSUInteger)tris * 3, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
     use_buffer(g->vbuf);
     use_buffer(g->ibuf);
@@ -2390,20 +2412,24 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g)
     tg.vertexStride = 12;
     tg.vertexFormat = MTLAttributeFormatFloat3;
     tg.triangleCount = (NSUInteger)tris;
-    tg.opaque = YES;
+    tg.opaque = NO; /* mcm_trace runs the alpha test on cutout triangles (grass, leaves) */
     MTLPrimitiveAccelerationStructureDescriptor *pd = [MTLPrimitiveAccelerationStructureDescriptor descriptor];
     pd.geometryDescriptors = @[ tg ];
     id<MTLAccelerationStructure> as = build_as(pd);
     use_buffer(pos);
     mglb_buffer_release(pos);
-    if (!as)
+    if (!as) {
+        mglb_buffer_release(tri);
         return nil;
+    }
     if (!rt_sections)
         rt_sections = [NSMutableDictionary dictionary];
     s = [RtSection new];
     s.as = as;
+    s.tris = tri;
     s.last_frame = rt_frame;
     rt_sections[key] = s;
+    *tris_out = tri;
     return as;
 }
 
@@ -2417,11 +2443,18 @@ void mglb_rt_update(const mgl_rt_geom *g, int n)
     if (!inst)
         return;
     MTLAccelerationStructureUserIDInstanceDescriptor *descs = inst->ptr;
+    mglb_buffer *table = mglb_buffer_new(8 * (size_t)(n ? n : 1));
+    uint64_t *addr = table->ptr;
+    free(rt_tris_c);
+    rt_tris_c = (__unsafe_unretained id<MTLResource> *)calloc((size_t)(n ? n : 1), sizeof(id));
     int count = 0;
     for (int i = 0; i < n; i++) {
-        id<MTLAccelerationStructure> as = section_as(&g[i]);
+        mglb_buffer *tris = NULL;
+        id<MTLAccelerationStructure> as = section_as(&g[i], &tris);
         if (!as)
             continue;
+        addr[count] = OBJ(id<MTLBuffer>, tris->mtl).gpuAddress;
+        rt_tris_c[count] = OBJ(id<MTLBuffer>, tris->mtl);
         MTLAccelerationStructureUserIDInstanceDescriptor *d = &descs[count];
         memset(d, 0, sizeof *d);
         /* column-major 4x3: identity rotation, translation = camera-relative region origin */
@@ -2444,6 +2477,8 @@ void mglb_rt_update(const mgl_rt_geom *g, int n)
     }];
     [rt_sections removeObjectsForKeys:old];
     if (!count) {
+        mglb_buffer_release(table);
+        rt_tris_n = 0;
         mglb_buffer_release(inst);
         rt_scene = nil;
         rt_parts_n = 0;
@@ -2461,8 +2496,11 @@ void mglb_rt_update(const mgl_rt_geom *g, int n)
     for (int i = 0; i < count; i++)
         rt_parts_c[i] = parts[(NSUInteger)i];
     rt_parts_n = (NSUInteger)count;
+    rt_tris_n = (NSUInteger)count;
     use_buffer(inst);
     mglb_buffer_release(inst);
+    mglb_buffer_release(rt_inst); /* the pool keeps it until the GPU is done with it */
+    rt_inst = table;
     static int logged, debug = -1;
     if (debug < 0)
         debug = getenv("MGL_RT_DEBUG") && atoi(getenv("MGL_RT_DEBUG"));
@@ -2478,10 +2516,13 @@ static void bind_scene(id<MTLRenderCommandEncoder> e, id<MTLComputeCommandEncode
     if (c) {
         [c setAccelerationStructure:rt_scene atBufferIndex:MGL_BUF_SCENE];
         [c useResources:rt_parts_c count:rt_parts_n usage:MTLResourceUsageRead];
+        [c useResources:rt_tris_c count:rt_tris_n usage:MTLResourceUsageRead];
     } else {
         [e setVertexAccelerationStructure:rt_scene atBufferIndex:MGL_BUF_SCENE];
         [e setFragmentAccelerationStructure:rt_scene atBufferIndex:MGL_BUF_SCENE];
         [e useResources:rt_parts_c count:rt_parts_n usage:MTLResourceUsageRead
+                 stages:MTLRenderStageVertex | MTLRenderStageFragment];
+        [e useResources:rt_tris_c count:rt_tris_n usage:MTLResourceUsageRead
                  stages:MTLRenderStageVertex | MTLRenderStageFragment];
     }
 }

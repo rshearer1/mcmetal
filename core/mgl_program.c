@@ -259,14 +259,28 @@ static void add_ray_tracing(mgl_shader *s)
     const char *eol = strchr(v, '\n');
     if (!eol)
         return;
+    /* Cutout blocks (grass, leaves, flowers): candidate triangles get Sodium's alpha test against the block atlas,
+       using the texture coordinates and cutoff that rt_decode stored per triangle (McmInstances -> per-section data). */
     static const char head[] = "#version 460\n#extension GL_EXT_ray_query : require\n"
-                               "layout(set = 7, binding = 0) uniform accelerationStructureEXT mcm_scene; // own set: no clash with SSBO 0\n";
+                               "#extension GL_EXT_buffer_reference : require\n"
+                               "layout(set = 7, binding = 0) uniform accelerationStructureEXT mcm_scene; // own set: no clash with SSBO 0\n"
+                               "layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer McmTris { uint w[]; };\n"
+                               "layout(std430, binding = 15) readonly buffer McmInstances { McmTris mcm_tris[]; };\n"
+                               "uniform sampler2D mcm_atlas;\n";
     static const char body[] =
         "\nfloat mcm_trace(vec3 origin, vec3 dir, float tmax) {\n"
         "  rayQueryEXT q;\n"
-        "  rayQueryInitializeEXT(q, mcm_scene, gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT, 0x01,\n"
-        "                        origin, 0.001, dir, tmax);\n"
-        "  while (rayQueryProceedEXT(q)) {}\n"
+        "  rayQueryInitializeEXT(q, mcm_scene, gl_RayFlagsTerminateOnFirstHitEXT, 0x01, origin, 0.001, dir, tmax);\n"
+        "  while (rayQueryProceedEXT(q)) {\n"
+        "    McmTris t = mcm_tris[rayQueryGetIntersectionInstanceIdEXT(q, false)];\n"
+        "    uint base = uint(rayQueryGetIntersectionPrimitiveIndexEXT(q, false)) * 4u;\n"
+        "    uint cut = t.w[base + 3u];\n"
+        "    if (cut == 0u) { rayQueryConfirmIntersectionEXT(q); continue; }\n"
+        "    vec2 b = rayQueryGetIntersectionBarycentricsEXT(q, false);\n"
+        "    vec2 uv = (unpackUnorm2x16(t.w[base]) * (1.0 - b.x - b.y) + unpackUnorm2x16(t.w[base + 1u]) * b.x\n"
+        "             + unpackUnorm2x16(t.w[base + 2u]) * b.y) * (65535.0 / 32768.0);\n"
+        "    if (textureLod(mcm_atlas, uv, 0.0).a >= (cut == 3u ? 1.0 : 0.1)) rayQueryConfirmIntersectionEXT(q);\n"
+        "  }\n"
         "  return rayQueryGetIntersectionTypeEXT(q, true) != gl_RayQueryCommittedIntersectionNoneEXT\n"
         "      ? rayQueryGetIntersectionTEXT(q, true) : -1.0;\n"
         "}\n";
