@@ -1,59 +1,55 @@
 #version 330 compatibility
-// Deferred lighting of everything opaque, plus our sky. Runs after the opaque G-buffer, before water and glass.
+// Ray-traced ambient occlusion: one short ray per pixel into the hemisphere above the surface, averaged over
+// the last frames (the history follows the world as the camera moves; new or uncovered pixels start over).
 /*
-const int colortex0Format = RGBA16F;   // albedo in, HDR colour out (water etc. then blend on top in HDR)
-const int colortex1Format = RGBA16;    // xy octahedral normal (player space), zw lightmap (block, sky)
-const int colortex2Format = RGBA8;     // r material id, g vanilla AO
-const bool colortex1Clear = true;
-const bool colortex2Clear = true;
-const vec4 colortex1ClearColor = vec4(0.0);
-const vec4 colortex2ClearColor = vec4(0.0);
+const int colortex3Format = RGBA16F;   // r occlusion (1 open), g frames in the average, b distance to the camera
+const bool colortex3Clear = false;
 */
 #include "/lib/settings.glsl"
 #include "/lib/common.glsl"
 #include "/lib/uniforms.glsl"
-#include "/lib/sky.glsl"
-#include "/lib/lighting.glsl"
-#include "/lib/shadow.glsl"
 
-uniform sampler2D colortex0, colortex1, colortex2, depthtex0;
+uniform sampler2D colortex1, colortex2, colortex3, depthtex0;
+uniform mat4 gbufferPreviousModelView, gbufferPreviousProjection;
+uniform vec3 previousCameraPosition;
 
 in vec2 texcoord;
-flat in vec3 sunCol, skyAmb, lightDir, sunDir;
 
-/* RENDERTARGETS: 0 */
-layout(location = 0) out vec4 outColor;
+/* RENDERTARGETS: 3 */
+layout(location = 0) out vec4 outAO;
 
-vec3 playerFromDepth(vec2 uv, float depth) {
-    vec4 v = gbufferProjectionInverse * vec4(vec3(uv, depth) * 2.0 - 1.0, 1.0);
-    return mat3(gbufferModelViewInverse) * (v.xyz / v.w) + gbufferModelViewInverse[3].xyz;
-}
+#if defined USE_RT && defined RT_AO
+float mcm_trace(vec3 origin, vec3 dir, float tmax);
+#endif
 
 void main() {
     float depth = texture(depthtex0, texcoord).r;
-    vec4 albedo = texture(colortex0, texcoord);
-    vec4 m = texture(colortex2, texcoord);
-    int mat = int(m.r * 255.0 + 0.5);
-    vec3 p = playerFromDepth(texcoord, depth);
+    int mat = int(texture(colortex2, texcoord).r * 255.0 + 0.5);
+    if (depth >= 1.0 || mat == MAT_HAND || mat == MAT_LIT) { outAO = vec4(1.0, 0.0, 0.0, 1.0); return; }
+    vec4 v = gbufferProjectionInverse * vec4(vec3(texcoord, depth) * 2.0 - 1.0, 1.0);
+    vec3 p = mat3(gbufferModelViewInverse) * (v.xyz / v.w) + gbufferModelViewInverse[3].xyz;
+    float dist = length(p);
 
-    vec3 col;
-    if (depth >= 1.0) {
-        vec3 dir = normalize(p);
-        col = skyColor(dir, sunDir);
-        // sun disc with darker edges; the moon and stars come from vanilla's textures (MAT_SKY)
-        float cosSun = dot(dir, sunDir), edge = smoothstep(0.99955, 0.99975, cosSun);
-        col += lightTransmittance(sunDir) * edge * (60.0 * (0.6 + 0.4 * smoothstep(0.99955, 0.99995, cosSun)));
-        if (mat == MAT_SKY) col += toLinear(albedo.rgb) * 0.4 * (1.0 - 0.9 * rainStrength);
-    } else if (mat == MAT_LIT) {
-        col = albedo.rgb;
-    } else {
-        vec4 nl = texture(colortex1, texcoord);
-        vec3 n = octDecode(nl.xy);
-        vec3 a = toLinear(albedo.rgb);
-        float sh = 0.0;
-        if (dot(sunCol, sunCol) > 1e-6 && (dot(n, lightDir) > 0.0 || mat == MAT_FOLIAGE))
-            sh = sunShadow(p, n, lightDir, mat);
-        col = a * surfaceLight(p, n, nl.zw, m.g, mat, lightDir, sunCol, skyAmb, sh) + emission(a, mat);
-    }
-    outColor = vec4(col, 1.0);
+    float ao = 1.0;
+#if defined USE_RT && defined RT_AO
+    vec3 n = octDecode(texture(colortex1, texcoord).xy);
+    // cosine-weighted direction around n, new random numbers each frame
+    float u1 = ign(gl_FragCoord.xy, frameCounter), u2 = ign(gl_FragCoord.xy + vec2(47.0, 17.0), frameCounter * 7 + 3);
+    float r = sqrt(u1), phi = 6.2832 * u2;
+    vec3 t = normalize(abs(n.y) < 0.99 ? cross(n, vec3(0.0, 1.0, 0.0)) : cross(n, vec3(1.0, 0.0, 0.0)));
+    vec3 d = normalize(t * (r * cos(phi)) + cross(n, t) * (r * sin(phi)) + n * sqrt(1.0 - u1));
+    vec3 o = mat == MAT_FOLIAGE ? p + d * 0.05 : p + n * 0.02;
+    float hit = mcm_trace(o, d, RT_AO_RADIUS);
+    ao = hit < 0.0 ? 1.0 : smoothstep(0.0, RT_AO_RADIUS, hit);
+#endif
+
+    // where was this point last frame?
+    vec3 prevPlayer = p + cameraPosition - previousCameraPosition;
+    vec4 pc = gbufferPreviousProjection * (gbufferPreviousModelView * vec4(prevPlayer, 1.0));
+    vec2 puv = pc.xy / pc.w * 0.5 + 0.5;
+    vec4 h = texture(colortex3, puv);
+    bool valid = all(greaterThan(puv, vec2(0.0))) && all(lessThan(puv, vec2(1.0)))
+              && abs(h.b - length(prevPlayer)) < 0.05 * dist + 0.1;
+    float frames = valid ? min(h.g + 1.0, RT_AO_FRAMES) : 1.0;
+    outAO = vec4(mix(valid ? h.r : ao, ao, 1.0 / frames), frames, dist, 1.0);
 }

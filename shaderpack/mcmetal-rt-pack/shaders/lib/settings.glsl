@@ -5,6 +5,10 @@
     #define USE_RT
 #endif
 
+#define RT_AO // ray-traced ambient occlusion (replaces Minecraft's corner shading)
+#define RT_AO_RADIUS 1.5 // [0.75 1.0 1.5 2.0 3.0]
+#define RT_AO_FRAMES 16.0 // [4.0 8.0 16.0 32.0]
+
 #define EXPOSURE 1.0 // [0.25 0.35 0.5 0.7 0.85 1.0 1.2 1.4 1.7 2.0 2.5 3.0 4.0]
 #define SATURATION 1.0 // [0.0 0.5 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.5]
 #define CONTRAST 1.0 // [0.8 0.9 1.0 1.1 1.2]
@@ -24,3 +28,9 @@ const float shadowDistance = 128.0; // [64.0 96.0 128.0 192.0 256.0]
 const float shadowDistanceRenderMul = 1.0;
 const bool shadowHardwareFiltering = true;
 const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 20.0 30.0]
+
+// Iris only lists an on/off option in the menu if some #ifdef names it directly (#if defined doesn't count)
+#ifdef RT_AO
+#endif
+#ifdef WATER_SHADOWS
+#endif
