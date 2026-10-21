@@ -155,6 +155,25 @@ int main(int argc, char **argv)
     check(v && v[0] == 1 && v[10] == 31 && v[63] == 190, "compute shader results read back");
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
+    /* 1b. shared vec3 [256][9] is 27 KB in GL but 36 KB as Metal float3 (limit 32 KB): Photon's sky light job */
+    GLuint big = program(NULL, NULL,
+                         "#version 430\nlayout(local_size_x = 256) in;\n"
+                         "layout(std430, binding = 0) buffer B { float o[]; };\n"
+                         "shared vec3 sm[256][9];\n"
+                         "void main() { uint i = gl_LocalInvocationID.x;\n"
+                         "  for (uint b = 0u; b < 9u; ++b) sm[i][b] = vec3(1.0, float(b), 2.0);\n"
+                         "  barrier();\n"
+                         "  for (uint s = 128u; s > 0u; s >>= 1) { if (i < s) for (uint b = 0u; b < 9u; ++b) sm[i][b] += sm[i + s][b]; barrier(); }\n"
+                         "  if (i == 0u) { vec3 t = sm[0][8]; o[0] = t.x; o[1] = t.y; o[2] = t.z; } }\n");
+    check(really_linked(big), "compute program with 36 KB of Metal float3 shared memory links (packed)");
+    glUseProgram(big);
+    glDispatchCompute(1, 1, 1);
+    glMemoryBarrier(GL_ALL_BARRIER_BITS);
+    glFinish();
+    float *fo = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, 12, GL_MAP_READ_BIT);
+    check(fo && fo[0] == 256.0f && fo[1] == 2048.0f && fo[2] == 512.0f, "packed shared vec3 reduction sums right");
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
     GLuint rb = program(NULL, NULL, readback_cs);
     check(really_linked(rb), "texture readback program links");
 

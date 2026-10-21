@@ -20,6 +20,9 @@ on:
         description: 'frame-rate run (GAME_BENCH): 1920x1200, no vsync, 10 s settle then 30 s of fps samples; see fps.txt'
         type: boolean
         default: false
+      settle:
+        description: 'bench: seconds to wait after joining before measuring (heavy packs keep compiling for 30 s or more)'
+        default: '10'
 defaults:
   run:
     shell: bash  # bash -eo pipefail: a failing build isn't hidden by `| tee`
@@ -114,7 +117,7 @@ jobs:
           path: ~/mcgame
           key: mc-1.21.1-neoforge-21.1.259-sodium-iris-v1
       - name: Real game on mcmetal (screenshots)
-        run: GAME_BENCH="${{ github.event.inputs.bench }}" GAME_LONG="${{ github.event.inputs.long }}" GAME_ENV="${{ github.event.inputs.env }}" bash tests/game/ci_game.sh ~/mcgame game-out ${{ matrix.phase }}
+        run: GAME_BENCH="${{ github.event.inputs.bench }}" GAME_BENCH_SETTLE="${{ github.event.inputs.settle || 10 }}" GAME_LONG="${{ github.event.inputs.long }}" GAME_ENV="${{ github.event.inputs.env }}" bash tests/game/ci_game.sh ~/mcgame game-out ${{ matrix.phase }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
