@@ -16,6 +16,8 @@ def expand(path, seen):
     out = []
     for line in path.read_text().splitlines():
         m = re.match(r'\s*#include\s+"(.*)"', line)
+        if m and not re.fullmatch(r'\s*#include\s+"[^"]*"\s*', line):
+            raise SystemExit(f"{path.name}: Iris can't read an #include line with anything after it: {line.strip()}")
         if m:
             out.append(expand(root / m.group(1).lstrip("/"), seen))
         else:

@@ -15,7 +15,8 @@ const vec4 colortex2ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 #include "/lib/sky.glsl"
 #include "/lib/lighting.glsl"
 #ifndef USE_RT
-    #include "/lib/shadow.glsl"   // the ray-traced shadow comes from deferred.fsh
+    // (the ray-traced shadow comes from deferred.fsh)
+    #include "/lib/shadow.glsl"
 #endif
 
 uniform sampler2D colortex0, colortex1, colortex2, colortex3, colortex4, colortex5, depthtex0;
