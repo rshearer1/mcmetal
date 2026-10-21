@@ -1,0 +1,49 @@
+#!/bin/bash
+# Build libmcmetal.dylib and the patched libglfw.dylib on macOS (Apple Silicon). Needs only the
+# Command Line Tools (clang, git, python3) and internet on first run (gl.xml, GLFW 3.4, glslang, SPIRV-Cross).
+#   bash build_mac.sh         -> build/libmcmetal.dylib, build/libglfw.dylib
+set -euo pipefail
+cd "$(dirname "$0")"
+SRC=$(pwd)
+mkdir -p build/gen build/obj
+CFLAGS=(-arch arm64 -O2 -g -Wall -Wno-unused-parameter -fvisibility=hidden -mmacosx-version-min=14.0) # Metal 3.1 (texture atomics)
+
+# 1. Generated GL entry points
+[ -f build/gl.xml ] || curl -fsSL -o build/gl.xml https://raw.githubusercontent.com/KhronosGroup/OpenGL-Registry/main/xml/gl.xml
+python3 -I gen/gen_exports.py build/gl.xml build/gen 4.5
+cp build/gen/mgl_gl.h build/gen/gl_stubs.c core/ 2>/dev/null || true
+
+# 2. Shader translator libraries (first run takes a few minutes)
+bash build_deps.sh build/deps
+D=build/deps
+
+# 3. libmcmetal.dylib
+clang "${CFLAGS[@]}" -std=gnu11 -Icore -I$D/include -c core/*.c
+mv ./*.o build/obj/
+clang "${CFLAGS[@]}" -fobjc-arc -Icore -c mac/*.m
+mv ./*.o build/obj/
+clang -arch arm64 -dynamiclib -o build/libmcmetal.dylib build/obj/*.o $D/libspirvcross_all.a $D/libglslang_all.a -lc++ \
+    -install_name @rpath/libmcmetal.dylib -framework Metal -framework QuartzCore -framework Foundation
+echo "libmcmetal: $(nm -gU build/libmcmetal.dylib | grep -c ' _gl') GL symbols exported"
+
+# 4. Patched GLFW 3.4 (nsgl_context.m replaced by glfw/mtl_context.m)
+if [ ! -d build/glfw-3.4 ]; then
+    curl -fsSL -o build/glfw-3.4.zip https://github.com/glfw/glfw/releases/download/3.4/glfw-3.4.zip
+    (cd build && unzip -q glfw-3.4.zip)
+fi
+G=build/glfw-3.4/src
+cp glfw/mtl_context.m $G/nsgl_context.m
+GLFW_SRC=(context.c init.c input.c monitor.c platform.c vulkan.c window.c egl_context.c osmesa_context.c
+          null_init.c null_monitor.c null_window.c null_joystick.c cocoa_time.c posix_module.c posix_thread.c
+          cocoa_init.m cocoa_joystick.m cocoa_monitor.m cocoa_window.m nsgl_context.m)
+rm -rf build/glfwobj && mkdir build/glfwobj
+for f in "${GLFW_SRC[@]}"; do
+    clang -arch arm64 -O2 -mmacosx-version-min=13.0 -D_GLFW_COCOA -D_GLFW_BUILD_DLL -fvisibility=hidden \
+        -Wno-deprecated-declarations -I$G -Ibuild/glfw-3.4/include -c "$G/$f" -o "build/glfwobj/${f%.*}.o"
+done
+clang -arch arm64 -dynamiclib -o build/libglfw.dylib build/glfwobj/*.o -install_name @rpath/libglfw.dylib \
+    -framework Cocoa -framework IOKit -framework CoreFoundation -framework QuartzCore
+echo "libglfw: $(nm -gU build/libglfw.dylib | grep -c ' _glfw') GLFW symbols exported"
+# 5. Headless smoke test (no window, no Minecraft): build/gl_smoke draws a few things and checks the pixels
+clang "${CFLAGS[@]}" -std=gnu11 -Icore tests/gl_smoke.c -o build/gl_smoke -Lbuild -lmcmetal -Wl,-rpath,@executable_path
+echo "built: $SRC/build/libmcmetal.dylib $SRC/build/libglfw.dylib $SRC/build/gl_smoke"

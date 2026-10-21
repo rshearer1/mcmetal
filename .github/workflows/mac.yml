@@ -1,0 +1,54 @@
+# Builds mcmetal on GitHub's Apple Silicon macOS runners and checks what can be checked without a real GPU:
+# the dylibs compile, every MSL program our smoke test produces compiles with Apple's offline Metal compiler,
+# and the headless smoke test runs (its pixel checks only count if the runner reports a real Metal device).
+name: mac
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache glslang + SPIRV-Cross
+        uses: actions/cache@v4
+        with:
+          path: build/deps
+          key: deps-${{ hashFiles('build_deps.sh') }}
+      - name: Build
+        run: bash build_mac.sh 2>&1 | tee build.log
+      - name: Smoke test
+        run: |
+          mkdir -p msl
+          MGL_LOG=$PWD/smoke-mgl.log MGL_MSL_DUMP=$PWD/msl ./build/gl_smoke | tee smoke.txt
+          cat smoke-mgl.log || true
+      - name: Smoke test, smoothness options on
+        run: |
+          mkdir -p cache
+          MGL_LOG=$PWD/smoke2-mgl.log MGL_CACHE_DIR=$PWD/cache MGL_BINARY_ARCHIVE=1 MGL_ASYNC_PIPELINES=1 MGL_FRAME_PACING=1 \
+            ./build/gl_smoke | tee smoke2.txt || true
+          MGL_LOG=$PWD/smoke3-mgl.log MGL_CACHE_DIR=$PWD/cache MGL_BINARY_ARCHIVE=1 ./build/gl_smoke | tee smoke3.txt || true
+          cat smoke2-mgl.log smoke3-mgl.log || true
+          ls -la cache || true
+      - name: Offline MSL compile
+        run: |
+          xcrun -f metal || xcodebuild -downloadComponent MetalToolchain || true
+          fail=0
+          for f in msl/*.metal; do
+            xcrun metal -std=metal3.1 -c "$f" -o /tmp/out.air 2>err.txt || { fail=$((fail+1)); echo "== $f"; cat err.txt; }
+          done
+          echo "offline MSL compile failures: $fail of $(ls msl/*.metal | wc -l)"
+          test $fail -eq 0
+      - name: Device info
+        if: always()
+        run: system_profiler SPDisplaysDataType || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: logs
+          path: |
+            build.log
+            smoke*.txt
+            smoke*-mgl.log
+            msl/
