@@ -160,6 +160,8 @@ typedef struct mgl_state {
     int blend, depth_test, cull_face_enabled, scissor_test, polygon_offset_fill;
     unsigned char blend_i[8];   /* per draw buffer (glEnablei); glEnable(GL_BLEND) sets all */
     GLenum blend_src_rgb, blend_dst_rgb, blend_src_a, blend_dst_a, blend_eq_rgb, blend_eq_a;
+    GLenum blend_fn_i[8][6];    /* per draw buffer (glBlendFunci...): src_rgb dst_rgb src_a dst_a eq_rgb eq_a;
+                                   the non-indexed calls set all 8 */
     GLenum depth_func, cull_face, front_face;
     GLboolean depth_mask, color_mask[4];
     int viewport[4], scissor[4];
