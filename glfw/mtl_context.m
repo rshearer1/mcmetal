@@ -138,8 +138,26 @@ GLFWbool _glfwCreateContextNSGL(_GLFWwindow* window,
     // Same layer setup as GLFW's Vulkan surface path, so GLFW keeps contentsScale up to date.
     @autoreleasepool {
     window->ns.layer = [CAMetalLayer layer];
-    if (window->ns.scaleFramebuffer)
+    // MCMETAL_UPSCALE=1: GLFW reports the point size as the framebuffer (the game renders 1x), while the layer
+    // stays Retina and libmcmetal upscales into it with MetalFX.
+    const char* up = getenv("MCMETAL_UPSCALE");
+    const GLFWbool upscale = up && atoi(up) > 0;
+    if (window->ns.scaleFramebuffer || upscale)
         [window->ns.layer setContentsScale:[window->ns.object backingScaleFactor]];
+    if (upscale)
+        window->ns.scaleFramebuffer = GLFW_FALSE;
+    // MCMETAL_BACKGROUND (test runs on someone's Mac): the game must never come in front of what they are doing.
+    // The window lives at desktop level, under every normal window, so no later orderFront can raise it, and it
+    // ignores the mouse. The app may never become active (no focus, no Dock icon, no menu bar).
+    if (getenv("MCMETAL_BACKGROUND"))
+    {
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
+        [window->ns.object setLevel:kCGDesktopWindowLevel];
+        [window->ns.object setIgnoresMouseEvents:YES];
+        [window->ns.object setCollectionBehavior:NSWindowCollectionBehaviorStationary |
+                                                 NSWindowCollectionBehaviorIgnoresCycle];
+        [window->ns.object orderBack:nil];
+    }
     [window->ns.view setLayer:window->ns.layer];
     [window->ns.view setWantsLayer:YES];
     }

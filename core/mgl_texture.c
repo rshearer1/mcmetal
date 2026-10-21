@@ -841,6 +841,13 @@ void glBindImageTexture(GLuint unit, GLuint texture, GLint level, GLboolean laye
     mgl->images[unit].format = format;
 }
 
+/* EXT_shader_image_load_store names (we advertise it: Bliss turns on its coloured light only when it's there) */
+GLAPI void glBindImageTextureEXT(GLuint unit, GLuint texture, GLint level, GLboolean layered, GLint layer, GLenum access,
+                                 GLint format)
+{
+    glBindImageTexture(unit, texture, level, layered, layer, access, (GLenum)format);
+}
+
 /* 1D textures (Bliss's LPV block data): stored and sampled as Nx1 2D textures */
 void glTexImage1D(GLenum target, GLint level, GLint internal, GLsizei w, GLint border, GLenum format, GLenum type,
                   const void *pixels)
