@@ -82,7 +82,7 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     grep -q 'last launch on Metal did not' "$OUT/$name/client.log" 2>/dev/null && echo "WARNING: this phase ran on Apple's OpenGL (fallback)"
     grep -h '\[mcmetal\]' "$OUT/$name/client.log" 2>/dev/null | grep -v 'presented frame\|screenshot\|\] fps ' | head -5
     # fps: Minecraft's counter every second (bench mode), only the samples from the measured window
-    local fps; fps=$(grep -ho '\] fps [0-9]*' "$OUT/$name/client.log" 2>/dev/null | awk '{print $3}' | tail -n +$((${bench_from:-12} + 1)))
+    local fps; fps=$(grep -ho '\] fps [0-9]*' "$OUT/$name/client.log" 2>/dev/null | awk '{print $3}' | tail -n +$((${bench_from:-12} + 1)) | head -n "$([ -n "${bench_from:-}" ] && echo "${GAME_BENCH_SECS:-30}" || echo 100000)")
     bench_from=
     [ -n "$fps" ] && echo "fps $name: $(echo "$fps" | sort -n | awk '{a[NR]=$1; s+=$1} END {if (NR) printf "median %d, mean %.0f, low %d, high %d over %d samples", a[int((NR+1)/2)], s/NR, a[1], a[NR], NR}')" | tee -a "$OUT/fps.txt"
     cp "$G/logs/latest.log" "$OUT/$name/latest.log" 2>/dev/null
