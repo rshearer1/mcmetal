@@ -2936,6 +2936,31 @@ static void update_size(mgl_ctx *c)
     c->h = (int)(up ? pt.height : px.height);
 }
 
+static id<MTLTexture> upscaled; /* last MetalFX output, for test screenshots */
+
+/* RGBA8 copy of the last upscaled frame (GL row order, like window_color), for MGL_SHOT_DIR; 0 when none. */
+int mglb_upscaled_read(unsigned char **px, int *w, int *h)
+{
+    if (!upscaled)
+        return 0;
+    *w = (int)upscaled.width;
+    *h = (int)upscaled.height;
+    size_t row = (size_t)*w * 4;
+    mglb_buffer *stage = mglb_buffer_new(row * (size_t)*h);
+    if (!stage || !(*px = malloc(row * (size_t)*h))) {
+        mglb_buffer_release(stage);
+        return 0;
+    }
+    [blit_encoder() copyFromTexture:upscaled sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
+                         sourceSize:MTLSizeMake(upscaled.width, upscaled.height, 1) toBuffer:OBJ(id<MTLBuffer>, stage->mtl)
+                  destinationOffset:0 destinationBytesPerRow:row destinationBytesPerImage:row * (size_t)*h];
+    use_buffer(stage);
+    mglb_finish();
+    memcpy(*px, stage->ptr, row * (size_t)*h);
+    mglb_buffer_release(stage);
+    return 1;
+}
+
 /* The upscaled frame, the right way down for the present blit. NULL when off or MetalFX can't. */
 static id<MTLTexture> upscale(mgl_ctx *c, id<MTLTexture> in, NSUInteger ow, NSUInteger oh)
 {
@@ -2972,6 +2997,7 @@ static id<MTLTexture> upscale(mgl_ctx *c, id<MTLTexture> in, NSUInteger ow, NSUI
     fx.inputContentWidth = in.width;
     fx.inputContentHeight = in.height;
     [fx encodeToCommandBuffer:current_cb()];
+    upscaled = out;
     return out;
 }
 
