@@ -97,6 +97,27 @@ GLFWbool _glfwInitNSGL(void)
         }
         snprintf(beside, sizeof(beside), "%.*s/libmcmetal.dylib", (int) (slash - info.dli_fname), info.dli_fname);
         path = beside;
+        // Player options: mcmetal/options.txt (the mod unpacks us into mcmetal/natives), lines NAME=VALUE for
+        // MCMETAL_* / MGL_* settings. The environment wins, so test runs aren't affected.
+        char opts[4096];
+        snprintf(opts, sizeof(opts), "%.*s/../options.txt", (int) (slash - info.dli_fname), info.dli_fname);
+        FILE* f = fopen(opts, "r");
+        if (f)
+        {
+            char line[512];
+            while (fgets(line, sizeof(line), f))
+            {
+                char* eq = strchr(line, '=');
+                if (line[0] == '#' || !eq || (strncmp(line, "MCMETAL_", 8) && strncmp(line, "MGL_", 4)))
+                    continue;
+                *eq = 0;
+                char* value = eq + 1;
+                value[strcspn(value, " \t\r\n#")] = 0;
+                if (*value)
+                    setenv(line, value, 0);
+            }
+            fclose(f);
+        }
     }
 
     mgl_lib = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
@@ -142,6 +163,9 @@ GLFWbool _glfwCreateContextNSGL(_GLFWwindow* window,
     // stays Retina and libmcmetal upscales into it with MetalFX.
     const char* up = getenv("MCMETAL_UPSCALE");
     const GLFWbool upscale = up && atoi(up) > 0;
+    const char* retina = getenv("MCMETAL_RETINA"); // also checked here: options.txt is read after the window exists
+    if (retina && !strcmp(retina, "0"))
+        window->ns.scaleFramebuffer = GLFW_FALSE;
     if (window->ns.scaleFramebuffer || upscale)
         [window->ns.layer setContentsScale:[window->ns.object backingScaleFactor]];
     if (upscale)
