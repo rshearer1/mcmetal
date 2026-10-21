@@ -43,6 +43,17 @@ static int opt(const char *name)
     return e && *e && *e != '0';
 }
 static unsigned long frame_draws, frame_sections, frame_dispatches, frame_probes; /* reset at each present */
+
+/* MGL_PROFILE=1: once a second, log where frame time goes: CPU time per frame and how much of it was spent waiting
+   for the GPU, GPU busy time per frame, and per frame the draws, render passes (and how many reopened the target
+   the previous pass had, i.e. a blit/compute/flush split it), blit and compute encoders, command buffers, waits. */
+static int opt_profile = -1;
+static struct {
+    unsigned long draws, passes, reopened, blits, computes, cbs, finishes, skipped_presents;
+    uint64_t wait_ns, start_ns, frames;
+} prof;
+static _Atomic uint64_t prof_gpu_ns;
+static mgl_target prof_last_target;
 static unsigned long long frames_presented; /* for MGL_FRAME_DUMP */
 
 /* The mcmetal mod writes <game>/mcmetal/starting before switching the game to us, and goes back to Apple's
@@ -82,6 +93,7 @@ static void read_options(void)
     opt_archive = opt("MGL_BINARY_ARCHIVE") && getenv("MGL_CACHE_DIR");
     opt_async_pipes = opt("MGL_ASYNC_PIPELINES");
     opt_pacing = opt("MGL_FRAME_PACING");
+    opt_profile = opt("MGL_PROFILE");
     if (opt_archive || opt_async_pipes || opt_pacing)
         mgl_log("options: binary archive %d, async pipelines %d, frame pacing %d", opt_archive, opt_async_pipes, opt_pacing);
 }
@@ -105,6 +117,7 @@ static id<MTLCommandBuffer> current_cb(void)
     if (!cb) {
         init_device();
         cb = [queue commandBuffer];
+        prof.cbs++;
         uint64_t serial = cb_serial = ++submitted_serial;
         [cb addCompletedHandler:^(id<MTLCommandBuffer> done) {
           uint64_t prev = atomic_load(&completed_serial);
@@ -115,6 +128,8 @@ static id<MTLCommandBuffer> current_cb(void)
               pthread_cond_broadcast(&fence_cond);
               pthread_mutex_unlock(&fence_lock);
           }
+          if (opt_profile > 0 && done.GPUEndTime > done.GPUStartTime)
+              atomic_fetch_add(&prof_gpu_ns, (uint64_t)((done.GPUEndTime - done.GPUStartTime) * 1e9));
           if (done.error)
               mgl_log("GPU error in command buffer %llu: %s", serial, done.error.localizedDescription.UTF8String);
         }];
@@ -145,6 +160,7 @@ static id<MTLBlitCommandEncoder> blit_encoder(void)
         return benc;
     end_encoders();
     benc = [current_cb() blitCommandEncoder];
+    prof.blits++;
     return benc;
 }
 
@@ -154,6 +170,7 @@ static id<MTLComputeCommandEncoder> compute_encoder(void)
         return cenc;
     end_encoders();
     cenc = [current_cb() computeCommandEncoder];
+    prof.computes++;
     return cenc;
 }
 
@@ -1519,6 +1536,10 @@ static id<MTLRenderCommandEncoder> begin_pass(const mgl_target *t, unsigned clea
     rp.renderTargetWidth = (NSUInteger)t->width;
     rp.renderTargetHeight = (NSUInteger)t->height;
     renc = [current_cb() renderCommandEncoderWithDescriptor:rp];
+    prof.passes++;
+    if (same_target(t, &prof_last_target) && !clear_colors && !clear_depth)
+        prof.reopened++;
+    prof_last_target = *t;
     renc_target = *t;
     return renc;
 }
@@ -2343,6 +2364,8 @@ static uint64_t now_ns(void)
     return mach_absolute_time() * tb.numer / tb.denom;
 }
 
+static int wait_serial(uint64_t id, uint64_t timeout_ns, uint64_t start);
+
 int mglb_fence_wait(uint64_t id, uint64_t timeout_ns)
 {
     if (atomic_load(&completed_serial) >= id)
@@ -2352,6 +2375,13 @@ int mglb_fence_wait(uint64_t id, uint64_t timeout_ns)
     if (cb && id >= cb_serial)
         commit();
     uint64_t start = now_ns();
+    int r = wait_serial(id, timeout_ns, start);
+    prof.wait_ns += now_ns() - start;
+    return r;
+}
+
+static int wait_serial(uint64_t id, uint64_t timeout_ns, uint64_t start)
+{
     if (opt_pacing > 0) { /* sleep until a command buffer completes instead of spinning */
         pthread_mutex_lock(&fence_lock);
         while (atomic_load(&completed_serial) < id) {
@@ -2382,7 +2412,10 @@ void mglb_flush(void) { commit(); }
 void mglb_finish(void)
 {
     commit();
+    uint64_t t = now_ns();
     [last_cb waitUntilCompleted];
+    prof.wait_ns += now_ns() - t;
+    prof.finishes++;
 }
 
 /* ================================================================ window: GLFW glue and present */
@@ -2482,6 +2515,29 @@ MGL_EXPORT void mgl_glfw_destroy(void *ctx)
     free(ctx);
 }
 
+static void profile_frame(unsigned long draws)
+{
+    uint64_t t = now_ns();
+    prof.draws += draws;
+    if (!prof.start_ns) {
+        memset(&prof, 0, sizeof prof);
+        prof.start_ns = t;
+        atomic_store(&prof_gpu_ns, 0);
+        return;
+    }
+    if (++prof.frames, t - prof.start_ns < 1000000000ull)
+        return;
+    double f = (double)prof.frames, ms = (double)(t - prof.start_ns) * 1e-6 / f;
+    mgl_log("profile: %.0f fps; per frame: cpu %.2f ms (waiting %.2f), gpu %.2f ms; %.0f draws, %.1f passes "
+            "(%.1f reopened), %.1f blit + %.1f compute encoders, %.1f command buffers, %.2f finishes; %.0f%% presents skipped",
+            f * 1000.0 / ((double)(t - prof.start_ns) * 1e-6), ms, (double)prof.wait_ns * 1e-6 / f,
+            (double)atomic_load(&prof_gpu_ns) * 1e-6 / f, prof.draws / f, prof.passes / f, prof.reopened / f,
+            prof.blits / f, prof.computes / f, prof.cbs / f, prof.finishes / f, 100.0 * prof.skipped_presents / f);
+    memset(&prof, 0, sizeof prof);
+    prof.start_ns = t;
+    atomic_store(&prof_gpu_ns, 0);
+}
+
 /* Copy GL framebuffer 0 into the window, flipping it the right way up. */
 MGL_EXPORT void mgl_glfw_swap(void *ctx)
 {
@@ -2502,7 +2558,10 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
         every_frame = getenv("MGL_PRESENT_EVERY_FRAME") && atoi(getenv("MGL_PRESENT_EVERY_FRAME"));
     static atomic_int presents_waiting;
     int skip = !c->vsync && !every_frame && atomic_load(&presents_waiting) >= 2;
+    uint64_t t_draw = now_ns();
     id<CAMetalDrawable> drawable = skip ? nil : [c->layer nextDrawable];
+    prof.wait_ns += now_ns() - t_draw;
+    prof.skipped_presents += skip;
     if (drawable) {
         atomic_fetch_add(&presents_waiting, 1);
         [drawable addPresentedHandler:^(id<MTLDrawable> d) {
@@ -2552,6 +2611,8 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
         mgl_log("presented frame %llu (%dx%d), %lu pipelines; this frame: %lu draws (%lu terrain sections), %lu dispatches%s",
                 c->frames, c->w, c->h, (unsigned long)pipelines.count, frame_draws, frame_sections, frame_dispatches,
                 frame_probes ? [NSString stringWithFormat:@", %lu probed draws", frame_probes].UTF8String : "");
+    if (opt_profile > 0)
+        profile_frame(frame_draws);
     frame_draws = frame_sections = frame_dispatches = frame_probes = 0;
     /* keep at most ~2 frames in flight */
     if (cb_serial > 3)
