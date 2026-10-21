@@ -17,15 +17,32 @@ const bool colortex4Clear = false;
 #include "/lib/uniforms.glsl"
 #include "/lib/sky.glsl"
 #include "/lib/lighting.glsl"
+uniform sampler2D colortex1, colortex2, colortex3, colortex4, colortex5, depthtex0;
+uniform mat4 gbufferPreviousModelView, gbufferPreviousProjection;
+uniform vec3 previousCameraPosition;
+
+// GI hits that were on screen last frame reuse deferred1's averaged sun shadow (colortex5: rgb shadow, a distance)
+// instead of tracing a shadow ray of their own
+#define SHADOW_CACHE
+bool cachedShadow(vec3 hp, out vec3 sh) {
+    vec3 prev = hp + cameraPosition - previousCameraPosition;
+    vec4 pc = gbufferPreviousProjection * (gbufferPreviousModelView * vec4(prev, 1.0));
+    if (pc.w <= 0.0) return false;
+    vec2 uv = pc.xy / pc.w * 0.5 + 0.5;
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return false;
+    vec4 c = texture(colortex5, uv);
+    float d = length(prev);
+    if (abs(c.a - d) > 0.03 * d + 0.15) return false;   // something else was in front of it
+    sh = c.rgb;
+    return true;
+}
+
 #if defined USE_RT && (defined RT_AO || defined RT_GI)
     #include "/lib/shadow.glsl"
     #include "/lib/reflect.glsl"
 #endif
 #include "/lib/lights.glsl"
 
-uniform sampler2D colortex1, colortex2, colortex3, colortex4, depthtex0;
-uniform mat4 gbufferPreviousModelView, gbufferPreviousProjection;
-uniform vec3 previousCameraPosition;
 
 in vec2 texcoord;
 flat in vec3 sunCol, skyAmb, lightDir, sunDir;

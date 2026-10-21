@@ -21,7 +21,13 @@ vec3 traceRadiance(vec3 p, vec3 dir, float tmax, vec3 L, vec3 sunCol, vec3 skyAm
     vec3 sh = vec3(0.0);
     // a second ray: is the hit in shadow? Far away (only in reflections) the hit's sky light stands in for it
     if (dot(hn, L) > 0.0 || mat == MAT_FOLIAGE)
+    {
+  #ifdef SHADOW_CACHE
+        // a hit that was on screen last frame already has its (soft, averaged) sun shadow: no ray needed
+        if (!cachedShadow(hp, sh))
+  #endif
         sh = t < 48.0 ? sunShadow(hp, hn, L, mat) : vec3(smoothstep(0.8, 0.95, hl.y));
+    }
     return a * surfaceLight(hp, hn, hl, 1.0, mat, L, sunCol, skyAmb, sh) + emission(a, mat);
 }
 
