@@ -41,7 +41,7 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     ls "$G"/hs_err_pid*.log >/dev/null 2>&1 && mv "$G"/hs_err_pid*.log "$OUT/$name/"
     ls -d "$G"/crash-reports/* >/dev/null 2>&1 && cp -r "$G/crash-reports" "$OUT/$name/"
     echo "screenshots: $(ls "$OUT/$name"/shot-*.png 2>/dev/null | wc -l)"
-    grep -E "GPU fault|validation|failed" "$OUT/$name/client.log" 2>/dev/null | head -10 | cut -c1-300
+    grep -E "GPU fault|debug:|validation|failed" "$OUT/$name/client.log" 2>/dev/null | head -10 | cut -c1-300
     grep -vE "^\s*$" "$OUT/$name/mgl.log" 2>/dev/null | sort | uniq -c | sort -rn | head -15 | cut -c1-220
     grep -E "joined the game|ERROR|Exception" "$OUT/$name/latest.log" 2>/dev/null | grep -viE "sound|openal" | head -8 | cut -c1-220
 }
@@ -49,7 +49,7 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
 for p in $PHASES; do
     case $p in
     title) run_phase title 150 "" false MGL_DEBUG_DRAWS=1 MTL_DEBUG_LAYER=1 ;;
-    world) run_phase world 240 metal false MGL_DEBUG_DRAWS=1 ;;
+    world) run_phase world 240 metal false MGL_DEBUG_DRAWS=1 MTL_SHADER_VALIDATION=1 ;;
     complementary) run_phase complementary 300 metal true ;;
     esac
 done

@@ -41,6 +41,7 @@ static int opt(const char *name)
     const char *e = getenv(name);
     return e && *e && *e != '0';
 }
+static unsigned long frame_draws, frame_sections, frame_dispatches; /* reset at each present */
 static int opt_archive = -1, opt_async_pipes = -1, opt_pacing = -1;
 static void read_options(void)
 {
@@ -480,14 +481,59 @@ void mglb_program_label(mglb_program *p, const char *label)
         snprintf(p->label, sizeof p->label, "%s", label);
 }
 
+static int debug_draws(void)
+{
+    static int on = -1;
+    if (on < 0)
+        on = opt("MGL_DEBUG_DRAWS");
+    return on;
+}
+
+/* Debug: does any index (plus base vertex) point past the end of a per-vertex buffer? Reads the indices on the
+   CPU (buffers are shared memory). Reports each program once. */
+static void check_vertex_range(const mgl_draw *d, int count, size_t ioff, int base)
+{
+    if (!d->index_buf || count <= 0)
+        return;
+    size_t isz = d->index_type == GL_UNSIGNED_SHORT ? 2 : 4;
+    if (ioff + isz * (size_t)count > d->index_buf->size) {
+        mgl_log("debug: %s reads indices %zu..%zu but the index buffer holds %zu bytes", d->program->label, ioff,
+                ioff + isz * (size_t)count, d->index_buf->size);
+        return;
+    }
+    const unsigned char *ip = (const unsigned char *)d->index_buf->ptr + ioff;
+    long maxi = 0;
+    for (int i = 0; i < count; i++) {
+        long v = isz == 2 ? ((const uint16_t *)ip)[i] : (long)((const uint32_t *)ip)[i];
+        if (v > maxi)
+            maxi = v;
+    }
+    maxi += base;
+    for (int b = 0; b < d->num_vbufs; b++) {
+        const mgl_vertex_buf *vb = &d->vbufs[b];
+        if (vb->stride <= 0 || vb->divisor)
+            continue;
+        long have = vb->buf->size > vb->offset ? (long)((vb->buf->size - vb->offset) / (size_t)vb->stride) : 0;
+        if (maxi >= have) {
+            static uint32_t seen[64];
+            static int nseen;
+            for (int k = 0; k < nseen; k++)
+                if (seen[k] == d->program->id)
+                    return;
+            if (nseen < 64)
+                seen[nseen++] = d->program->id;
+            mgl_log("debug: %s reads vertex %ld but vertex buffer %d (offset %zu, stride %d, %zu bytes) holds %ld vertices",
+                    d->program->label, maxi, b, vb->offset, vb->stride, vb->buf->size, have);
+        }
+    }
+}
+
 /* MGL_DEBUG_DRAWS=1: finish the GPU after every draw and dispatch, and name the first one that faults.
    Very slow; for finding which program hangs or crashes the GPU. */
 static void debug_sync(const char *what, const mgl_draw *d, long a, long b)
 {
-    static int on = -1, reported;
-    if (on < 0)
-        on = opt("MGL_DEBUG_DRAWS");
-    if (!on || reported)
+    static int reported;
+    if (!debug_draws() || reported)
         return;
     commit();
     [last_cb waitUntilCompleted];
@@ -1421,6 +1467,15 @@ void mglb_draw(const mgl_draw *d)
     bind_stage_resources(e, nil, d, 1);
     if (d->uses_scene)
         bind_scene(e, nil);
+    if (debug_draws()) {
+        if (d->multi_n > 0)
+            for (int i = 0; i < d->multi_n; i++)
+                check_vertex_range(d, d->multi_count[i], (size_t)d->multi_offset[i], d->multi_base[i]);
+        else
+            check_vertex_range(d, d->count, d->index_offset, d->base_vertex);
+    }
+    frame_draws++;
+    frame_sections += d->multi_n > 0 ? d->multi_n : 0;
     if (d->multi_n > 0) {
         id<MTLBuffer> ib = OBJ(id<MTLBuffer>, d->index_buf->mtl);
         MTLIndexType it = d->index_type == GL_UNSIGNED_SHORT ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32;
@@ -1456,6 +1511,7 @@ void mglb_dispatch(const mgl_draw *d, int gx, int gy, int gz)
                              (NSUInteger)(d->local_size[1] > 0 ? d->local_size[1] : 1),
                              (NSUInteger)(d->local_size[2] > 0 ? d->local_size[2] : 1));
     [c dispatchThreadgroups:MTLSizeMake((NSUInteger)gx, (NSUInteger)gy, (NSUInteger)gz) threadsPerThreadgroup:tg];
+    frame_dispatches++;
     debug_sync("dispatch", d, (long)gx * gy * gz, 0);
 }
 
@@ -2024,7 +2080,9 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
     commit();
     archive_maybe_save();
     if (++c->frames % 600 == 1)
-        mgl_log("presented frame %llu (%dx%d), %lu pipelines", c->frames, c->w, c->h, (unsigned long)pipelines.count);
+        mgl_log("presented frame %llu (%dx%d), %lu pipelines; this frame: %lu draws (%lu terrain sections), %lu dispatches",
+                c->frames, c->w, c->h, (unsigned long)pipelines.count, frame_draws, frame_sections, frame_dispatches);
+    frame_draws = frame_sections = frame_dispatches = 0;
     /* keep at most ~2 frames in flight */
     if (cb_serial > 3)
         mglb_fence_wait(submitted_serial - 2, 100000000ull);
