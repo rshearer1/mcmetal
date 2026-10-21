@@ -54,6 +54,125 @@ static struct {
 } prof;
 static _Atomic uint64_t prof_gpu_ns;
 static mgl_target prof_last_target;
+
+/* MGL_PROFILE=2 also times every render, compute and blit pass on the GPU (Metal timestamp counters at pass
+   boundaries) and logs once a second the passes that took longest, by the first program they ran. */
+#define PT_MAX 384
+typedef struct pt_frame {
+    id<MTLCounterSampleBuffer> sb;
+    int n;
+    char label[PT_MAX][40];
+} pt_frame;
+static pt_frame *pt_cur;              /* the open command buffer's passes */
+static id<MTLCounterSampleBuffer> pt_pool[6];
+static unsigned pt_next;
+static int pt_ok = -1;
+static pthread_mutex_t pt_lock = PTHREAD_MUTEX_INITIALIZER;
+#define PT_SLOTS 64
+static struct { char label[40]; double ns; unsigned long n; } pt_sum[PT_SLOTS];
+static double pt_total_ns;
+static MTLTimestamp pt_cal_cpu, pt_cal_gpu;
+static double pt_ratio = 1; /* ns per GPU tick */
+
+static void pt_begin_cb(id<MTLCommandBuffer> c)
+{
+    if (opt_profile < 2)
+        return;
+    if (pt_ok < 0) {
+        pt_ok = 0;
+        if ([dev supportsCounterSampling:MTLCounterSamplingPointAtStageBoundary])
+            for (id<MTLCounterSet> set in dev.counterSets)
+                if ([set.name isEqualToString:MTLCommonCounterSetTimestamp]) {
+                    MTLCounterSampleBufferDescriptor *d = [MTLCounterSampleBufferDescriptor new];
+                    d.counterSet = set;
+                    d.storageMode = MTLStorageModeShared;
+                    d.sampleCount = PT_MAX * 2;
+                    pt_ok = 1;
+                    for (int i = 0; i < 6 && pt_ok; i++) {
+                        NSError *e = nil;
+                        pt_pool[i] = [dev newCounterSampleBufferWithDescriptor:d error:&e];
+                        pt_ok = pt_pool[i] != nil;
+                    }
+                }
+        mgl_log("profile: GPU pass timing %s", pt_ok ? "on" : "not supported on this GPU");
+        [dev sampleTimestamps:&pt_cal_cpu gpuTimestamp:&pt_cal_gpu];
+    }
+    if (!pt_ok)
+        return;
+    pt_frame *f = calloc(1, sizeof *f);
+    f->sb = pt_pool[pt_next++ % 6];
+    pt_cur = f;
+    [c addCompletedHandler:^(id<MTLCommandBuffer> done) {
+      (void)done;
+      if (f->n) {
+          NSData *data = [f->sb resolveCounterRange:NSMakeRange(0, (NSUInteger)f->n * 2)];
+          const MTLCounterResultTimestamp *ts = data.bytes;
+          pthread_mutex_lock(&pt_lock);
+          for (int i = 0; ts && i < f->n; i++) {
+              uint64_t a = ts[2 * i].timestamp, b = ts[2 * i + 1].timestamp;
+              if (a == MTLCounterErrorValue || b == MTLCounterErrorValue || b < a)
+                  continue;
+              double ns = (double)(b - a) * pt_ratio;
+              pt_total_ns += ns;
+              int k = 0;
+              while (k < PT_SLOTS && pt_sum[k].n && strcmp(pt_sum[k].label, f->label[i]))
+                  k++;
+              if (k == PT_SLOTS)
+                  k = PT_SLOTS - 1; /* table full: lump the rest into the last slot */
+              if (!pt_sum[k].n)
+                  snprintf(pt_sum[k].label, sizeof pt_sum[k].label, "%s", f->label[i]);
+              pt_sum[k].ns += ns;
+              pt_sum[k].n++;
+          }
+          pthread_mutex_unlock(&pt_lock);
+      }
+      free(f);
+    }];
+}
+
+/* the next pass's sample indices, or -1 when not timing */
+static int pt_pass(const char *label)
+{
+    if (!pt_cur || pt_cur->n >= PT_MAX)
+        return -1;
+    snprintf(pt_cur->label[pt_cur->n], sizeof pt_cur->label[0], "%s", label);
+    return pt_cur->n++;
+}
+
+static void pt_label(const char *label) /* name the current pass after the first program it runs */
+{
+    if (pt_cur && pt_cur->n && label && label[0] && !strncmp(pt_cur->label[pt_cur->n - 1], "pass ", 5))
+        snprintf(pt_cur->label[pt_cur->n - 1], sizeof pt_cur->label[0], "%s", label);
+}
+
+static void pt_report(double frames)
+{
+    MTLTimestamp cpu, gpu;
+    [dev sampleTimestamps:&cpu gpuTimestamp:&gpu];
+    static mach_timebase_info_data_t tb;
+    if (!tb.denom)
+        mach_timebase_info(&tb);
+    if (gpu > pt_cal_gpu && cpu > pt_cal_cpu)
+        pt_ratio = (double)(cpu - pt_cal_cpu) * tb.numer / tb.denom / (double)(gpu - pt_cal_gpu);
+    pt_cal_cpu = cpu;
+    pt_cal_gpu = gpu;
+    pthread_mutex_lock(&pt_lock);
+    int order[PT_SLOTS], m = 0;
+    for (int k = 0; k < PT_SLOTS; k++)
+        if (pt_sum[k].n)
+            order[m++] = k;
+    for (int i = 1; i < m; i++)
+        for (int j = i; j > 0 && pt_sum[order[j]].ns > pt_sum[order[j - 1]].ns; j--) {
+            int t = order[j]; order[j] = order[j - 1]; order[j - 1] = t;
+        }
+    mgl_log("profile: GPU busy %.2f ms per frame in passes (%d kinds); longest:", pt_total_ns * 1e-6 / frames, m);
+    for (int i = 0; i < m && i < 10; i++)
+        mgl_log("profile:   %6.2f ms  %4.1fx  %s", pt_sum[order[i]].ns * 1e-6 / frames, pt_sum[order[i]].n / frames,
+                pt_sum[order[i]].label);
+    memset(pt_sum, 0, sizeof pt_sum);
+    pt_total_ns = 0;
+    pthread_mutex_unlock(&pt_lock);
+}
 static unsigned long long frames_presented; /* for MGL_FRAME_DUMP */
 
 /* The mcmetal mod writes <game>/mcmetal/starting before switching the game to us, and goes back to Apple's
@@ -93,7 +212,7 @@ static void read_options(void)
     opt_archive = opt("MGL_BINARY_ARCHIVE") && getenv("MGL_CACHE_DIR");
     opt_async_pipes = opt("MGL_ASYNC_PIPELINES");
     opt_pacing = opt("MGL_FRAME_PACING");
-    opt_profile = opt("MGL_PROFILE");
+    opt_profile = getenv("MGL_PROFILE") ? atoi(getenv("MGL_PROFILE")) : 0;
     if (opt_archive || opt_async_pipes || opt_pacing)
         mgl_log("options: binary archive %d, async pipelines %d, frame pacing %d", opt_archive, opt_async_pipes, opt_pacing);
 }
@@ -118,6 +237,7 @@ static id<MTLCommandBuffer> current_cb(void)
         init_device();
         cb = [queue commandBuffer];
         prof.cbs++;
+        pt_begin_cb(cb);
         uint64_t serial = cb_serial = ++submitted_serial;
         [cb addCompletedHandler:^(id<MTLCommandBuffer> done) {
           uint64_t prev = atomic_load(&completed_serial);
@@ -147,6 +267,7 @@ static void end_encoders(void)
 static void commit(void)
 {
     end_encoders();
+    pt_cur = NULL;
     if (cb) {
         [cb commit];
         last_cb = cb;
@@ -159,7 +280,17 @@ static id<MTLBlitCommandEncoder> blit_encoder(void)
     if (benc)
         return benc;
     end_encoders();
-    benc = [current_cb() blitCommandEncoder];
+    id<MTLCommandBuffer> c = current_cb();
+    int k = pt_pass("blits");
+    if (k >= 0) {
+        MTLBlitPassDescriptor *d = [MTLBlitPassDescriptor blitPassDescriptor];
+        d.sampleBufferAttachments[0].sampleBuffer = pt_cur->sb;
+        d.sampleBufferAttachments[0].startOfEncoderSampleIndex = (NSUInteger)k * 2;
+        d.sampleBufferAttachments[0].endOfEncoderSampleIndex = (NSUInteger)k * 2 + 1;
+        benc = [c blitCommandEncoderWithDescriptor:d];
+    } else {
+        benc = [c blitCommandEncoder];
+    }
     prof.blits++;
     return benc;
 }
@@ -169,7 +300,17 @@ static id<MTLComputeCommandEncoder> compute_encoder(void)
     if (cenc)
         return cenc;
     end_encoders();
-    cenc = [current_cb() computeCommandEncoder];
+    id<MTLCommandBuffer> c = current_cb();
+    int k = pt_pass("pass compute");
+    if (k >= 0) {
+        MTLComputePassDescriptor *d = [MTLComputePassDescriptor computePassDescriptor];
+        d.sampleBufferAttachments[0].sampleBuffer = pt_cur->sb;
+        d.sampleBufferAttachments[0].startOfEncoderSampleIndex = (NSUInteger)k * 2;
+        d.sampleBufferAttachments[0].endOfEncoderSampleIndex = (NSUInteger)k * 2 + 1;
+        cenc = [c computeCommandEncoderWithDescriptor:d];
+    } else {
+        cenc = [c computeCommandEncoder];
+    }
     prof.computes++;
     return cenc;
 }
@@ -1541,7 +1682,18 @@ static id<MTLRenderCommandEncoder> begin_pass(const mgl_target *t, unsigned clea
     }
     rp.renderTargetWidth = (NSUInteger)t->width;
     rp.renderTargetHeight = (NSUInteger)t->height;
-    renc = [current_cb() renderCommandEncoderWithDescriptor:rp];
+    id<MTLCommandBuffer> c = current_cb();
+    char name[40];
+    snprintf(name, sizeof name, "pass %dx%d", t->width, t->height);
+    int k = pt_pass(name);
+    if (k >= 0) {
+        rp.sampleBufferAttachments[0].sampleBuffer = pt_cur->sb;
+        rp.sampleBufferAttachments[0].startOfVertexSampleIndex = (NSUInteger)k * 2;
+        rp.sampleBufferAttachments[0].endOfVertexSampleIndex = MTLCounterDontSample;
+        rp.sampleBufferAttachments[0].startOfFragmentSampleIndex = MTLCounterDontSample;
+        rp.sampleBufferAttachments[0].endOfFragmentSampleIndex = (NSUInteger)k * 2 + 1;
+    }
+    renc = [c renderCommandEncoderWithDescriptor:rp];
     prof.passes++;
     if (same_target(t, &prof_last_target) && !clear_colors && !clear_depth)
         prof.reopened++;
@@ -1929,6 +2081,7 @@ void mglb_draw(const mgl_draw *d)
     if (!ps)
         return;
     id<MTLRenderCommandEncoder> e = pass_for_draw(d);
+    pt_label(d->program->label);
     [e setRenderPipelineState:ps];
     int probe = probe_program(d);
     [e setDepthStencilState:get_depth_state(d->depth_test && d->target.depth && !probe, /* GL: no depth writes with the test off */
@@ -2568,6 +2721,8 @@ static void profile_frame(unsigned long draws)
             f * 1000.0 / ((double)(t - prof.start_ns) * 1e-6), ms, (double)prof.wait_ns * 1e-6 / f,
             (double)atomic_load(&prof_gpu_ns) * 1e-6 / f, prof.draws / f, prof.passes / f, prof.reopened / f, prof.dontcare / f,
             prof.blits / f, prof.computes / f, prof.cbs / f, prof.finishes / f, 100.0 * prof.skipped_presents / f);
+    if (pt_ok > 0)
+        pt_report(f);
     memset(&prof, 0, sizeof prof);
     prof.start_ns = t;
     atomic_store(&prof_gpu_ns, 0);
