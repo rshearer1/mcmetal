@@ -528,6 +528,74 @@ static void check_vertex_range(const mgl_draw *d, int count, size_t ioff, int ba
     }
 }
 
+/* After a fault: the draw's vertex layout, its first vertices and the start of its vertex-stage uniforms, so a
+   bad decode (garbage positions, huge triangles) shows up in the log. */
+static void describe_draw(const mgl_draw *d)
+{
+    static const char *tn[] = {"float", "half", "ubyte", "byte", "ushort", "short", "uint", "int"};
+    for (int b = 0; b < d->num_vbufs; b++)
+        mgl_log("debug: vertex buffer %d: offset %zu, stride %d, divisor %d, %zu bytes", b, d->vbufs[b].offset,
+                d->vbufs[b].stride, d->vbufs[b].divisor, d->vbufs[b].buf->size);
+    for (int i = 0; i < MGL_MAX_VERTEX_ATTRIBS; i++) {
+        const mgl_vertex_attr *a = &d->attrs[i];
+        if (!a->enabled)
+            continue;
+        mgl_log("debug: attribute %d: %s x%d%s%s, buffer %d, offset %zu", a->location, tn[a->type], a->size,
+                a->normalized ? " normalized" : "", a->integer ? " integer" : "", a->buffer, a->offset);
+        const mgl_vertex_buf *vb = &d->vbufs[a->buffer];
+        if (a->type != MGLV_FLOAT || vb->stride <= 0)
+            continue;
+        const unsigned char *base = (const unsigned char *)vb->buf->ptr + vb->offset + a->offset;
+        float lo[4] = {1e30f, 1e30f, 1e30f, 1e30f}, hi[4] = {-1e30f, -1e30f, -1e30f, -1e30f};
+        size_t n = (vb->buf->size - vb->offset) / (size_t)vb->stride;
+        for (size_t v = 0; v < n; v++)
+            for (int c = 0; c < a->size; c++) {
+                float f;
+                memcpy(&f, base + v * (size_t)vb->stride + 4 * (size_t)c, 4);
+                if (f < lo[c]) lo[c] = f;
+                if (f > hi[c]) hi[c] = f;
+            }
+        float f0[4] = {0};
+        memcpy(f0, base, 4 * (size_t)a->size);
+        mgl_log("debug:   first %g %g %g %g; range over %zu vertices x %g..%g y %g..%g z %g..%g", f0[0], f0[1], f0[2],
+                f0[3], n, lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]);
+    }
+    if (d->uniforms[0] && d->uniform_size[0] >= 4) {
+        const float *u = d->uniforms[0];
+        int n = d->uniform_size[0] / 4 < 40 ? d->uniform_size[0] / 4 : 40;
+        char line[1024];
+        int k = snprintf(line, sizeof line, "debug: vertex uniforms (%d bytes):", d->uniform_size[0]);
+        for (int i = 0; i < n && k < (int)sizeof line - 16; i++)
+            k += snprintf(line + k, sizeof line - (size_t)k, " %g", u[i]);
+        mgl_log("%s", line);
+    }
+    mgl_log("debug: blend %d, depth test %d write %d func 0x%x, cull %d, viewport %d %d %d %d", d->blend[0].enabled,
+            d->depth_test, d->depth_write, d->depth_func, d->cull, d->viewport[0], d->viewport[1], d->viewport[2],
+            d->viewport[3]);
+}
+
+/* MGL_SKIP_PROGRAMS=24,31: never draw with these GL programs (for bisecting a GPU fault). */
+static int skip_program(const mgl_draw *d)
+{
+    static int n = -1;
+    static unsigned ids[32];
+    if (n < 0) {
+        n = 0;
+        const char *e = getenv("MGL_SKIP_PROGRAMS");
+        while (e && *e && n < 32) {
+            ids[n++] = (unsigned)strtoul(e, (char **)&e, 10);
+            while (*e == ',' || *e == ' ')
+                e++;
+        }
+    }
+    unsigned gl = 0;
+    if (n && d->program && sscanf(d->program->label, "GL program %u", &gl) == 1)
+        for (int i = 0; i < n; i++)
+            if (ids[i] == gl)
+                return 1;
+    return 0;
+}
+
 /* MGL_DEBUG_DRAWS=1: finish the GPU after every draw and dispatch, and name the first one that faults.
    Very slow; for finding which program hangs or crashes the GPU. */
 static void debug_sync(const char *what, const mgl_draw *d, long a, long b)
@@ -543,6 +611,7 @@ static void debug_sync(const char *what, const mgl_draw *d, long a, long b)
                 "target %dx%d): %s", what, d->program && d->program->label[0] ? d->program->label : "unlabelled program", a, b,
                 d->instances, d->index_type, d->multi_n, d->num_vbufs, d->target.width, d->target.height,
                 last_cb.error.localizedDescription.UTF8String);
+        describe_draw(d);
     }
 }
 
@@ -1433,6 +1502,8 @@ void mglb_draw(const mgl_draw *d)
         return;
     }
     if (d->cull && d->cull_face == GL_FRONT_AND_BACK && d->primitive >= GL_TRIANGLES)
+        return;
+    if (skip_program(d))
         return;
     id<MTLRenderPipelineState> ps = get_pipeline(d, &d->target);
     if (!ps)
