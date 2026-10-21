@@ -154,6 +154,7 @@ typedef struct mgl_rt_geom {
     unsigned gen;          /* bumped when the vertex data may have changed */
     float region[3];       /* camera-relative region origin this frame */
     int translucent;       /* drawn with blending (Sodium's translucent pass: glass, water, ice) */
+    int ent_off;           /* byte offset of Iris's block id (iris_Entity) from the position, or -1 */
 } mgl_rt_geom;
 /* The terrain sections live this frame; the backend keeps one acceleration structure per section (cached by
    buffer, range and gen) and rebuilds the scene from them. Bound at MGL_BUF_SCENE for programs with uses_scene. */

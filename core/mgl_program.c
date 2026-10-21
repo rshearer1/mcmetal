@@ -248,6 +248,11 @@ GLboolean glIsShader(GLuint name) { return shader_obj(name) != NULL; }
 /* Hardware ray tracing for shader packs (step 2). A pack declares the prototype
        float mcm_trace(vec3 origin, vec3 dir, float tmax);   // distance to the first block hit, or -1
        float mcm_trace_cut(vec3 origin, vec3 dir, float tmax, out uint cut); // same; cut = the hit's alpha cutoff (0 = solid)
+       float mcm_trace_hit(vec3 origin, vec3 dir, float tmax, out vec3 normal, out vec4 albedo, out vec2 lightmap,
+                           out int blockId);  // closest hit: face normal, atlas texel * vertex colour, Sodium light
+                                              // (block, sky; 0..1), Iris block id (-1 unless the terrain pass reads mc_Entity)
+       float mcm_trace_tinted(vec3 origin, vec3 dir, float tmax, out vec3 transmit); // as mcm_trace; on a miss,
+                                              // transmit = colour filter of the glass/water/ice on the way (1 = clear)
    in plain GLSL (so Iris's own parser accepts it) and calls it; origin/dir are in Iris's player space
    (camera-relative world space). We supply the body with a GL_EXT_ray_query against the terrain scene. */
 static void add_ray_tracing(mgl_shader *s)
@@ -268,25 +273,81 @@ static void add_ray_tracing(mgl_shader *s)
                                "layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer McmTris { uint w[]; };\n"
                                "layout(std430, binding = 15) readonly buffer McmInstances { McmTris mcm_tris[]; };\n"
                                "uniform sampler2D mcm_atlas;\n";
+    /* McmTris: 12 words per triangle, written by rt_decode (mac/mgl_metal.m): 0-2 uv, 3 cutoff | 0x100 translucent,
+       4-6 colour, 7 octahedral normal, 8-10 light, 11 Iris block id + 1. Candidates (every triangle is non-opaque)
+       pass Sodium's alpha test against the block atlas before they count. */
     static const char body[] =
-        "\nfloat mcm_trace_cut(vec3 origin, vec3 dir, float tmax, out uint cut_out) {\n"
+        "\nvec2 mcm_uv(McmTris t, uint b, vec2 w) {\n"
+        "  return (unpackUnorm2x16(t.w[b]) * (1.0 - w.x - w.y) + unpackUnorm2x16(t.w[b + 1u]) * w.x\n"
+        "          + unpackUnorm2x16(t.w[b + 2u]) * w.y) * (65535.0 / 32768.0);\n"
+        "}\n"
+        "vec4 mcm_colour(McmTris t, uint b, vec2 w) {\n"
+        "  return unpackUnorm4x8(t.w[b + 4u]) * (1.0 - w.x - w.y) + unpackUnorm4x8(t.w[b + 5u]) * w.x\n"
+        "       + unpackUnorm4x8(t.w[b + 6u]) * w.y;\n"
+        "}\n"
+        "bool mcm_opaque_at(McmTris t, uint b, vec2 w) {\n"
+        "  uint cut = t.w[b + 3u] & 0xFFu;\n"
+        "  return cut == 0u || textureLod(mcm_atlas, mcm_uv(t, b, w), 0.0).a >= (cut == 3u ? 1.0 : 0.1);\n"
+        "}\n"
+        "#define MCM_QUERY(q, flags, o, d, tmax) \\\n"
+        "  rayQueryInitializeEXT(q, mcm_scene, flags, 0x01, o, 0.001, d, tmax); \\\n"
+        "  while (rayQueryProceedEXT(q)) { \\\n"
+        "    McmTris t_ = mcm_tris[rayQueryGetIntersectionInstanceIdEXT(q, false)]; \\\n"
+        "    uint b_ = uint(rayQueryGetIntersectionPrimitiveIndexEXT(q, false)) * 12u; \\\n"
+        "    if (mcm_opaque_at(t_, b_, rayQueryGetIntersectionBarycentricsEXT(q, false))) \\\n"
+        "      rayQueryConfirmIntersectionEXT(q); \\\n"
+        "  }\n"
+        "#define MCM_MISSED(q) (rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionNoneEXT)\n"
+        "float mcm_trace(vec3 origin, vec3 dir, float tmax) {\n"
         "  rayQueryEXT q;\n"
-        "  rayQueryInitializeEXT(q, mcm_scene, gl_RayFlagsTerminateOnFirstHitEXT, 0x01, origin, 0.001, dir, tmax);\n"
-        "  cut_out = 0u;\n"
+        "  MCM_QUERY(q, gl_RayFlagsTerminateOnFirstHitEXT, origin, dir, tmax)\n"
+        "  return MCM_MISSED(q) ? -1.0 : rayQueryGetIntersectionTEXT(q, true);\n"
+        "}\n"
+        "float mcm_trace_cut(vec3 origin, vec3 dir, float tmax, out uint cut) {\n"
+        "  rayQueryEXT q;\n"
+        "  MCM_QUERY(q, gl_RayFlagsTerminateOnFirstHitEXT, origin, dir, tmax)\n"
+        "  cut = 0u;\n"
+        "  if (MCM_MISSED(q)) return -1.0;\n"
+        "  McmTris t = mcm_tris[rayQueryGetIntersectionInstanceIdEXT(q, true)];\n"
+        "  cut = t.w[uint(rayQueryGetIntersectionPrimitiveIndexEXT(q, true)) * 12u + 3u] & 0xFFu;\n"
+        "  return rayQueryGetIntersectionTEXT(q, true);\n"
+        "}\n"
+        "float mcm_trace_hit(vec3 origin, vec3 dir, float tmax, out vec3 normal, out vec4 albedo, out vec2 lightmap,\n"
+        "                    out int blockId) {\n"
+        "  rayQueryEXT q;\n"
+        "  MCM_QUERY(q, gl_RayFlagsNoneEXT, origin, dir, tmax)\n"
+        "  normal = vec3(0.0); albedo = vec4(0.0); lightmap = vec2(0.0); blockId = -1;\n"
+        "  if (MCM_MISSED(q)) return -1.0;\n"
+        "  McmTris t = mcm_tris[rayQueryGetIntersectionInstanceIdEXT(q, true)];\n"
+        "  uint b = uint(rayQueryGetIntersectionPrimitiveIndexEXT(q, true)) * 12u;\n"
+        "  vec2 w = rayQueryGetIntersectionBarycentricsEXT(q, true);\n"
+        "  vec2 on = unpackSnorm2x16(t.w[b + 7u]);\n"
+        "  vec3 n = vec3(on, 1.0 - abs(on.x) - abs(on.y));\n"
+        "  if (n.z < 0.0) n.xy = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);\n"
+        "  normal = normalize(n);\n"
+        "  if (dot(normal, dir) > 0.0) normal = -normal; /* the face the ray hit */\n"
+        "  albedo = textureLod(mcm_atlas, mcm_uv(t, b, w), 0.0) * vec4(mcm_colour(t, b, w).rgb, 1.0);\n"
+        "  uvec3 l = uvec3(t.w[b + 8u], t.w[b + 9u], t.w[b + 10u]);\n"
+        "  vec3 wv = vec3(1.0 - w.x - w.y, w.x, w.y);\n"
+        "  lightmap = vec2(dot(vec3(l & 0xFFu), wv), dot(vec3((l >> 8u) & 0xFFu), wv)) / 256.0;\n"
+        "  blockId = int(t.w[b + 11u]) - 1;\n"
+        "  return rayQueryGetIntersectionTEXT(q, true);\n"
+        "}\n"
+        "float mcm_trace_tinted(vec3 origin, vec3 dir, float tmax, out vec3 transmit) {\n"
+        "  float hit = mcm_trace(origin, dir, tmax);\n"
+        "  transmit = vec3(hit >= 0.0 ? 0.0 : 1.0);\n"
+        "  if (hit >= 0.0) return hit;\n"
+        "  rayQueryEXT q; /* nothing solid on the way: filter through every translucent face (glass, water, ice) */\n"
+        "  rayQueryInitializeEXT(q, mcm_scene, gl_RayFlagsNoneEXT, 0x02, origin, 0.001, dir, tmax);\n"
         "  while (rayQueryProceedEXT(q)) {\n"
         "    McmTris t = mcm_tris[rayQueryGetIntersectionInstanceIdEXT(q, false)];\n"
-        "    uint base = uint(rayQueryGetIntersectionPrimitiveIndexEXT(q, false)) * 4u;\n"
-        "    uint cut = t.w[base + 3u];\n"
-        "    if (cut == 0u) { cut_out = 0u; rayQueryConfirmIntersectionEXT(q); continue; }\n"
-        "    vec2 b = rayQueryGetIntersectionBarycentricsEXT(q, false);\n"
-        "    vec2 uv = (unpackUnorm2x16(t.w[base]) * (1.0 - b.x - b.y) + unpackUnorm2x16(t.w[base + 1u]) * b.x\n"
-        "             + unpackUnorm2x16(t.w[base + 2u]) * b.y) * (65535.0 / 32768.0);\n"
-        "    if (textureLod(mcm_atlas, uv, 0.0).a >= (cut == 3u ? 1.0 : 0.1)) { cut_out = cut; rayQueryConfirmIntersectionEXT(q); }\n"
+        "    uint b = uint(rayQueryGetIntersectionPrimitiveIndexEXT(q, false)) * 12u;\n"
+        "    vec2 w = rayQueryGetIntersectionBarycentricsEXT(q, false);\n"
+        "    vec4 tex = textureLod(mcm_atlas, mcm_uv(t, b, w), 0.0);\n"
+        "    transmit *= mix(vec3(1.0), tex.rgb * mcm_colour(t, b, w).rgb, tex.a);\n"
         "  }\n"
-        "  return rayQueryGetIntersectionTypeEXT(q, true) != gl_RayQueryCommittedIntersectionNoneEXT\n"
-        "      ? rayQueryGetIntersectionTEXT(q, true) : -1.0;\n"
-        "}\n"
-        "float mcm_trace(vec3 origin, vec3 dir, float tmax) { uint c; return mcm_trace_cut(origin, dir, tmax, c); }\n";
+        "  return -1.0;\n"
+        "}\n";
     size_t pre = (size_t)(v - s->source), rest = strlen(eol + 1);
     char *n = malloc(pre + sizeof head + rest + sizeof body);
     memcpy(n, s->source, pre);
