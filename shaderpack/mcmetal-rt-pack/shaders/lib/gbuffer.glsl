@@ -157,6 +157,9 @@ void main() {
       #else
     vec3 refl = skyColor(reflect(v, n), sunDirection()) * skyOpen;
       #endif
+    // soften very bright mirrored points (lights and the sun on tiny wave facets): one sample per pixel, no history
+    // here, so they would sparkle as single-pixel specks
+    refl /= 1.0 + luma(refl) * 0.08;
     col = mix(col, refl, f);
     c.a = mix(c.a, 1.0, f);
     #endif
