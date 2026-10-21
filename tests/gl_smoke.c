@@ -376,22 +376,31 @@ int main(void)
 
     /* 8. the game's own terrain draw, replayed: real camera matrices and region offset from a CI game run, a
        4 MB vertex buffer with the quad near its end (base vertex 192032), glMultiDrawElementsBaseVertex, the
-       same program as test 6. The quad is placed 5 blocks in front of the camera, so it must cover the centre. */
-    {
-        static const float proj[16] = {0.91201955f, 0, -0.0f, -0.0f, 0, 1.4301808f, -0.0f, -0.0f, 0, 0, -1.0002604f, -1,
-                                       0, -0.0f, -0.10001303f, -0.0f};
-        static const float mv[16] = {0.86602533f, -0.24999994f, 0.43301257f, 0, 0, 0.86602527f, 0.49999997f, 0,
-                                     -0.49999985f, -0.43301269f, 0.74999994f, 0, 0, 0, 0, 1};
-        const float reg[3] = {-71.5f, -5.6182251f, -9.5f};
-        const unsigned draw_id = 128; /* section (4, 0, 0) of the region */
-        const float rel[3] = {64, 0, 0};
-        /* view space -> world: mv is a pure rotation, so its transpose inverts it */
+       same program as test 6. Variants switch one ingredient off at a time to find the one that breaks. */
+    for (int variant = 0; variant < 5; variant++) {
+        static const char *vname[] = {"all game ingredients", "single draw instead of multi-draw",
+                                      "identity camera instead of the game's", "small buffer and base vertex",
+                                      "region offset 0, draw id 0"};
+        int multi = variant != 1, real_cam = variant != 2, big_buf = variant != 3, real_region = variant != 4;
+        static const float proj_game[16] = {0.91201955f, 0, -0.0f, -0.0f, 0, 1.4301808f, -0.0f, -0.0f, 0, 0, -1.0002604f, -1,
+                                            0, -0.0f, -0.10001303f, -0.0f};
+        static const float mv_game[16] = {0.86602533f, -0.24999994f, 0.43301257f, 0, 0, 0.86602527f, 0.49999997f, 0,
+                                          -0.49999985f, -0.43301269f, 0.74999994f, 0, 0, 0, 0, 1};
+        const float *proj = real_cam ? proj_game : ident, *mv = real_cam ? mv_game : ident;
+        const float reg[3] = {real_region ? -71.5f : 0, real_region ? -5.6182251f : 0, real_region ? -9.5f : 0};
+        const unsigned draw_id = real_region ? 128 : 0; /* section (4, 0, 0) of the region */
+        const float rel[3] = {real_region ? 64.0f : 0, 0, 0};
+        /* game camera: 5 blocks in front in view space; identity: straight into clip space */
         float view[4][3] = {{-1, -1, -5}, {1, -1, -5}, {1, 1, -5}, {-1, 1, -5}};
-        const size_t big = 3870720, base = 192032;
+        if (!real_cam)
+            for (int i = 0; i < 4; i++) {
+                view[i][0] *= 0.5f; view[i][1] *= 0.5f; view[i][2] = 0.5f;
+            }
+        const size_t big = big_buf ? 3870720 : 400, base = big_buf ? 192032 : 4;
         unsigned char *vb = calloc(1, big);
         for (int i = 0; i < 4; i++) {
             float w[3];
-            for (int r = 0; r < 3; r++) /* world[r] = sum_c mv[r*4+c] * view[c] (transpose of column-major mv) */
+            for (int r = 0; r < 3; r++) /* world = transpose(mv) * view, mv being a pure rotation */
                 w[r] = mv[r * 4 + 0] * view[i][0] + mv[r * 4 + 1] * view[i][1] + mv[r * 4 + 2] * view[i][2];
             unsigned c[3];
             for (int k = 0; k < 3; k++)
@@ -406,8 +415,7 @@ int main(void)
             memcpy(v + 12, uv, 4);
             v[16] = 8; v[17] = 8; v[18] = 1; v[19] = (unsigned char)draw_id;
         }
-        /* both windings, as the camera may see either side */
-        unsigned qidx[12] = {0, 1, 2, 2, 3, 0, 0, 3, 2, 2, 1, 0};
+        unsigned qidx[12] = {0, 1, 2, 2, 3, 0, 0, 3, 2, 2, 1, 0}; /* both windings */
         GLuint rvao, rbuf[2];
         glGenVertexArrays(1, &rvao);
         glBindVertexArray(rvao);
@@ -437,20 +445,22 @@ int main(void)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LEQUAL);
-        glEnable(GL_CULL_FACE);
-        GLsizei counts[3] = {12, 6, 6};
-        const void *offs[3] = {(void *)0, (void *)0, (void *)24};
-        GLint bases[3] = {(GLint)base, (GLint)base, (GLint)base};
-        glMultiDrawElementsBaseVertex(GL_TRIANGLES, counts, GL_UNSIGNED_INT, offs, 3, bases);
+        if (multi) {
+            GLsizei counts[3] = {12, 6, 6};
+            const void *offs[3] = {(void *)0, (void *)0, (void *)24};
+            GLint bases[3] = {(GLint)base, (GLint)base, (GLint)base};
+            glMultiDrawElementsBaseVertex(GL_TRIANGLES, counts, GL_UNSIGNED_INT, offs, 3, bases);
+        } else
+            glDrawElementsBaseVertex(GL_TRIANGLES, 12, GL_UNSIGNED_INT, (void *)0, (GLint)base);
         glFinish();
-        glDisable(GL_CULL_FACE);
         glDisable(GL_DEPTH_TEST);
         glActiveTexture(GL_TEXTURE0);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glBindVertexArray(vao);
         read_texture(rb, tex, ssbo, px);
-        printf("      replay centre pixel %08x (want ff0080ff)\n", px[32 * 64 + 32]);
-        check(near(px[32 * 64 + 32], rgba(255, 128, 0, 255)), "game terrain draw replayed (real camera, multi-draw, big base vertex)");
+        char what[160];
+        snprintf(what, sizeof what, "game terrain draw replayed: %s (centre pixel %08x)", vname[variant], px[32 * 64 + 32]);
+        check(near(px[32 * 64 + 32], rgba(255, 128, 0, 255)), what);
     }
 
     /* 5. hardware ray tracing: a shader using mcm_trace must compile on Metal (no scene bound: no hits) */
