@@ -2462,7 +2462,9 @@ void mglb_rt_update(const mgl_rt_geom *g, int n)
         d->transformationMatrix.columns[1] = MTLPackedFloat3Make(0, 1, 0);
         d->transformationMatrix.columns[2] = MTLPackedFloat3Make(0, 0, 1);
         d->transformationMatrix.columns[3] = MTLPackedFloat3Make(g[i].region[0], g[i].region[1], g[i].region[2]);
-        d->options = MTLAccelerationStructureInstanceOptionOpaque;
+        /* no instance Opaque flag: it overrides geometry opaque = NO, so cutout triangles would never reach the
+           alpha test in mcm_trace (every hit was solid; foliage cast square shadows) */
+        d->options = MTLAccelerationStructureInstanceOptionNone;
         d->mask = g[i].translucent ? 0x02 : 0x01; /* mcm_trace sees solid and cutout terrain only (mask 1) */
         d->accelerationStructureIndex = (uint32_t)count;
         d->userID = (uint32_t)i;
