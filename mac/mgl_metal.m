@@ -165,10 +165,11 @@ static void pt_report(double frames)
         for (int j = i; j > 0 && pt_sum[order[j]].ns > pt_sum[order[j - 1]].ns; j--) {
             int t = order[j]; order[j] = order[j - 1]; order[j - 1] = t;
         }
-    mgl_log("profile: GPU busy %.2f ms per frame in passes (%d kinds); longest:", pt_total_ns * 1e-6 / frames, m);
-    for (int i = 0; i < m && i < 10; i++)
-        mgl_log("profile:   %6.2f ms  %4.1fx  %s", pt_sum[order[i]].ns * 1e-6 / frames, pt_sum[order[i]].n / frames,
-                pt_sum[order[i]].label);
+    mgl_log("profile: GPU pass time %.3g units per frame (%d kinds, tick ratio %.4g); largest shares:",
+            pt_total_ns / frames, m, pt_ratio);
+    for (int i = 0; i < m && i < 12; i++)
+        mgl_log("profile:   %5.1f%%  %4.1fx  %s", 100.0 * pt_sum[order[i]].ns / (pt_total_ns > 0 ? pt_total_ns : 1),
+                pt_sum[order[i]].n / frames, pt_sum[order[i]].label);
     memset(pt_sum, 0, sizeof pt_sum);
     pt_total_ns = 0;
     pthread_mutex_unlock(&pt_lock);
@@ -880,10 +881,19 @@ static id<MTLFunction> compile_fn_lib(const char *msl, NSString *what, char **er
     NSError *e = nil;
     MTLCompileOptions *o = [[MTLCompileOptions alloc] init];
     o.languageVersion = MTLLanguageVersion3_1; /* 3.1: native texture atomics (Rethinking Voxels) */
+    /* GLSL lets compilers reassociate and contract floating-point maths, and Apple's OpenGL compiles with fast
+       maths. Safe mode cost about a quarter of the GPU time in every shader-pack pass on an M3 Max. Relaxed keeps
+       NaN and infinity behaving (packs test for them); MGL_MATH=safe|relaxed|fast overrides. */
+    static int math = -1;
+    if (math < 0) {
+        const char *m = getenv("MGL_MATH");
+        math = m && !strcmp(m, "safe") ? 0 : m && !strcmp(m, "fast") ? 2 : 1;
+        mgl_log("shader maths: %s", math == 0 ? "safe" : math == 2 ? "fast" : "relaxed");
+    }
     if (@available(macOS 15.0, *))
-        o.mathMode = MTLMathModeSafe; /* GL semantics: no fast-math reassociation surprises */
+        o.mathMode = math == 0 ? MTLMathModeSafe : math == 2 ? MTLMathModeFast : MTLMathModeRelaxed;
     else
-        o.fastMathEnabled = NO;
+        o.fastMathEnabled = math > 0;
     id<MTLLibrary> lib = [dev newLibraryWithSource:[NSString stringWithUTF8String:msl] options:o error:&e];
     if (!lib) {
         if (err)
