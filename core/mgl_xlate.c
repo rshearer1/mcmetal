@@ -656,7 +656,7 @@ static char *rename_vulkan_words(const char *src)
                                 "sinpi", "cospi", "tanpi", "rint", "copysign", "fdim", "popcount", "clz", "ctz",
                                 "extract_bits", "insert_bits", "reverse_bits", "mulhi", "hadd", "rhadd",
                                 "addsat", "subsat", "abs_diff", "max3", "min3", "median3", "fmin3", "fmax3",
-                                "saturate", "divide", "recip", "as_type", NULL};
+                                "saturate", "divide", "recip", "as_type", "conjunction", "disjunction", "negation", NULL};
     if (!src)
         return NULL;
     size_t len = strlen(src), cap = len + 64, o = 0;
