@@ -113,6 +113,9 @@ scene() { # time [weather [stage]]: copy the test datapack into the world; it bu
     local f="$G/saves/metal/datapacks/mcm-scene/data/mcm/function"
     printf 'time set %s\nweather %s 100000\n' "$1" "${2:-clear}" > "$f/time.mcfunction"
     echo "function mcm:${3:-scene}" > "$f/build.mcfunction"
+    # a fresh tag per phase: the player keeps tags in the shared save, so a fixed tag would skip the build (and its
+    # time of day) in every phase after the first
+    perl -pi -e "s/(tag=!?|add )mcm\\b/\$1mcm$RANDOM$RANDOM/g" "$f/tick.mcfunction"
     [ "${3:-scene}" = showcase ] && echo 'tp @s ~ ~ ~ -90 0' > "$f/look.mcfunction"
     [ "${3:-scene}" = room ] && echo 'tp @s ~ ~ ~ -90 12' > "$f/look.mcfunction"
     [ -n "${GAME_LOOK:-}" ] && echo "tp @s ~ ~ ~ $GAME_LOOK" > "$f/look.mcfunction" # GAME_LOOK="yaw pitch"
