@@ -68,6 +68,13 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
                 bench_from=$(grep -c '\] fps ' "$WORK/client.log" 2>/dev/null)
                 echo "world on screen, measuring ${GAME_BENCH_SECS:-30}s"
                 sleep "${GAME_BENCH_SECS:-30}"
+                # after measuring: where the CPU goes (native stacks, mcmetal symbolised) and what the Java render
+                # thread is doing, for phases whose frame time isn't GPU time
+                pid=$(cat "$WORK/client.pid" 2>/dev/null)
+                if [ -n "$pid" ]; then
+                    sample "$pid" 5 -mayDie -file "$OUT/$name/sample.txt" >/dev/null 2>&1
+                    for k in 1 2 3; do jcmd "$pid" Thread.print 2>/dev/null | awk '/^"Render thread"/,/^$/' >> "$OUT/$name/render-thread.txt"; sleep 1; done
+                fi
                 touch "$OUT/$name/shoot"; sleep 3; rm -f "$OUT/$name/shoot"; break
             fi
             continue
