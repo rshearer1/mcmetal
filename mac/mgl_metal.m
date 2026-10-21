@@ -41,7 +41,7 @@ static int opt(const char *name)
     const char *e = getenv(name);
     return e && *e && *e != '0';
 }
-static unsigned long frame_draws, frame_sections, frame_dispatches; /* reset at each present */
+static unsigned long frame_draws, frame_sections, frame_dispatches, frame_probes; /* reset at each present */
 static int opt_archive = -1, opt_async_pipes = -1, opt_pacing = -1;
 static void read_options(void)
 {
@@ -874,6 +874,7 @@ typedef struct pipe_key {
     struct { uint16_t on, mask, eq_rgb, eq_a, src_rgb, dst_rgb, src_a, dst_a; } blend[MGL_MAX_ATTACHMENTS];
     struct { uint16_t format; uint8_t buffer, enabled; uint32_t offset; } attr[MGL_MAX_VERTEX_ATTRIBS];
     struct { uint32_t stride, divisor; uint8_t constant; } layout[MGL_MAX_VERTEX_BUFFERS];
+    uint32_t probe; /* MGL_PROBE_PROGRAMS: solid magenta fragment stage */
 } pipe_key;
 
 static NSMutableDictionary<NSData *, id<MTLRenderPipelineState>> *pipelines;
@@ -881,6 +882,44 @@ static NSMutableDictionary<NSNumber *, id<MTLDepthStencilState>> *depth_states;
 static NSMutableDictionary<NSData *, id<MTLSamplerState>> *samplers;
 
 static uint16_t small_enum(int e) { return (uint16_t)e; } /* every blend enum fits in 16 bits */
+
+/* MGL_PROBE_PROGRAMS=3,24: draw these GL programs solid magenta with no depth test, culling or blending, so a
+   screenshot shows where their geometry really lands (debugging invisible draws). */
+static int probe_program(const mgl_draw *d)
+{
+    static int n = -1;
+    static unsigned ids[32];
+    if (n < 0) {
+        n = 0;
+        const char *e = getenv("MGL_PROBE_PROGRAMS");
+        while (e && *e && n < 32) {
+            ids[n++] = (unsigned)strtoul(e, (char **)&e, 10);
+            while (*e == ',' || *e == ' ')
+                e++;
+        }
+    }
+    unsigned gl = 0;
+    if (n && d->program && sscanf(d->program->label, "GL program %u", &gl) == 1)
+        for (int i = 0; i < n; i++)
+            if (ids[i] == gl)
+                return 1;
+    return 0;
+}
+
+static id<MTLFunction> probe_fragment(void)
+{
+    static id<MTLFunction> fn;
+    if (!fn) {
+        NSError *e = nil;
+        id<MTLLibrary> lib = [dev newLibraryWithSource:@"#include <metal_stdlib>\nusing namespace metal;\n"
+                                                        "fragment float4 probe_frag() { return float4(1.0, 0.0, 1.0, 1.0); }\n"
+                                               options:nil error:&e];
+        fn = [lib newFunctionWithName:@"probe_frag"];
+        if (!fn)
+            mgl_log("probe shader: %s", e.localizedDescription.UTF8String);
+    }
+    return fn;
+}
 
 static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_target *t)
 {
@@ -921,6 +960,7 @@ static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_targ
         k.layout[i].constant = d->vbufs[i].stride == 0;
         k.layout[i].divisor = (uint32_t)d->vbufs[i].divisor;
     }
+    k.probe = (uint32_t)probe_program(d);
     /* consecutive draws usually share a pipeline: skip the dictionary (and its NSData key) for repeats */
     static pipe_key last_key;
     static id<MTLRenderPipelineState> last_ps;
@@ -945,6 +985,8 @@ static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_targ
     MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
     pd.vertexFunction = OBJ(id<MTLFunction>, d->program->vfn);
     pd.fragmentFunction = d->program->ffn ? OBJ(id<MTLFunction>, d->program->ffn) : nil;
+    if (k.probe)
+        pd.fragmentFunction = probe_fragment();
     for (int i = 0; i < MGL_MAX_ATTACHMENTS; i++) {
         if (!k.color[i])
             continue;
@@ -953,7 +995,9 @@ static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_targ
         const mgl_blend *b = &d->blend[i];
         c.writeMask = (b->color_mask & 1 ? MTLColorWriteMaskRed : 0) | (b->color_mask & 2 ? MTLColorWriteMaskGreen : 0) |
                       (b->color_mask & 4 ? MTLColorWriteMaskBlue : 0) | (b->color_mask & 8 ? MTLColorWriteMaskAlpha : 0);
-        c.blendingEnabled = k.blend[i].on;
+        if (k.probe)
+            c.writeMask = MTLColorWriteMaskAll;
+        c.blendingEnabled = k.blend[i].on && !k.probe;
         if (k.blend[i].on) {
             c.sourceRGBBlendFactor = blend_factor(b->src_rgb);
             c.destinationRGBBlendFactor = blend_factor(b->dst_rgb);
@@ -1510,8 +1554,9 @@ void mglb_draw(const mgl_draw *d)
         return;
     id<MTLRenderCommandEncoder> e = pass_for(&d->target);
     [e setRenderPipelineState:ps];
-    [e setDepthStencilState:get_depth_state(d->depth_test && d->target.depth, /* GL: no depth writes with the test off */
-                                       d->depth_test && d->depth_write && d->target.depth, d->depth_func)];
+    int probe = probe_program(d);
+    [e setDepthStencilState:get_depth_state(d->depth_test && d->target.depth && !probe, /* GL: no depth writes with the test off */
+                                       d->depth_test && d->depth_write && d->target.depth && !probe, d->depth_func)];
     [e setViewport:(MTLViewport){d->viewport[0], d->viewport[1], d->viewport[2], d->viewport[3], 0, 1}];
     MTLScissorRect sr = {0, 0, (NSUInteger)d->target.width, (NSUInteger)d->target.height};
     if (d->scissor_enabled) {
@@ -1524,7 +1569,7 @@ void mglb_draw(const mgl_draw *d)
         sr = (MTLScissorRect){(NSUInteger)x0, (NSUInteger)y0, (NSUInteger)(x1 - x0), (NSUInteger)(y1 - y0)};
     }
     [e setScissorRect:sr];
-    [e setCullMode:!d->cull ? MTLCullModeNone : d->cull_face == GL_FRONT ? MTLCullModeFront : MTLCullModeBack];
+    [e setCullMode:!d->cull || probe ? MTLCullModeNone : d->cull_face == GL_FRONT ? MTLCullModeFront : MTLCullModeBack];
     /* translated vertex shaders flip Y, which flips winding */
     [e setFrontFacingWinding:d->front_face == GL_CW ? MTLWindingCounterClockwise : MTLWindingClockwise];
     if (d->polygon_offset_enabled)
@@ -1548,6 +1593,7 @@ void mglb_draw(const mgl_draw *d)
             check_vertex_range(d, d->count, d->index_offset, d->base_vertex);
     }
     frame_draws++;
+    frame_probes += (unsigned long)probe;
     frame_sections += d->multi_n > 0 ? d->multi_n : 0;
     if (d->multi_n > 0) {
         id<MTLBuffer> ib = OBJ(id<MTLBuffer>, d->index_buf->mtl);
@@ -2153,9 +2199,10 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
     commit();
     archive_maybe_save();
     if (++c->frames % 600 == 1)
-        mgl_log("presented frame %llu (%dx%d), %lu pipelines; this frame: %lu draws (%lu terrain sections), %lu dispatches",
-                c->frames, c->w, c->h, (unsigned long)pipelines.count, frame_draws, frame_sections, frame_dispatches);
-    frame_draws = frame_sections = frame_dispatches = 0;
+        mgl_log("presented frame %llu (%dx%d), %lu pipelines; this frame: %lu draws (%lu terrain sections), %lu dispatches%s",
+                c->frames, c->w, c->h, (unsigned long)pipelines.count, frame_draws, frame_sections, frame_dispatches,
+                frame_probes ? [NSString stringWithFormat:@", %lu probed draws", frame_probes].UTF8String : "");
+    frame_draws = frame_sections = frame_dispatches = frame_probes = 0;
     /* keep at most ~2 frames in flight */
     if (cb_serial > 3)
         mglb_fence_wait(submitted_serial - 2, 100000000ull);
