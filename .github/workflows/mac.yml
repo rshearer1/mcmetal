@@ -69,7 +69,10 @@ jobs:
         if: always()
         with:
           name: game
-          path: game-out/
+          # the GLSL dumps hold Complementary's and Sodium's shader source: keep them off this public repo
+          path: |
+            game-out/
+            !game-out/**/glsl/**
       - uses: actions/upload-artifact@v4
         if: always()
         with:
