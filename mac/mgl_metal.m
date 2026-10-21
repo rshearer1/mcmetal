@@ -5,6 +5,7 @@
    shaders flip Y. Only the final present flips the image for the window. */
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+#include <ctype.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
@@ -876,6 +877,30 @@ static id<MTLFunction> compile_fn(const char *msl, NSString *what, char **err)
     return compile_fn_lib(msl, what, err, NULL);
 }
 
+/* Every sin( call in generated MSL -> precise::sin( (NULL if there is none). Not asin/sinh, nor already qualified. */
+static char *precise_sin(const char *msl)
+{
+    size_t n = 0;
+    for (const char *p = strstr(msl, "sin("); p; p = strstr(p + 4, "sin("))
+        n++;
+    if (!n)
+        return NULL;
+    char *out = malloc(strlen(msl) + n * 9 + 1), *o = out;
+    const char *src = msl;
+    for (const char *p = strstr(msl, "sin("); p; p = strstr(p + 4, "sin(")) {
+        char c = p > msl ? p[-1] : ' ';
+        if (isalnum((unsigned char)c) || c == '_' || c == ':')
+            continue;
+        memcpy(o, src, (size_t)(p - src));
+        o += p - src;
+        memcpy(o, "precise::", 9);
+        o += 9;
+        src = p;
+    }
+    strcpy(o, src);
+    return out;
+}
+
 static id<MTLFunction> compile_fn_lib(const char *msl, NSString *what, char **err, id<MTLLibrary> *lib_out)
 {
     NSError *e = nil;
@@ -892,12 +917,15 @@ static id<MTLFunction> compile_fn_lib(const char *msl, NSString *what, char **er
     }
     if (@available(macOS 15.0, *)) {
         o.mathMode = math == 0 ? MTLMathModeSafe : math == 2 ? MTLMathModeFast : MTLMathModeRelaxed;
-        /* sin/cos/pow etc. stay precise except in fast mode: packs hash with fract(sin(x) * 43758.5) on large x,
-           and the fast sin there gave SEUS PTGI streaky noise across the sky and a stripe down the screen */
-        o.mathFloatingPointFunctions = math == 2 ? MTLMathFloatingPointFunctionsFast : MTLMathFloatingPointFunctionsPrecise;
+        /* fast pow/exp/cos etc. (all-precise functions cost SEUS PTGI 16 -> 10 fps), but sin is made precise
+           in the source (precise_sin): packs hash with fract(sin(x) * 43758.5) on large x, and the fast sin there
+           gave SEUS streaky noise across the sky and a stripe down the screen */
+        o.mathFloatingPointFunctions = MTLMathFloatingPointFunctionsFast;
     } else
         o.fastMathEnabled = math > 0;
-    id<MTLLibrary> lib = [dev newLibraryWithSource:[NSString stringWithUTF8String:msl] options:o error:&e];
+    char *fixed = math > 0 && !getenv("MGL_FAST_SIN") ? precise_sin(msl) : NULL;
+    id<MTLLibrary> lib = [dev newLibraryWithSource:[NSString stringWithUTF8String:fixed ? fixed : msl] options:o error:&e];
+    free(fixed);
     if (!lib) {
         if (err)
             *err = strdup([NSString stringWithFormat:@"%@: %@", what, e.localizedDescription].UTF8String);
