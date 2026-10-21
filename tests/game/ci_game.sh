@@ -25,7 +25,7 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     mkdir -p "$OUT/$name/glsl"
     echo "=== phase $name: ${secs}s, world=${world:-none}, shaders=$shaders"
     MGL_LOG="$OUT/$name/mgl.log" MGL_SHOT_DIR="$OUT/$name" MGL_SHOT_EVERY=${MGL_SHOT_EVERY:-15} \
-    MGL_CACHE_DIR="$WORK/cache" MGL_DUMP_DIR="$OUT/$name/glsl" env "$@" \
+    MGL_CACHE_DIR="$WORK/cache" MGL_DUMP_DIR="$OUT/$name/glsl" env ${GAME_ENV:-} "$@" \
         python3 -I "$SRC/tools/bare_mc.py" launch "$WORK" --java "$JAVA" "${wargs[@]}" \
         --gl "$SRC/build/libmcmetal.dylib" --glfw "$SRC/build/libglfw.dylib" > "$OUT/$name/launch.out" 2>&1 &
     local t=0

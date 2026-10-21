@@ -5,6 +5,13 @@ name: mac
 on:
   push:
   workflow_dispatch:
+    inputs:
+      phases:
+        description: game phases (title world complementary)
+        default: title world complementary
+      env:
+        description: extra env for every phase, e.g. MGL_DEBUG_DRAWS=1
+        default: ''
 defaults:
   run:
     shell: bash  # bash -eo pipefail: a failing build isn't hidden by `| tee`
@@ -57,7 +64,7 @@ jobs:
           key: mc-1.21.1-neoforge-21.1.259-sodium-iris-v1
       - name: Real game on mcmetal (screenshots)
         if: ${{ !contains(github.event.head_commit.message, '[no game]') }}
-        run: bash tests/game/ci_game.sh ~/mcgame game-out ${{ vars.GAME_PHASES }}
+        run: GAME_ENV="${{ github.event.inputs.env }}" bash tests/game/ci_game.sh ~/mcgame game-out ${{ github.event.inputs.phases }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
