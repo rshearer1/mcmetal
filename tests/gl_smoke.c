@@ -374,6 +374,85 @@ int main(void)
     printf("      cloud centre pixel %08x (want ff00ff00)\n", px[32 * 64 + 32]);
     check(near(px[32 * 64 + 32], rgba(0, 255, 0, 255)), "cloud-style quad draws with the right colour");
 
+    /* 8. the game's own terrain draw, replayed: real camera matrices and region offset from a CI game run, a
+       4 MB vertex buffer with the quad near its end (base vertex 192032), glMultiDrawElementsBaseVertex, the
+       same program as test 6. The quad is placed 5 blocks in front of the camera, so it must cover the centre. */
+    {
+        static const float proj[16] = {0.91201955f, 0, -0.0f, -0.0f, 0, 1.4301808f, -0.0f, -0.0f, 0, 0, -1.0002604f, -1,
+                                       0, -0.0f, -0.10001303f, -0.0f};
+        static const float mv[16] = {0.86602533f, -0.24999994f, 0.43301257f, 0, 0, 0.86602527f, 0.49999997f, 0,
+                                     -0.49999985f, -0.43301269f, 0.74999994f, 0, 0, 0, 0, 1};
+        const float reg[3] = {-71.5f, -5.6182251f, -9.5f};
+        const unsigned draw_id = 128; /* section (4, 0, 0) of the region */
+        const float rel[3] = {64, 0, 0};
+        /* view space -> world: mv is a pure rotation, so its transpose inverts it */
+        float view[4][3] = {{-1, -1, -5}, {1, -1, -5}, {1, 1, -5}, {-1, 1, -5}};
+        const size_t big = 3870720, base = 192032;
+        unsigned char *vb = calloc(1, big);
+        for (int i = 0; i < 4; i++) {
+            float w[3];
+            for (int r = 0; r < 3; r++) /* world[r] = sum_c mv[r*4+c] * view[c] (transpose of column-major mv) */
+                w[r] = mv[r * 4 + 0] * view[i][0] + mv[r * 4 + 1] * view[i][1] + mv[r * 4 + 2] * view[i][2];
+            unsigned c[3];
+            for (int k = 0; k < 3; k++)
+                c[k] = (unsigned)((w[k] - reg[k] - rel[k] + 8) * 32768);
+            unsigned char *v = vb + (base + (size_t)i) * 20;
+            unsigned px0 = (c[0] >> 10) | (c[1] >> 10) << 10 | (c[2] >> 10) << 20;
+            unsigned px1 = (c[0] & 1023) | (c[1] & 1023) << 10 | (c[2] & 1023) << 20;
+            memcpy(v, &px0, 4);
+            memcpy(v + 4, &px1, 4);
+            v[8] = 255; v[9] = 128; v[10] = 0; v[11] = 255;
+            unsigned short uv[2] = {0x4000, 0x4000};
+            memcpy(v + 12, uv, 4);
+            v[16] = 8; v[17] = 8; v[18] = 1; v[19] = (unsigned char)draw_id;
+        }
+        /* both windings, as the camera may see either side */
+        unsigned qidx[12] = {0, 1, 2, 2, 3, 0, 0, 3, 2, 2, 1, 0};
+        GLuint rvao, rbuf[2];
+        glGenVertexArrays(1, &rvao);
+        glBindVertexArray(rvao);
+        glGenBuffers(2, rbuf);
+        glBindBuffer(GL_ARRAY_BUFFER, rbuf[0]);
+        glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)big, vb, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, rbuf[1]);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof qidx, qidx, GL_STATIC_DRAW);
+        free(vb);
+        for (int i = 0; i < 4; i++)
+            if (la[i] >= 0) glEnableVertexAttribArray((GLuint)la[i]);
+        if (la[0] >= 0) glVertexAttribIPointer((GLuint)la[0], 2, GL_UNSIGNED_INT, 20, (void *)0);
+        if (la[1] >= 0) glVertexAttribPointer((GLuint)la[1], 4, GL_UNSIGNED_BYTE, GL_TRUE, 20, (void *)8);
+        if (la[2] >= 0) glVertexAttribIPointer((GLuint)la[2], 2, GL_UNSIGNED_SHORT, 20, (void *)12);
+        if (la[3] >= 0) glVertexAttribIPointer((GLuint)la[3], 4, GL_UNSIGNED_BYTE, 20, (void *)16);
+        glUseProgram(terrain);
+        glUniformMatrix4fv(glGetUniformLocation(terrain, "u_ProjectionMatrix"), 1, GL_FALSE, proj);
+        glUniformMatrix4fv(glGetUniformLocation(terrain, "u_ModelViewMatrix"), 1, GL_FALSE, mv);
+        glUniform3f(glGetUniformLocation(terrain, "u_RegionOffset"), reg[0], reg[1], reg[2]);
+        glUniform2f(glGetUniformLocation(terrain, "u_TexCoordShrink"), -3.0517578e-05f, -9.1552734e-05f);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, white[0]);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, white[1]);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glClearColor(0, 0, 1, 1);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LEQUAL);
+        glEnable(GL_CULL_FACE);
+        GLsizei counts[3] = {12, 6, 6};
+        const void *offs[3] = {(void *)0, (void *)0, (void *)24};
+        GLint bases[3] = {(GLint)base, (GLint)base, (GLint)base};
+        glMultiDrawElementsBaseVertex(GL_TRIANGLES, counts, GL_UNSIGNED_INT, offs, 3, bases);
+        glFinish();
+        glDisable(GL_CULL_FACE);
+        glDisable(GL_DEPTH_TEST);
+        glActiveTexture(GL_TEXTURE0);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glBindVertexArray(vao);
+        read_texture(rb, tex, ssbo, px);
+        printf("      replay centre pixel %08x (want ff0080ff)\n", px[32 * 64 + 32]);
+        check(near(px[32 * 64 + 32], rgba(255, 128, 0, 255)), "game terrain draw replayed (real camera, multi-draw, big base vertex)");
+    }
+
     /* 5. hardware ray tracing: a shader using mcm_trace must compile on Metal (no scene bound: no hits) */
     GLuint rt = program(NULL, NULL,
                         "#version 430\nlayout(local_size_x = 1) in;\n"
