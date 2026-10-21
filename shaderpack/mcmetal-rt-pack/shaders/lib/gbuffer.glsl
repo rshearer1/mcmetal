@@ -47,8 +47,8 @@ void main() {
 #ifdef TERRAIN
     int id = int(mc_Entity.x + 0.5);
     if (id == 10001) mat = MAT_FOLIAGE;
-    else if (id == 10003) mat = MAT_EMISSIVE;
-    else if (id == 10004) mat = MAT_GLOW;
+    else if (id >= 10100 && id < 10200) mat = MAT_EMISSIVE;
+    else if (id >= 10200 && id < 10300) mat = MAT_GLOW;
     else if (id == 10002) mat = MAT_WATER;
 #endif
 #if defined FORWARD && !defined UNLIT

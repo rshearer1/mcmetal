@@ -4,6 +4,8 @@
 /*
 const int colortex5Format = RGBA16F;   // rgb sun shadow, a distance to the camera (to check the history)
 const bool colortex5Clear = false;
+const int colortex7Format = RGBA16F;   // rgb coloured block light (lib/lights.glsl), a distance to the camera
+const bool colortex7Clear = false;
 */
 #include "/lib/settings.glsl"
 #include "/lib/common.glsl"
@@ -13,21 +15,23 @@ const bool colortex5Clear = false;
 #ifdef USE_RT
     #include "/lib/shadow.glsl"
 #endif
+#include "/lib/lights.glsl"
 
-uniform sampler2D colortex1, colortex2, colortex5, depthtex0;
+uniform sampler2D colortex1, colortex2, colortex5, colortex7, depthtex0;
 uniform mat4 gbufferPreviousModelView, gbufferPreviousProjection;
 uniform vec3 previousCameraPosition;
 
 in vec2 texcoord;
 flat in vec3 sunCol, skyAmb, lightDir, sunDir;
 
-/* RENDERTARGETS: 5 */
+/* RENDERTARGETS: 5,7 */
 layout(location = 0) out vec4 outShadow;
+layout(location = 1) out vec4 outLights;
 
 void main() {
     float depth = texture(depthtex0, texcoord).r;
     int mat = int(texture(colortex2, texcoord).r * 255.0 + 0.5);
-    if (depth >= 1.0 || mat == MAT_HAND || mat == MAT_LIT) { outShadow = vec4(1.0, 1.0, 1.0, 0.0); return; }
+    if (depth >= 1.0 || mat == MAT_HAND || mat == MAT_LIT) { outShadow = vec4(1.0, 1.0, 1.0, 0.0); outLights = vec4(0.0); return; }
     vec4 v = gbufferProjectionInverse * vec4(vec3(texcoord, depth) * 2.0 - 1.0, 1.0);
     vec3 p = mat3(gbufferModelViewInverse) * (v.xyz / v.w) + gbufferModelViewInverse[3].xyz;
     float dist = length(p);
@@ -45,6 +49,13 @@ void main() {
         } else sh = vec3(0.0);
     }
 #endif
+    vec3 bl = vec3(0.0);
+#ifdef USE_LIGHTS
+    bl = coloredBlockLight(p, octDecode(texture(colortex1, texcoord).xy), mat,
+                           ign(gl_FragCoord.xy + vec2(5.0, 37.0), frameCounter * 11 + 4),
+                           ign(gl_FragCoord.xy + vec2(61.0, 3.0), frameCounter * 13 + 5),
+                           ign(gl_FragCoord.xy + vec2(23.0, 83.0), frameCounter * 17 + 6));
+#endif
 
     vec3 prevPlayer = p + cameraPosition - previousCameraPosition;
     vec4 pc = gbufferPreviousProjection * (gbufferPreviousModelView * vec4(prevPlayer, 1.0));
@@ -54,4 +65,7 @@ void main() {
               && abs(h.a - length(prevPlayer)) < 0.05 * dist + 0.1;
     // a short memory (8 frames): shadows move with the sun and with mobs
     outShadow = vec4(valid ? mix(h.rgb, sh, 1.0 / 8.0) : sh, dist);
+    // coloured block light: a longer memory (16 frames), since each frame samples only one of the nearby lights
+    vec4 hl = texture(colortex7, puv);
+    outLights = vec4(valid && abs(hl.a - length(prevPlayer)) < 0.05 * dist + 0.1 ? mix(hl.rgb, bl, 1.0 / 16.0) : bl, dist);
 }

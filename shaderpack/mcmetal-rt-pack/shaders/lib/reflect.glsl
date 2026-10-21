@@ -4,8 +4,8 @@ float mcm_trace_hit(vec3 origin, vec3 dir, float tmax, out vec3 normal, out vec4
 
 int materialOf(int blockId) {
     if (blockId == 10001) return MAT_FOLIAGE;
-    if (blockId == 10003) return MAT_EMISSIVE;
-    if (blockId == 10004) return MAT_GLOW;
+    if (blockId >= 10100 && blockId < 10200) return MAT_EMISSIVE;
+    if (blockId >= 10200 && blockId < 10300) return MAT_GLOW;
     return MAT_NONE;
 }
 

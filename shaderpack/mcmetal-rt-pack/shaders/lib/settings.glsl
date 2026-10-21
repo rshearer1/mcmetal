@@ -1,8 +1,14 @@
 // Player options (Iris reads the "// [..]" lists and shows them in the shader menu).
 
+#define COLORED_LIGHT // torches, lanterns, glowstone... each light their own colour, with ray-traced shadows (needs mcmetal's light list)
+#define COLORED_LIGHT_STRENGTH 1.0 // [0.5 0.7 0.85 1.0 1.2 1.5 2.0]
 #define RT_MODE 1 // [0 1 2] 0 = shadow map only, 1 = hardware ray tracing when mcmetal provides it, 2 = always ray tracing
 #if RT_MODE == 2 || (RT_MODE == 1 && defined MCMETAL_RT)
     #define USE_RT
+    // coloured block light needs mcmetal's list of nearby light blocks
+    #if defined MCMETAL_LIGHTS && defined COLORED_LIGHT
+        #define USE_LIGHTS
+    #endif
 #endif
 
 #define RT_GI // ray-traced global illumination: bounce light, colour bleeding, sky light through openings
@@ -25,7 +31,7 @@
 #define WAVE_HEIGHT 1.0 // [0.0 0.5 1.0 1.5 2.0 3.0]
 #define WAVE_SPEED 1.0 // [0.5 1.0 1.5 2.0]
 
-#define DEBUG_VIEW 0 // [0 1 2 3 4] 0 off, 1 sun shadow, 2 ambient occlusion, 3 global illumination, 4 normals
+#define DEBUG_VIEW 0 // [0 1 2 3 4 5] 0 off, 1 sun shadow, 2 ambient occlusion, 3 global illumination, 4 normals, 5 coloured block light
 
 #define EXPOSURE 1.0 // [0.25 0.35 0.5 0.7 0.85 1.0 1.2 1.4 1.7 2.0 2.5 3.0 4.0]
 #define AUTO_EXPOSURE 1.0 // [0.0 0.25 0.5 0.75 1.0] how much brightness adapts to what you look at (0 = time of day only)
@@ -59,4 +65,6 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef RT_REFLECTIONS
 #endif
 #ifdef COLORED_SHADOWS
+#endif
+#ifdef COLORED_LIGHT
 #endif

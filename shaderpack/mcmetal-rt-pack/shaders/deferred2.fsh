@@ -19,7 +19,7 @@ const vec4 colortex2ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
     #include "/lib/shadow.glsl"
 #endif
 
-uniform sampler2D colortex0, colortex1, colortex2, colortex3, colortex4, colortex5, depthtex0;
+uniform sampler2D colortex0, colortex1, colortex2, colortex3, colortex4, colortex5, colortex7, depthtex0;
 
 in vec2 texcoord;
 flat in vec3 sunCol, skyAmb, lightDir, sunDir;
@@ -91,7 +91,14 @@ void main() {
         // GI brings the sky light and the bounced light, so the lightmap's sky guess is left out
         // the held item isn't in the ray scene's history: it gets the plain sky light instead
         vec3 gi = mat == MAT_HAND ? skyAmb * (nl.w * nl.w) * (0.7 + 0.3 * n.y) : filteredGI(n, length(p));
+  #ifdef USE_LIGHTS
+        // coloured block light (deferred1.fsh) replaces the lightmap's block light; the held light stays
+        vec3 blk = mat == MAT_HAND ? vec3(0.0) : texture(colortex7, texcoord).rgb * ao;
+        col = a * (surfaceLight(p, n, vec2(mat == MAT_HAND ? nl.z : 0.0, nl.w), ao, mat, lightDir, sunCol, vec3(0.0), sh) + gi + blk)
+            + emission(a, mat);
+  #else
         col = a * (surfaceLight(p, n, nl.zw, ao, mat, lightDir, sunCol, vec3(0.0), sh) + gi) + emission(a, mat);
+  #endif
 #else
         col = a * surfaceLight(p, n, nl.zw, ao, mat, lightDir, sunCol, skyAmb, sh) + emission(a, mat);
 #endif
@@ -101,6 +108,8 @@ void main() {
         col = vec3(ao);
 #elif DEBUG_VIEW == 3 && defined USE_RT && defined RT_GI
         col = gi / (gi + 1.0);
+#elif DEBUG_VIEW == 5 && defined USE_LIGHTS
+        col = blk / (blk + 1.0);
 #elif DEBUG_VIEW == 4
         col = n * 0.5 + 0.5;
 #endif
