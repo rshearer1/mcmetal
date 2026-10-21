@@ -57,6 +57,9 @@ void main() {
     float hit;
   #ifdef RT_GI
     gi = traceRadiance(o, d, RT_GI_DISTANCE, lightDir, sunCol, skyAmb, sunDir, 1.0, hit);
+    // skylight through openings: less saturated than the raw sky, so rooms aren't tinted slate-blue (the eye
+    // white-balances indoors); Sky Light scales it like it scales the sky ambient
+    if (hit < 0.0) gi = mix(vec3(luma(gi)), gi, SKY_GI_SATURATION) * SKY_LIGHT_STRENGTH;
     gi = min(gi, vec3(16.0));   // one lucky ray into the sun-lit sky must not leave a bright speck
   #else
     hit = mcm_trace(o, d, RT_AO_RADIUS);

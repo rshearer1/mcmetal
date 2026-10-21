@@ -35,7 +35,7 @@ void main() {
     float target = clamp(0.16 / avg, keyExposure * 0.25, keyExposure * 4.0);
     // highlight guard: a lit room under a black night sky averages dark, which would blow the room out. Never brighten
     // past the point where the brightest metered spot lands well above white (ACES rolls it off from there)
-    target = max(min(target, 3.0 / max(peak, 1e-4)), keyExposure * 0.25);
+    target = max(min(target, 1.6 / max(peak, 1e-4)), keyExposure * 0.25);
     float prev = texelFetch(colortex6, ivec2(0), 0).r;
     float e = prev > 0.0 && prev < 1e4 ? mix(prev, target, 1.0 - exp(-frameTime * 1.5)) : target;
     outExposure = vec4(mix(keyExposure, e, AUTO_EXPOSURE), 0.0, 0.0, 1.0);
