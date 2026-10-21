@@ -38,7 +38,12 @@ void main() {
         vec3 player = (gbufferModelViewInverse * view).xyz;
         vec3 toLight = normalize(mat3(gbufferModelViewInverse) * shadowLightPosition);
         uint cut;
-        float t = mcm_trace_cut(player + toLight * 0.1, toLight, 256.0, cut);
+        // start the ray just off the surface: the depth buffer only gives the position to within a few mm, so starting
+        // on it lets the surface shadow itself in stripes (shadow acne). Face normal from screen-space derivatives.
+        vec3 n = normalize(cross(dFdx(player), dFdy(player)));
+        if (dot(n, player) > 0.0) n = -n;                  // towards the camera
+        vec3 origin = player + n * 0.02 + toLight * 0.01;
+        float t = mcm_trace_cut(origin, toLight, 256.0, cut);
         color = mix(color, shade_cut(t, cut), 0.6);
     }
     outColor = color;
