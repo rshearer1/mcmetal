@@ -440,11 +440,35 @@ static char *add_missing_output(const char *vs, const char *fs, const char *name
     return NULL;
 }
 
+/* GL drivers take layout(binding = N) in pre-4.20 shaders (Complementary's world-space reflection buffers in
+   #version 330 composites); glslang only with GL_ARB_shading_language_420pack. Returns a copy with that extension
+   enabled right after #version (and #line keeping error line numbers), or NULL when nothing needs it. */
+static char *with_420pack(const char *text)
+{
+    const char *v = strstr(text, "#version");
+    int ver = v ? atoi(v + 8) : 0;
+    if (!v || ver >= 420 || !strstr(text, "binding"))
+        return NULL;
+    const char *eol = strchr(v, '\n');
+    if (!eol)
+        return NULL;
+    int line = 1;
+    for (const char *c = text; c <= eol; c++)
+        line += *c == '\n';
+    size_t head = (size_t)(eol + 1 - text), len = strlen(text);
+    char *out = malloc(len + 128);
+    memcpy(out, text, head);
+    int n = snprintf(out + head, 128, "#extension GL_ARB_shading_language_420pack : enable\n#line %d\n", line);
+    memcpy(out + head + n, eol + 1, len - head + 1);
+    return out;
+}
+
 static int xlate_once(const char *src[MGL_NUM_STAGES], mgl_xlate_result *r)
 {
     static int initialized;
     glslang_shader_t *sh[MGL_NUM_STAGES] = {0};
     glslang_program_t *prog = NULL;
+    char *patched_src[MGL_NUM_STAGES] = {0};
     int next_tex[MGL_NUM_STAGES] = {0};
     static __thread varying_map vm;
     const int msgs = GLSLANG_MSG_SPV_RULES_BIT | GLSLANG_MSG_VULKAN_RULES_BIT;
@@ -462,6 +486,7 @@ static int xlate_once(const char *src[MGL_NUM_STAGES], mgl_xlate_result *r)
     for (int s = 0; s < MGL_NUM_STAGES; s++) {
         if (!src[s])
             continue;
+        char *patched = with_420pack(src[s]);
         glslang_input_t in = {
             .language = GLSLANG_SOURCE_GLSL,
             .stage = gl_stage[s],
@@ -469,13 +494,14 @@ static int xlate_once(const char *src[MGL_NUM_STAGES], mgl_xlate_result *r)
             .client_version = GLSLANG_TARGET_VULKAN_1_0,
             .target_language = GLSLANG_TARGET_SPV,
             .target_language_version = GLSLANG_TARGET_SPV_1_0,
-            .code = src[s],
+            .code = patched ? patched : src[s],
             .default_version = 110,
             .default_profile = GLSLANG_NO_PROFILE,
             .messages = msgs,
             .resource = glslang_default_resource(),
         };
         sh[s] = glslang_shader_create(&in);
+        patched_src[s] = patched; /* glslang keeps the pointer: freed at the end */
         glslang_shader_set_options(sh[s], GLSLANG_SHADER_AUTO_MAP_BINDINGS | GLSLANG_SHADER_AUTO_MAP_LOCATIONS |
                                               GLSLANG_SHADER_VULKAN_RULES_RELAXED);
         if (!glslang_shader_preprocess(sh[s], &in) || !glslang_shader_parse(sh[s], &in)) {
@@ -505,9 +531,11 @@ done:
     glslang_program_delete(prog);
     if (cprog)
         glslang_program_delete(cprog);
-    for (int s = 0; s < MGL_NUM_STAGES; s++)
+    for (int s = 0; s < MGL_NUM_STAGES; s++) {
         if (sh[s])
             glslang_shader_delete(sh[s]);
+        free(patched_src[s]);
+    }
     return r->ok;
 }
 

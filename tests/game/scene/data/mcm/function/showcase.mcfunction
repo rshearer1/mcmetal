@@ -7,6 +7,7 @@ gamerule doDaylightCycle false
 gamerule doWeatherCycle false
 gamerule doMobSpawning false
 gamerule randomTickSpeed 0
+gamerule announceAdvancements false
 function mcm:time
 fill ~-2 ~ ~-11 ~26 ~12 ~11 air
 fill ~-2 ~-1 ~-11 ~26 ~-3 ~11 polished_deepslate
@@ -23,7 +24,7 @@ fill ~22 ~ ~0 ~22 ~4 ~1 cyan_stained_glass
 fill ~22 ~ ~2 ~22 ~4 ~3 blue_stained_glass
 fill ~22 ~ ~4 ~22 ~4 ~5 purple_stained_glass
 fill ~22 ~ ~6 ~22 ~4 ~7 magenta_stained_glass
-fill ~23 ~1 ~-8 ~23 ~3 ~7 sea_lantern
+fill ~23 ~2 ~-8 ~23 ~2 ~7 sea_lantern
 fill ~21 ~5 ~-9 ~23 ~5 ~9 black_concrete
 # left: every light colour on a deepslate shelf
 fill ~6 ~ ~-7 ~21 ~ ~-7 polished_blackstone

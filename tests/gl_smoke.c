@@ -646,6 +646,15 @@ int main(int argc, char **argv)
         check(near(px[32 * 64 + 32], rgba(100, 200, 0, 255)), what);
     }
 
+    /* 12. layout(binding) in a #version 330 shader with the SSBO extension (Complementary's world-space
+       reflections): GL drivers accept it, glslang only with GL_ARB_shading_language_420pack */
+    check(really_linked(program("#version 330 core\nlayout(location = 0) in vec2 pos;\n"
+                                "void main() { gl_Position = vec4(pos, 0.0, 1.0); }\n",
+                                "#version 330 core\n#extension GL_ARB_shader_storage_buffer_object : require\n"
+                                "layout(std430, binding = 3) buffer B { uint v[]; };\nout vec4 frag;\n"
+                                "void main() { frag = vec4(float(v[0])); }\n", NULL)),
+          "layout(binding) in a #version 330 shader compiles");
+
     /* 5. hardware ray tracing: a shader using mcm_trace must compile on Metal (no scene bound: no hits) */
     GLuint rt = program(NULL, NULL,
                         "#version 430\nlayout(local_size_x = 1) in;\n"
