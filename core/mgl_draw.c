@@ -398,7 +398,7 @@ static void submit(mgl_draw *d)
             p->ublock[MGL_COMPUTE])
             memcpy(p->ublock[MGL_COMPUTE] + p->x.uniforms[i].offset[MGL_COMPUTE], info, sizeof info);
     memcpy(d->local_size, p->x.local_size, sizeof d->local_size);
-    mglb_draw_gs(d, tris, p->x.gs_max_vertices, p->x.gs_record_vec4s);
+    mglb_draw_gs(d, tris, p->x.gs_max_vertices, p->x.gs_record_floats);
 }
 
 static void draw(GLenum mode, GLsizei count, GLenum type, const void *indices, GLint first, GLint basevertex,

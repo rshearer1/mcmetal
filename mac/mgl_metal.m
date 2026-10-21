@@ -2411,7 +2411,7 @@ static int gs_batch = -1;
 /* Geometry-shader emulation (mgl_gs.c). The compute stage gets: 21 attribute descriptors, 22..25 raw vertex
    buffers, 26 index buffer, 27 emitted vertex records, 28 per-primitive vertex counts. The passthrough vertex
    stage reads 27/28 and turns each strip into a triangle list. */
-void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record_vec4s)
+void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record_floats)
 {
     if (!d->program->compute || !d->program->vfn || max_vertices < 3 || triangles <= 0)
         return;
@@ -2436,7 +2436,7 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
         desc[i][2] = vb->stride;
         desc[i][3] = (int32_t)a->type | (a->size << 4) | (a->normalized ? 1 << 8 : 0);
     }
-    size_t out_bytes = (size_t)triangles * (size_t)max_vertices * (size_t)record_vec4s * 16;
+    size_t out_bytes = (size_t)triangles * (size_t)max_vertices * (size_t)record_floats * 4;
     transient_t ov = transient(out_bytes), oc = transient((size_t)triangles * 4);
     if (!ov.buf || !oc.buf)
         return;
