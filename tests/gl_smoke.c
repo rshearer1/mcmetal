@@ -177,6 +177,27 @@ int main(int argc, char **argv)
     GLuint rb = program(NULL, NULL, readback_cs);
     check(really_linked(rb), "texture readback program links");
 
+    /* 1c. glClearTexImage (Iris clears packs' images every frame): a mixed pattern, all-equal bytes, zero, and the
+       same pattern again (the GPU-side clear source is reused) */
+    {
+        GLuint ct;
+        glGenTextures(1, &ct);
+        glBindTexture(GL_TEXTURE_2D, ct);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, 64, 64);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        static const unsigned char red[4] = {255, 0, 0, 255}, grey[4] = {7, 7, 7, 7}, none[4] = {0};
+        const unsigned char *pat[4] = {red, grey, none, red};
+        const unsigned want[4] = {rgba(255, 0, 0, 255), rgba(7, 7, 7, 7), rgba(0, 0, 0, 0), rgba(255, 0, 0, 255)};
+        int ok = 1;
+        for (int k = 0; k < 4; k++) {
+            glClearTexImage(ct, 0, GL_RGBA, GL_UNSIGNED_BYTE, pat[k]);
+            read_texture(rb, ct, ssbo, px);
+            ok &= px[0] == want[k] && px[63 * 64 + 63] == want[k] && px[17 * 64 + 40] == want[k];
+        }
+        check(ok, "glClearTexImage: pattern, equal bytes, zero, pattern again");
+        glDeleteTextures(1, &ct);
+    }
+
     /* 2. framebuffer: clear, then a triangle with a uniform colour over the left half */
     GLuint tex, fbo;
     glGenTextures(1, &tex);

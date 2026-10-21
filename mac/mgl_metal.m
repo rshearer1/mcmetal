@@ -578,6 +578,52 @@ void mglb_texture_generate_mipmaps(mglb_texture *t)
     [blit_encoder() generateMipmapsForTexture:OBJ(id<MTLTexture>, t->mtl)];
 }
 
+/* glClearTexImage source: one GPU-only buffer holding the clear pattern, refilled on the GPU only when the pattern
+   changes or it has to grow. It used to be a new shared buffer filled by the CPU on every call: Iris clears packs'
+   images every frame, and Rethinking Voxels' three cleared voxel volumes (~200 MB at its default size) cost about
+   600 ms of CPU per frame, 1-2 fps. */
+static id<MTLBuffer> clear_src;
+static size_t clear_filled;         /* bytes of clear_src holding clear_pattern */
+static unsigned char clear_pattern[16];
+static size_t clear_bpt;
+
+static void clear_source(size_t bytes, const unsigned char *texel, size_t bpt)
+{
+    if (clear_src && bytes <= clear_filled && bpt == clear_bpt && !memcmp(texel, clear_pattern, bpt))
+        return;
+    if (!clear_src || clear_src.length < bytes) {
+        clear_src = [dev newBufferWithLength:bytes options:MTLResourceStorageModePrivate];
+        clear_filled = 0;
+        if (!clear_src)
+            return;
+    }
+    int same_bytes = 1;
+    for (size_t i = 1; i < bpt; i++)
+        same_bytes &= texel[i] == texel[0];
+    id<MTLBlitCommandEncoder> e = blit_encoder();
+    size_t n = clear_src.length;
+    if (same_bytes) {
+        [e fillBuffer:clear_src range:NSMakeRange(0, n) value:texel[0]];
+    } else { /* one texel from the CPU, then doubled on the GPU */
+        mglb_buffer *one = mglb_buffer_new(bpt);
+        if (!one)
+            return;
+        memcpy(one->ptr, texel, bpt);
+        [e copyFromBuffer:OBJ(id<MTLBuffer>, one->mtl) sourceOffset:0 toBuffer:clear_src destinationOffset:0 size:bpt];
+        use_buffer(one);
+        mglb_buffer_release(one);
+        for (size_t have = bpt; have < n; have *= 2) {
+            end_encoders(); /* each doubling reads the last one: a new encoder orders them */
+            [blit_encoder() copyFromBuffer:clear_src sourceOffset:0 toBuffer:clear_src destinationOffset:have
+                                      size:have * 2 <= n ? have : n - have];
+        }
+    }
+    end_encoders(); /* the texture copies that read it go in a later encoder */
+    memcpy(clear_pattern, texel, bpt);
+    clear_bpt = bpt;
+    clear_filled = n - n % bpt;
+}
+
 void mglb_texture_clear(mglb_texture *t, int level, const void *texel)
 {
     if (!t || t->pf == MTLPixelFormatDepth32Float_Stencil8)
@@ -588,27 +634,24 @@ void mglb_texture_clear(mglb_texture *t, int level, const void *texel)
     if (h < 1) h = 1;
     if (d < 1) d = 1;
     size_t bpt = (size_t)bytes_per_texel(t->pf), row = bpt * (size_t)w, img = row * (size_t)h;
-    mglb_buffer *stage = mglb_buffer_new(img * (size_t)d);
-    if (!stage)
+    static const unsigned char zero[16];
+    if (bpt > 16)
         return;
-    if (!texel)
-        memset(stage->ptr, 0, img * (size_t)d);
-    else
-        for (size_t o = 0; o < img * (size_t)d; o += bpt)
-            memcpy((char *)stage->ptr + o, texel, bpt);
+    size_t bytes = t->d.type == MGLT_3D ? img * (size_t)d : img; /* layers and cube faces reuse one image */
+    clear_source(bytes, texel ? texel : zero, bpt);
+    if (!clear_src || clear_filled < bytes)
+        return;
     id<MTLBlitCommandEncoder> e = blit_encoder();
     id<MTLTexture> tex = OBJ(id<MTLTexture>, t->mtl);
     if (t->d.type == MGLT_3D)
-        [e copyFromBuffer:OBJ(id<MTLBuffer>, stage->mtl) sourceOffset:0 sourceBytesPerRow:row sourceBytesPerImage:img
+        [e copyFromBuffer:clear_src sourceOffset:0 sourceBytesPerRow:row sourceBytesPerImage:img
                  sourceSize:MTLSizeMake((NSUInteger)w, (NSUInteger)h, (NSUInteger)d) toTexture:tex destinationSlice:0
            destinationLevel:(NSUInteger)level destinationOrigin:MTLOriginMake(0, 0, 0)];
     else
         for (int s = 0; s < d; s++)
-            [e copyFromBuffer:OBJ(id<MTLBuffer>, stage->mtl) sourceOffset:(NSUInteger)s * img sourceBytesPerRow:row
-                sourceBytesPerImage:img sourceSize:MTLSizeMake((NSUInteger)w, (NSUInteger)h, 1) toTexture:tex
-                   destinationSlice:(NSUInteger)s destinationLevel:(NSUInteger)level destinationOrigin:MTLOriginMake(0, 0, 0)];
-    use_buffer(stage);
-    mglb_buffer_release(stage);
+            [e copyFromBuffer:clear_src sourceOffset:0 sourceBytesPerRow:row sourceBytesPerImage:img
+                   sourceSize:MTLSizeMake((NSUInteger)w, (NSUInteger)h, 1) toTexture:tex destinationSlice:(NSUInteger)s
+             destinationLevel:(NSUInteger)level destinationOrigin:MTLOriginMake(0, 0, 0)];
 }
 
 enum mgl_format mglb_texture_format(mglb_texture *t) { return t ? t->d.format : MGLF_COUNT; }
