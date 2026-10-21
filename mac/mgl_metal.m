@@ -411,6 +411,63 @@ static void use_buffer(mglb_buffer *b)
         b->last_use = cb_serial;
 }
 
+/* Transient memory for one command buffer: geometry-shader output and texture upload staging. Suballocated
+   from 32 MB chunks that are reused once the GPU has finished with them. Before this, each geometry-shader draw
+   allocated two fresh buffers: with ~190 of them in flight per frame the pool had nothing free, and the kernel
+   call behind each new buffer grew to 88% of the render thread (SEUS at 1x slid from 49 to 15 fps in 90 s). */
+#define TR_CHUNK ((size_t)32 << 20)
+#define TR_MAX 48
+static struct { mglb_buffer *b; size_t used; } tr_chunk[TR_MAX];
+static int tr_n, tr_cur = -1;
+
+typedef struct { id<MTLBuffer> buf; NSUInteger off; void *ptr; } transient_t;
+
+static transient_t transient(size_t size)
+{
+    current_cb(); /* cb_serial is this command buffer's */
+    size = (size + 255) & ~(size_t)255;
+    if (size > TR_CHUNK) {
+        mglb_buffer *b = mglb_buffer_new(size);
+        if (!b)
+            return (transient_t){nil, 0, NULL};
+        transient_t t = {OBJ(id<MTLBuffer>, b->mtl), 0, b->ptr};
+        use_buffer(b);
+        mglb_buffer_release(b);
+        return t;
+    }
+    int k = tr_cur;
+    if (k < 0 || tr_chunk[k].b->last_use != cb_serial || tr_chunk[k].used + size > TR_CHUNK) {
+        uint64_t done = atomic_load(&completed_serial);
+        k = -1;
+        for (int i = 0; i < tr_n && k < 0; i++)
+            if (tr_chunk[i].b->last_use <= done)
+                k = i;
+        if (k < 0 && tr_n < TR_MAX) {
+            mglb_buffer *b = mglb_buffer_new(TR_CHUNK);
+            if (b) {
+                k = tr_n++;
+                tr_chunk[k].b = b;
+            }
+        }
+        if (k < 0) { /* all chunks busy: a one-off buffer */
+            mglb_buffer *b = mglb_buffer_new(size);
+            if (!b)
+                return (transient_t){nil, 0, NULL};
+            transient_t t = {OBJ(id<MTLBuffer>, b->mtl), 0, b->ptr};
+            use_buffer(b);
+            mglb_buffer_release(b);
+            return t;
+        }
+        tr_chunk[k].used = 0;
+        tr_cur = k;
+    }
+    mglb_buffer *b = tr_chunk[k].b;
+    transient_t t = {OBJ(id<MTLBuffer>, b->mtl), (NSUInteger)tr_chunk[k].used, (char *)b->ptr + tr_chunk[k].used};
+    tr_chunk[k].used += size;
+    use_buffer(b);
+    return t;
+}
+
 /* ================================================================ textures */
 
 struct mglb_texture {
@@ -547,28 +604,26 @@ void mglb_texture_upload(mglb_texture *t, int level, int x, int y, int z, int w,
     if (!t || t->pf == MTLPixelFormatDepth32Float_Stencil8)
         return;
     size_t bpt = (size_t)bytes_per_texel(t->pf), row = bpt * (size_t)w, img = row * (size_t)h;
-    mglb_buffer *stage = mglb_buffer_new(img * (size_t)d);
-    if (!stage)
+    transient_t stage = transient(img * (size_t)d);
+    if (!stage.buf)
         return;
     for (int zz = 0; zz < d; zz++)
         for (int yy = 0; yy < h; yy++)
-            memcpy((char *)stage->ptr + (size_t)zz * img + (size_t)yy * row,
+            memcpy((char *)stage.ptr + (size_t)zz * img + (size_t)yy * row,
                    (const char *)data + (size_t)zz * bytes_per_image + (size_t)yy * bytes_per_row, row);
     id<MTLBlitCommandEncoder> e = blit_encoder();
     id<MTLTexture> tex = OBJ(id<MTLTexture>, t->mtl);
     if (t->d.type == MGLT_3D) {
-        [e copyFromBuffer:OBJ(id<MTLBuffer>, stage->mtl) sourceOffset:0 sourceBytesPerRow:row sourceBytesPerImage:img
+        [e copyFromBuffer:stage.buf sourceOffset:stage.off sourceBytesPerRow:row sourceBytesPerImage:img
                  sourceSize:MTLSizeMake((NSUInteger)w, (NSUInteger)h, (NSUInteger)d) toTexture:tex destinationSlice:0
            destinationLevel:(NSUInteger)level destinationOrigin:MTLOriginMake((NSUInteger)x, (NSUInteger)y, (NSUInteger)z)];
     } else {
         for (int s = 0; s < d; s++)
-            [e copyFromBuffer:OBJ(id<MTLBuffer>, stage->mtl) sourceOffset:(NSUInteger)s * img sourceBytesPerRow:row
+            [e copyFromBuffer:stage.buf sourceOffset:stage.off + (NSUInteger)s * img sourceBytesPerRow:row
                 sourceBytesPerImage:img sourceSize:MTLSizeMake((NSUInteger)w, (NSUInteger)h, 1) toTexture:tex
                    destinationSlice:(NSUInteger)(z + s) destinationLevel:(NSUInteger)level
                   destinationOrigin:MTLOriginMake((NSUInteger)x, (NSUInteger)y, 0)];
     }
-    use_buffer(stage);
-    mglb_buffer_release(stage);
 }
 
 void mglb_texture_generate_mipmaps(mglb_texture *t)
@@ -2319,13 +2374,11 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
         desc[i][3] = (int32_t)a->type | (a->size << 4) | (a->normalized ? 1 << 8 : 0);
     }
     size_t out_bytes = (size_t)triangles * (size_t)max_vertices * (size_t)record_vec4s * 16;
-    mglb_buffer *ov = mglb_buffer_new(out_bytes), *oc = mglb_buffer_new((size_t)triangles * 4);
-    if (!ov || !oc) {
-        mglb_buffer_release(ov);
-        mglb_buffer_release(oc);
+    transient_t ov = transient(out_bytes), oc = transient((size_t)triangles * 4);
+    if (!ov.buf || !oc.buf)
         return;
-    }
-    id<MTLBuffer> ovb = OBJ(id<MTLBuffer>, ov->mtl), ocb = OBJ(id<MTLBuffer>, oc->mtl);
+    id<MTLBuffer> ovb = ov.buf, ocb = oc.buf;
+    NSUInteger ovo = ov.off, oco = oc.off;
 
     /* 1. vertex + geometry stages as one compute job, one thread per input triangle */
     if (gs_batch < 0)
@@ -2340,16 +2393,15 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
     if (d->uses_scene)
         bind_scene(nil, c);
     [c setBytes:desc length:sizeof desc atIndex:MGL_BUF_INTERNAL_BASE];
-    for (int i = 0; i < 4; i++) {
-        mglb_buffer *b = i < d->num_vbufs ? d->vbufs[i].buf : (d->num_vbufs ? d->vbufs[0].buf : ov);
-        [c setBuffer:OBJ(id<MTLBuffer>, b->mtl) offset:0 atIndex:(NSUInteger)(MGL_BUF_INTERNAL_BASE + 1 + i)];
+    for (int i = 0; i < 4; i++) { /* unused slots get any valid buffer */
+        mglb_buffer *b = i < d->num_vbufs ? d->vbufs[i].buf : d->num_vbufs ? d->vbufs[0].buf : NULL;
+        [c setBuffer:b ? OBJ(id<MTLBuffer>, b->mtl) : ovb offset:0 atIndex:(NSUInteger)(MGL_BUF_INTERNAL_BASE + 1 + i)];
         use_buffer(b);
     }
-    mglb_buffer *ib = d->index_buf ? d->index_buf : ov;
-    [c setBuffer:OBJ(id<MTLBuffer>, ib->mtl) offset:0 atIndex:MGL_BUF_INTERNAL_BASE + 5];
-    use_buffer(ib);
-    [c setBuffer:ovb offset:0 atIndex:MGL_BUF_INTERNAL_BASE + 6];
-    [c setBuffer:ocb offset:0 atIndex:MGL_BUF_INTERNAL_BASE + 7];
+    [c setBuffer:d->index_buf ? OBJ(id<MTLBuffer>, d->index_buf->mtl) : ovb offset:0 atIndex:MGL_BUF_INTERNAL_BASE + 5];
+    use_buffer(d->index_buf);
+    [c setBuffer:ovb offset:ovo atIndex:MGL_BUF_INTERNAL_BASE + 6];
+    [c setBuffer:ocb offset:oco atIndex:MGL_BUF_INTERNAL_BASE + 7];
     NSUInteger lx = (NSUInteger)(d->local_size[0] > 0 ? d->local_size[0] : 64);
     [c dispatchThreadgroups:MTLSizeMake(((NSUInteger)triangles + lx - 1) / lx, 1, 1)
       threadsPerThreadgroup:MTLSizeMake(lx, 1, 1)];
@@ -2363,8 +2415,6 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
     id<MTLRenderPipelineState> ps = get_pipeline(p, &p->target);
     if (!ps) {
         free(p);
-        mglb_buffer_release(ov);
-        mglb_buffer_release(oc);
         return;
     }
     NSData *u0 = p->uniforms[0] ? [NSData dataWithBytes:p->uniforms[0] length:(NSUInteger)p->uniform_size[0]] : nil;
@@ -2407,16 +2457,12 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
             bind_stage_resources(e, nil, p, 1);
             if (p->uses_scene)
                 bind_scene(e, nil);
-            [e setVertexBuffer:ovb offset:0 atIndex:MGL_BUF_INTERNAL_BASE + 6];
-            [e setVertexBuffer:ocb offset:0 atIndex:MGL_BUF_INTERNAL_BASE + 7];
+            [e setVertexBuffer:ovb offset:ovo atIndex:MGL_BUF_INTERNAL_BASE + 6];
+            [e setVertexBuffer:ocb offset:oco atIndex:MGL_BUF_INTERNAL_BASE + 7];
             [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:vertices];
         }
         free(p);
     };
-    use_buffer(ov);
-    use_buffer(oc);
-    mglb_buffer_release(ov);
-    mglb_buffer_release(oc);
     if (!gs_pending)
         gs_pending = [NSMutableArray new];
     gs_target = d->target;
