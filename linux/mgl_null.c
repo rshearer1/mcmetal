@@ -30,6 +30,11 @@ mglb_texture *mglb_texture_new(const mglb_texture_desc *d)
     return t;
 }
 void mglb_texture_release(mglb_texture *t) { free(t); }
+enum mgl_format mglb_texture_format(mglb_texture *t) { return t ? t->d.format : MGLF_COUNT; }
+void mglb_texture_read(mglb_texture *t, int level, int x, int y, int w, int h, void *out)
+{
+    memset(out, 0x80, (size_t)w * (size_t)h * 4); /* grey: nothing is rendered here */
+}
 void mglb_texture_upload(mglb_texture *t, int level, int x, int y, int z, int w, int h, int d, const void *data,
                          size_t bpr, size_t bpi) { uploads++; }
 void mglb_texture_generate_mipmaps(mglb_texture *t) {}

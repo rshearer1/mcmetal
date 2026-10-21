@@ -160,6 +160,11 @@ int main(void)
     check(near(px[32 * 64 + 50], rgba(0, 0, 255, 255)), "clear: right half blue");
     check(near(px[2 * 64 + 10], rgba(255, 0, 0, 255)) && near(px[61 * 64 + 10], rgba(255, 0, 0, 255)),
           "draw covers bottom and top rows (orientation)");
+    static unsigned rp[64 * 64];
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+    glReadPixels(0, 0, 64, 64, GL_RGBA, GL_UNSIGNED_BYTE, rp);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    check(!memcmp(rp, px, sizeof rp), "glReadPixels matches the compute readback");
 
     /* 3. texture upload + sampling: a 2x2 texture stretched over the target, nearest filtering */
     unsigned char texels[] = {255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255};

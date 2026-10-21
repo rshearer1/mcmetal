@@ -408,6 +408,28 @@ void mglb_texture_clear(mglb_texture *t, int level, const void *texel)
     mglb_buffer_release(stage);
 }
 
+enum mgl_format mglb_texture_format(mglb_texture *t) { return t ? t->d.format : MGLF_COUNT; }
+
+/* Synchronous: waits for all recorded GPU work, then copies the rectangle out in GL row order. */
+void mglb_texture_read(mglb_texture *t, int level, int x, int y, int w, int h, void *out)
+{
+    if (!t || w <= 0 || h <= 0 || is_depth_format(t->pf))
+        return;
+    size_t bpt = (size_t)bytes_per_texel(t->pf), row = bpt * (size_t)w;
+    mglb_buffer *stage = mglb_buffer_new(row * (size_t)h);
+    if (!stage)
+        return;
+    id<MTLBlitCommandEncoder> e = blit_encoder();
+    [e copyFromTexture:OBJ(id<MTLTexture>, t->mtl) sourceSlice:0 sourceLevel:(NSUInteger)level
+          sourceOrigin:MTLOriginMake((NSUInteger)x, (NSUInteger)y, 0) sourceSize:MTLSizeMake((NSUInteger)w, (NSUInteger)h, 1)
+              toBuffer:OBJ(id<MTLBuffer>, stage->mtl) destinationOffset:0 destinationBytesPerRow:row
+destinationBytesPerImage:row * (size_t)h];
+    use_buffer(stage);
+    mglb_finish();
+    memcpy(out, stage->ptr, row * (size_t)h);
+    mglb_buffer_release(stage);
+}
+
 void mglb_texture_copy(mglb_texture *src, int src_level, int sx, int sy, int sz, mglb_texture *dst, int dst_level,
                        int dx, int dy, int dz, int w, int h, int d)
 {
@@ -456,7 +478,10 @@ static id<MTLFunction> compile_fn(const char *msl, NSString *what, char **err)
     NSError *e = nil;
     MTLCompileOptions *o = [[MTLCompileOptions alloc] init];
     o.languageVersion = MTLLanguageVersion3_1; /* 3.1: native texture atomics (Rethinking Voxels) */
-    o.mathMode = MTLMathModeSafe; /* GL semantics: no fast-math reassociation surprises */
+    if (@available(macOS 15.0, *))
+        o.mathMode = MTLMathModeSafe; /* GL semantics: no fast-math reassociation surprises */
+    else
+        o.fastMathEnabled = NO;
     id<MTLLibrary> lib = [dev newLibraryWithSource:[NSString stringWithUTF8String:msl] options:o error:&e];
     if (!lib) {
         if (err)
@@ -473,6 +498,7 @@ static pthread_mutex_t archive_lock = PTHREAD_MUTEX_INITIALIZER; /* adds come fr
 static int archive_dirty;
 static uint64_t archive_last_add;
 static uint64_t now_ns(void);
+static void save_at_exit(void);
 
 static id<MTLBinaryArchive> get_archive(void)
 {
@@ -492,10 +518,12 @@ static id<MTLBinaryArchive> get_archive(void)
           ad.url = nil;
           archive = [dev newBinaryArchiveWithDescriptor:ad error:&e];
       }
-      if (!archive)
+      if (!archive) {
           mgl_log("binary archive unavailable: %s", e.localizedDescription.UTF8String);
-      else
+      } else {
           mgl_log("binary archive %s", ad.url ? "loaded" : "created");
+          atexit(save_at_exit);
+      }
     });
     return archive;
 }
@@ -542,6 +570,8 @@ static void archive_save(void)
     }
     pthread_mutex_unlock(&archive_lock);
 }
+
+static void save_at_exit(void) { archive_save(); }
 
 static void archive_maybe_save(void)
 {
@@ -1874,14 +1904,9 @@ void mglb_window_size(int *w, int *h)
     *h = current ? current->h : 0;
 }
 
-static void save_at_exit(void) { archive_save(); }
-
 MGL_EXPORT void *mgl_glfw_create(void *metal_layer)
 {
     init_device();
-    static int hooked;
-    if (!hooked++)
-        atexit(save_at_exit);
     if (!dev) {
         mgl_log("no Metal device");
         return NULL;
@@ -1927,6 +1952,7 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
         commit();
         return;
     }
+    mgl_shot_tick(); /* MGL_SHOT_DIR test screenshots */
     end_encoders();
     id<CAMetalDrawable> drawable = [c->layer nextDrawable];
     if (drawable) {

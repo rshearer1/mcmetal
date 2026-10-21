@@ -40,6 +40,9 @@ void mglb_texture_release(mglb_texture *t);
 void mglb_texture_upload(mglb_texture *t, int level, int x, int y, int z, int w, int h, int d,
                          const void *data, size_t bytes_per_row, size_t bytes_per_image);
 void mglb_texture_generate_mipmaps(mglb_texture *t);
+/* reads w x h texels at (x, y) of a colour texture into out, tightly packed, GL row order; waits for the GPU */
+void mglb_texture_read(mglb_texture *t, int level, int x, int y, int w, int h, void *out);
+enum mgl_format mglb_texture_format(mglb_texture *t);
 void mglb_texture_clear(mglb_texture *t, int level, const void *texel /* one texel in format, NULL = zero */);
 void mglb_texture_copy(mglb_texture *src, int src_level, int sx, int sy, int sz,
                        mglb_texture *dst, int dst_level, int dx, int dy, int dz, int w, int h, int d);
