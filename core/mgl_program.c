@@ -241,7 +241,7 @@ static void add_ray_tracing(mgl_shader *s)
     if (!eol)
         return;
     static const char head[] = "#version 460\n#extension GL_EXT_ray_query : require\n"
-                               "layout(binding = 0) uniform accelerationStructureEXT mcm_scene;\n";
+                               "layout(set = 7, binding = 0) uniform accelerationStructureEXT mcm_scene; // own set: no clash with SSBO 0\n";
     static const char body[] =
         "\nfloat mcm_trace(vec3 origin, vec3 dir, float tmax) {\n"
         "  rayQueryEXT q;\n"
