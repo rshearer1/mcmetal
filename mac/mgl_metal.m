@@ -3132,8 +3132,11 @@ static int power_cap_fps(void)
     int cap = th >= NSProcessInfoThermalStateCritical ? 30 : (low || th >= NSProcessInfoThermalStateSerious) ? 60 : 0;
     if (cap != last_cap) {
         static const char *names[] = {"nominal", "fair", "serious", "critical"};
+        char capstr[16] = "none";
+        if (cap)
+            snprintf(capstr, sizeof capstr, "%d fps", cap);
         mgl_log("power: Low Power Mode %s, thermal state %s, frame rate cap %s", low ? "on" : "off",
-                th >= 0 && th <= 3 ? names[th] : "?", cap ? [NSString stringWithFormat:@"%d fps", cap].UTF8String : "none");
+                th >= 0 && th <= 3 ? names[th] : "?", capstr);
         last_cap = cap;
     }
     return cap;
@@ -3551,11 +3554,16 @@ static void fg_snapshot(const mgl_target *t)
         memcpy(u.prev_proj, mgl_cam.mat[3], 64);
         for (int i = 0; i < 3; i++)
             u.cam_delta[i] = mgl_cam.pos[0][i] - mgl_cam.pos[1][i];
-        u.cam_delta[3] = getenv("MCMETAL_FG_NEG") ? -1.0f : 1.0f;
+        static int neg = -1, flip = -1;
+        if (neg < 0) {
+            neg = getenv("MCMETAL_FG_NEG") != NULL;
+            flip = getenv("MCMETAL_FG_FLIP") != NULL;
+        }
+        u.cam_delta[3] = neg ? -1.0f : 1.0f;
         u.size[0] = (float)t->width;
         u.size[1] = (float)t->height;
         u.hand = (float)fg.hand;
-        u.flip = getenv("MCMETAL_FG_FLIP") ? -1.0f : 1.0f;
+        u.flip = flip ? -1.0f : 1.0f;
         memcpy(fg.view, mgl_cam.mat[0], 64);
         memcpy(fg.proj, mgl_cam.mat[1], 64);
 
@@ -3788,12 +3796,16 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
            it would grow with every slow frame and hold the game back further each time (measured: 10 fps). */
         double frame_s = c->avg_frame_ms > 0 ? c->avg_frame_ms * 1e-3 : 1.0 / 60;
         id<MTLTexture> mid = fg_interpolate(frame_s);
-        if (mid && getenv("MCMETAL_FG_NO_PRESENT")) /* test: make the extra frame but don't show it (its GPU cost alone) */
+        static int fg_no_present = -1;
+        if (fg_no_present < 0)
+            fg_no_present = getenv("MCMETAL_FG_NO_PRESENT") != NULL;
+        if (mid && fg_no_present) /* test: make the extra frame but don't show it (its GPU cost alone) */
             mid = nil;
         if (mid) {
             draw_to_drawable(c, mid, drawable);
             double half = frame_s * 0.5 > 1.0 / 120 ? frame_s * 0.5 : 1.0 / 120;
             [current_cb() presentDrawable:drawable afterMinimumDuration:half];
+            commit(); /* send the made-up frame on its way before waiting for the second drawable */
             uint64_t t_d2 = now_ns();
             drawable = [c->layer nextDrawable];
             prof.wait_ns += now_ns() - t_d2;
