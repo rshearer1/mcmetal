@@ -3073,14 +3073,33 @@ typedef struct mgl_ctx {
     double avg_frame_ms;    /* smoothed frame cost (max of CPU work and GPU time), for choosing the paced rate */
     uint64_t last_wait_ns, last_gpu_ns;
     int paced_fps;
-    int up_frames;          /* frames in a row the cost has fitted the next faster rate */
+    uint64_t window_start_ns, stepped_up_ns, no_up_until_ns; /* see choose_paced_fps */
+    unsigned up_backoff_s;
 } mgl_ctx;
 
-/* Even frame delivery: on a 120 Hz ProMotion screen a game that makes 80 fps would show frames for 8 and
-   17 ms in turn (judder). Presenting with a minimum duration at the highest of 120/60/40/30 that the recent
-   frame cost sustains keeps every frame on screen equally long. With vsync off, pacing stays off.
-   Down a rate as soon as the smoothed cost no longer fits it with 10% headroom; up only after a second of
-   costs that fit the faster rate with 25% headroom, so the rate doesn't flip back and forth at a boundary. */
+/* Even frame delivery: on a 120 Hz ProMotion screen a game that makes 47 fps shows frames for 17 and 25 ms in
+   turn (judder, measured 70-80% of frames for SEUS on an M3). Presenting with a minimum duration at one of
+   120/60/40/30 keeps every frame on screen equally long. With vsync off, pacing stays off.
+   The rate follows missed deadlines, not a cost estimate alone: Apple GPUs clock down when pacing leaves them idle,
+   so a frame measured at 25 ms while paced at 30 may well fit 40. Every half second (a window):
+   - down one rate when over 10% of the window's frames stayed on screen longer than 1.25x the target
+     (a lone hitch doesn't count);
+   - up one rate when the window's smoothed cost fits the faster rate's budget, unless a try at that rate failed
+     recently (a failed try is a step down within 2 s of stepping up; the wait doubles from 10 s to 80 s while
+     tries keep failing, so a pack sitting just at a boundary hitches rarely rather than every few seconds). */
+static _Atomic double pace_target_ms;     /* read by the presented handler */
+static _Atomic unsigned pace_shown, pace_missed;
+
+static void pace_presented(double iv_ms)
+{
+    double target = atomic_load(&pace_target_ms);
+    if (target <= 0)
+        return;
+    atomic_fetch_add(&pace_shown, 1);
+    if (iv_ms > target * 1.25)
+        atomic_fetch_add(&pace_missed, 1);
+}
+
 /* Low Power Mode and heat (MGL_POWER_ADAPT=0 turns this off): with pacing on, cap the paced rate at 60 fps in
    Low Power Mode or when macOS reports the Mac as seriously hot, and at 30 when critical, so the game backs off
    evenly instead of the system throttling the GPU under it at random. Changes are logged as they happen. */
@@ -3115,39 +3134,42 @@ static int choose_paced_fps(mgl_ctx *c)
     const char *forced = getenv("MGL_TARGET_FPS");
     if (forced && atoi(forced) > 0)
         return atoi(forced);
-    int cap = power_cap_fps();
-    if (cap && c->paced_fps > cap) {
-        c->up_frames = 0;
-        return cap;
-    }
-    int fit = 3;
-    for (int i = 0; i < 4; i++)
-        if (rates[i] <= (cap ? cap : 1000) && c->avg_frame_ms * 1.1 <= 1000.0 / rates[i]) {
-            fit = i;
-            break;
-        }
-    if (!c->paced_fps || rates[fit] < c->paced_fps) {
-        c->up_frames = 0;
+    int cap = power_cap_fps(), cur = 3;
+    if (!c->paced_fps) { /* start at the fastest rate the cost fits */
+        int fit = 3;
+        for (int i = 3; i >= 0; i--)
+            if ((!cap || rates[i] <= cap) && c->avg_frame_ms <= 1000.0 / rates[i])
+                fit = i;
+        c->window_start_ns = now_ns();
         return rates[fit];
     }
-    if (rates[fit] == c->paced_fps) {
-        c->up_frames = 0;
-        return c->paced_fps;
+    for (int i = 0; i < 4; i++)
+        if (rates[i] == c->paced_fps)
+            cur = i;
+    if (cap && c->paced_fps > cap) {
+        for (cur = 0; cur < 3 && rates[cur] > cap; cur++)
+            ;
+        return rates[cur];
     }
-    int next = 0; /* the next faster rate than the current one */
-    for (int i = 3; i >= 0; i--)
-        if (rates[i] > c->paced_fps) {
-            next = i;
-            break;
+    uint64_t t = now_ns();
+    if (t - c->window_start_ns < 500000000ull)
+        return c->paced_fps;
+    c->window_start_ns = t;
+    unsigned shown = atomic_exchange(&pace_shown, 0), missed = atomic_exchange(&pace_missed, 0);
+    if (shown >= 4 && missed * 10 > shown && cur < 3) {
+        if (t - c->stepped_up_ns < 2000000000ull) { /* the try at the faster rate failed: wait 10, 20, 40, 80 s */
+            c->up_backoff_s = c->up_backoff_s ? (c->up_backoff_s < 80 ? c->up_backoff_s * 2 : 80) : 10;
+            c->no_up_until_ns = t + c->up_backoff_s * 1000000000ull;
         }
-    if (cap && rates[next] > cap)
-        return c->paced_fps;
-    if (c->avg_frame_ms * 1.25 <= 1000.0 / rates[next] && ++c->up_frames >= c->paced_fps) {
-        c->up_frames = 0;
-        return rates[next];
+        return rates[cur + 1];
     }
-    if (c->avg_frame_ms * 1.25 > 1000.0 / rates[next])
-        c->up_frames = 0;
+    if (c->stepped_up_ns && t - c->stepped_up_ns > 5000000000ull)
+        c->up_backoff_s = 0; /* the last step up held */
+    if (cur > 0 && (!cap || rates[cur - 1] <= cap) && t >= c->no_up_until_ns &&
+        c->avg_frame_ms <= 1000.0 / rates[cur - 1]) {
+        c->stepped_up_ns = t;
+        return rates[cur - 1];
+    }
     return c->paced_fps;
 }
 
@@ -3412,8 +3434,15 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
             stats = opt_profile > 0 || opt("MGL_PRESENT_STATS");
         [drawable addPresentedHandler:^(id<MTLDrawable> d) {
           atomic_fetch_sub(&presents_waiting, 1);
+          static double last_shown;
+          double when = d.presentedTime;
+          if (when > 0) {
+              if (last_shown > 0)
+                  pace_presented((when - last_shown) * 1000.0);
+              last_shown = when;
+          }
           if (stats)
-              present_stat(d.presentedTime);
+              present_stat(when);
         }];
         id<MTLTexture> src = OBJ(id<MTLTexture>, mgl->window_color->mtl);
         if (upscale_on()) {
@@ -3452,6 +3481,7 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
             int fps = choose_paced_fps(c);
             if (fps != c->paced_fps) {
                 c->paced_fps = fps;
+                atomic_store(&pace_target_ms, 1000.0 / fps);
                 mgl_log("frame pacing: presenting at an even %d fps (frame time %.1f ms)", fps, c->avg_frame_ms);
             }
             [current_cb() presentDrawable:drawable afterMinimumDuration:1.0 / fps];
