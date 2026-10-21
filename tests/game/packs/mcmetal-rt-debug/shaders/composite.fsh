@@ -23,6 +23,12 @@ vec4 shade_cut(float t, uint cut) { return t > 0.0 && cut != 0u ? vec4(1.0, 1.0,
 
 void main() {
     vec4 color = texture(colortex0, texcoord);
+#ifndef MCMETAL_RT
+    if (texcoord.y < 0.15 && texcoord.x < 0.1) {          // magenta corner: Iris did not define MCMETAL_RT
+        outColor = vec4(1.0, 0.0, 1.0, 1.0);
+        return;
+    }
+#endif
     if (texcoord.y > 0.85 && texcoord.x < 0.1) {          // camera straight down
         outColor = shade(mcm_trace(vec3(0.0), vec3(0.0, -1.0, 0.0), 256.0));
         return;
