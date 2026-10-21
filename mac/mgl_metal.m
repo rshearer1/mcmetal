@@ -2462,9 +2462,12 @@ void mglb_rt_update(const mgl_rt_geom *g, int n)
     rt_parts_n = (NSUInteger)count;
     use_buffer(inst);
     mglb_buffer_release(inst);
-    static int logged;
-    if (!logged++)
-        mgl_log("ray tracing: first scene built from %d terrain sections", count);
+    static int logged, debug = -1;
+    if (debug < 0)
+        debug = getenv("MGL_RT_DEBUG") && atoi(getenv("MGL_RT_DEBUG"));
+    if (!logged++ || (debug && rt_frame % 120 == 0))
+        mgl_log("ray tracing: scene built from %d of %d terrain sections (%lu cached)", count, n,
+                (unsigned long)rt_sections.count);
 }
 
 static void bind_scene(id<MTLRenderCommandEncoder> e, id<MTLComputeCommandEncoder> c)

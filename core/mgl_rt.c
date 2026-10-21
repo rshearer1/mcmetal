@@ -72,20 +72,66 @@ static void mat_mul(float *o, const float *a, const float *b) /* column-major o 
 
 static void snapshot(const char *path);
 
+/* MGL_RT_DEBUG=1: once a second, log what the capture saw (draws taken, skipped and why, sections kept). */
+static struct { unsigned long taken, not_terrain, not_tris, no_attr, small_stride, idle; char last_skip[64]; } rtd;
+static int rt_debug(void)
+{
+    static int on = -1;
+    if (on < 0)
+        on = getenv("MGL_RT_DEBUG") && atoi(getenv("MGL_RT_DEBUG"));
+    return on;
+}
+
+static int num_draws_fwd(void);
+static void rt_debug_tick(void)
+{
+    if (!rt_debug())
+        return;
+    static double last_log;
+    double now = now_s();
+    if (now - last_log > 1.0) {
+        mgl_log("rt debug: last %.1f s: %lu terrain draws taken; skipped %lu not terrain (last %s), %lu not indexed "
+                "triangles, %lu no position attribute, %lu stride < 20, %lu before a ray-tracing shader; %d sections kept",
+                now - last_log, rtd.taken, rtd.not_terrain, rtd.last_skip[0] ? rtd.last_skip : "-", rtd.not_tris,
+                rtd.no_attr, rtd.small_stride, rtd.idle, num_draws_fwd());
+        memset(&rtd, 0, sizeof rtd);
+        last_log = now;
+    }
+}
+
 void mgl_rt_record(mgl_program *p, const mgl_draw *d)
 {
+    rt_debug_tick();
     if (p && p->x.uses_scene)
         scene_wanted = now_s();
     static int snap_env = -1;
     if (snap_env < 0)
         snap_env = getenv("MGL_RT_SNAPSHOT") != NULL;
-    if (!snap_env && (!scene_wanted || now_s() - scene_wanted > 5.0))
+    if (!snap_env && (!scene_wanted || now_s() - scene_wanted > 5.0)) {
+        rtd.idle++;
         return; /* no ray-tracing shader in use: capture costs nothing */
-    if (!p || p->rt_pos_loc < 0 || d->primitive != GL_TRIANGLES || !d->index_buf || !p->ublock[MGL_VERTEX])
+    }
+    if (!p || p->rt_pos_loc < 0 || !p->ublock[MGL_VERTEX]) {
+        rtd.not_terrain++;
+        if (p && rt_debug())
+            snprintf(rtd.last_skip, sizeof rtd.last_skip, "%d attribs, first %s, region %d", p->x.num_attribs,
+                     p->x.num_attribs ? p->x.attribs[0].name : "-", p->rt_region_off);
         return;
+    }
+    if (d->primitive != GL_TRIANGLES || !d->index_buf) {
+        rtd.not_tris++;
+        return;
+    }
     const mgl_vertex_attr *a = &d->attrs[p->rt_pos_loc];
-    if (!a->enabled || a->buffer < 0 || a->buffer >= d->num_vbufs || d->vbufs[a->buffer].stride < 20)
+    if (!a->enabled || a->buffer < 0 || a->buffer >= d->num_vbufs) {
+        rtd.no_attr++;
         return;
+    }
+    if (d->vbufs[a->buffer].stride < 20) {
+        rtd.small_stride++;
+        return;
+    }
+    rtd.taken++;
     const mgl_vertex_buf *vb = &d->vbufs[a->buffer];
     const float *region = (const float *)(p->ublock[MGL_VERTEX] + p->rt_region_off);
     double t = now_s();
@@ -152,8 +198,11 @@ void mgl_rt_note_write(mglb_buffer *m, size_t offset, size_t size)
     }
 }
 
+static int num_draws_fwd(void) { return num_draws; }
+
 void mgl_rt_end_frame(void)
 {
+    rt_debug_tick();
     if (!scene_wanted || now_s() - scene_wanted > 5.0 || !num_draws)
         return;
     static mgl_rt_geom *list;

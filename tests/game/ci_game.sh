@@ -20,7 +20,7 @@ if [ "${GAME_BENCH:-}" = true ]; then
     sed -i.bak 's/^enableVsync:.*/enableVsync:false/; s/^maxFps:.*/maxFps:260/; s/^renderDistance:.*/renderDistance:12/' "$G/options.txt"
     export MCMETAL_FPS_LOG=1 MCMETAL_FPS_EVERY=1 MGL_SHOT_EVERY=0 # screenshots only after measuring: each one stalls the GPU
 fi
-mkdir -p "$G/shaderpacks" && rm -rf "$G/shaderpacks/mcmetal-rt-demo" && cp -r "$SRC/tests/game/packs/mcmetal-rt-demo" "$G/shaderpacks/"
+mkdir -p "$G/shaderpacks" && rm -rf "$G/shaderpacks/mcmetal-rt-"* && cp -r "$SRC/tests/game/packs/"mcmetal-rt-* "$G/shaderpacks/"
 rm -rf "$G/saves/metal" && tar xzf "$SRC/tests/game/world-metal.tgz" -C "$G/saves"
 # The game loads mcmetal the way players will: through the mod jar in mods/, no JVM arguments.
 # GAME_JVM_ARGS=true uses the old -Dorg.lwjgl.*.libname route instead.
@@ -135,6 +135,7 @@ for p in $PHASES; do
     showcase-mac) scene midnight clear showcase; act showcase; run_phase showcase-mac 240 metal true MCMETAL_KEEP_MAC_FLAG=1 ;; # as Apple GL renders it
     world-f3) rm -rf "$G/saves/metal/datapacks/mcm-scene"; run_phase world-f3 180 metal false MCMETAL_F3=1 ;;     # bench: F3 screen open
     rt-demo) scene 1500; PACK=mcmetal-rt-demo run_phase rt-demo 180 metal true ;; # hardware ray-traced sun shadows (mcm_trace)
+    rt-debug) scene 1500; PACK=mcmetal-rt-debug run_phase rt-debug 180 metal true ;; # rays drawn as hit (green) / miss (red)
     showcase-plain) scene midnight clear showcase; act plain; run_phase showcase-plain 240 metal true MCMETAL_KEEP_MAC_FLAG=1 ;; # like-for-like with Apple GL, no error screen
     showcase-rain) scene 13800 rain showcase; act showcase; run_phase showcase-rain 240 metal true ;;  # + improved rain, puddles
     esac
