@@ -42,6 +42,17 @@ static int opt(const char *name)
     return e && *e && *e != '0';
 }
 static unsigned long frame_draws, frame_sections, frame_dispatches, frame_probes; /* reset at each present */
+static unsigned long long frames_presented; /* for MGL_FRAME_DUMP */
+/* MGL_FRAME_DUMP=N: log every clear, blit and draw of frame N (order, targets, depth state) */
+static int dump_this_frame(void)
+{
+    static long n = -2;
+    if (n == -2) {
+        const char *e = getenv("MGL_FRAME_DUMP");
+        n = e ? atol(e) : -1;
+    }
+    return n >= 0 && (long long)frames_presented == n;
+}
 static int opt_archive = -1, opt_async_pipes = -1, opt_pacing = -1;
 static void read_options(void)
 {
@@ -921,6 +932,63 @@ static id<MTLFunction> probe_fragment(void)
     return fn;
 }
 
+/* Probe draws: log the first vertices exactly as the GPU will fetch them (indices, base vertex, raw bytes) and the
+   vertex-stage uniforms, a few times per program, so their positions can be worked out by hand. */
+static void log_probe_draw(const mgl_draw *d)
+{
+    static uint32_t seen[32];
+    static int nseen[32], nprog;
+    int k = 0;
+    while (k < nprog && seen[k] != d->program->id)
+        k++;
+    if (k == nprog) {
+        if (nprog == 32)
+            return;
+        seen[nprog++] = d->program->id;
+    }
+    if (nseen[k]++ >= 3)
+        return;
+    long count = d->multi_n > 0 ? d->multi_count[0] : d->count;
+    size_t ioff = d->multi_n > 0 ? (size_t)d->multi_offset[0] : d->index_offset;
+    long base = d->multi_n > 0 ? d->multi_base[0] : d->base_vertex;
+    mgl_log("probe: %s multi %d count %ld index offset %zu base %ld index type 0x%x first %d; %d vbufs, %d instances, "
+            "viewport %d %d %d %d, target %dx%d", d->program->label, d->multi_n, count, ioff, base, d->index_type,
+            d->first, d->num_vbufs, d->instances, d->viewport[0], d->viewport[1], d->viewport[2], d->viewport[3],
+            d->target.width, d->target.height);
+    for (int b = 0; b < d->num_vbufs; b++)
+        mgl_log("probe:   vbuf %d offset %zu stride %d, %zu bytes", b, d->vbufs[b].offset, d->vbufs[b].stride, d->vbufs[b].buf->size);
+    for (int i = 0; i < MGL_MAX_VERTEX_ATTRIBS; i++)
+        if (d->attrs[i].enabled)
+            mgl_log("probe:   attr loc %d type %d x%d norm %d int %d buf %d offset %zu", d->attrs[i].location, d->attrs[i].type,
+                    d->attrs[i].size, d->attrs[i].normalized, d->attrs[i].integer, d->attrs[i].buffer, d->attrs[i].offset);
+    for (int v = 0; v < 3 && v < count; v++) {
+        long idx = v;
+        if (d->index_buf) {
+            const unsigned char *ip = (const unsigned char *)d->index_buf->ptr + ioff;
+            idx = d->index_type == GL_UNSIGNED_SHORT ? ((const uint16_t *)ip)[v] : (long)((const uint32_t *)ip)[v];
+        } else
+            idx = d->first + v;
+        idx += base;
+        const mgl_vertex_buf *vb = &d->vbufs[0];
+        if (!vb->buf || vb->stride <= 0)
+            break;
+        const unsigned char *p = (const unsigned char *)vb->buf->ptr + vb->offset + (size_t)idx * (size_t)vb->stride;
+        char hex[200];
+        int n = 0;
+        for (int j = 0; j < vb->stride && j < 48; j++)
+            n += snprintf(hex + n, sizeof hex - (size_t)n, "%02x", p[j]);
+        mgl_log("probe:   vertex %ld: %s", idx, hex);
+    }
+    if (d->uniforms[0]) {
+        const unsigned char *u = d->uniforms[0];
+        char hex[1100];
+        int n = 0;
+        for (int j = 0; j < d->uniform_size[0] && j < 512; j++)
+            n += snprintf(hex + n, sizeof hex - (size_t)n, "%02x", u[j]);
+        mgl_log("probe:   vertex uniforms %d bytes: %s", d->uniform_size[0], hex);
+    }
+}
+
 static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_target *t)
 {
     pipe_key k;
@@ -1359,6 +1427,9 @@ static id<MTLFunction> clear_fragment(const mgl_target *t)
 void mglb_clear(const mgl_target *t, unsigned mask_color, const float rgba[4], int clear_depth, float depth,
                 const int *scissor, uint8_t cmask)
 {
+    if (dump_this_frame())
+        mgl_log("frame dump: clear target %p%s depth %p, colour mask 0x%x (write 0x%x), depth %d (%g), scissor %d", (void *)t->tex[0],
+                t->is_default ? " (window)" : "", (void *)t->depth, mask_color, cmask, clear_depth, depth, scissor != NULL);
     int partial = (scissor && (scissor[0] > 0 || scissor[1] > 0 || scissor[0] + scissor[2] < t->width ||
                                scissor[1] + scissor[3] < t->height)) ||
                   (mask_color && cmask != 0xf);
@@ -1594,6 +1665,14 @@ void mglb_draw(const mgl_draw *d)
     }
     frame_draws++;
     frame_probes += (unsigned long)probe;
+    if (dump_this_frame())
+        mgl_log("frame dump: draw %lu: %s, target %p%s %dx%d depth %p, depth test %d write %d func 0x%x, cull %d, blend %d "
+                "mask 0x%x, prim 0x%x, count %d multi %d", frame_draws, d->program->label, (void *)d->target.tex[0],
+                d->target.is_default ? " (window)" : "", d->target.width, d->target.height, (void *)d->target.depth,
+                d->depth_test, d->depth_write, d->depth_func, d->cull, d->blend[0].enabled, d->blend[0].color_mask,
+                d->primitive, d->count, d->multi_n);
+    if (probe)
+        log_probe_draw(d);
     frame_sections += d->multi_n > 0 ? d->multi_n : 0;
     if (d->multi_n > 0) {
         id<MTLBuffer> ib = OBJ(id<MTLBuffer>, d->index_buf->mtl);
@@ -1946,6 +2025,10 @@ void mglb_memory_barrier(void)
 void mglb_blit(const mgl_target *src, int src_att, const int sr[4], const mgl_target *dst, const int dr[4], int color,
                int depth, int linear)
 {
+    if (dump_this_frame())
+        mgl_log("frame dump: blit %p -> %p%s colour %d depth %d, %d,%d-%d,%d -> %d,%d-%d,%d", (void *)src->tex[src_att],
+                (void *)dst->tex[0], dst->is_default ? " (window)" : "", color, depth, sr[0], sr[1], sr[2], sr[3], dr[0], dr[1],
+                dr[2], dr[3]);
     int sx0 = sr[0], sy0 = sr[1], sx1 = sr[2], sy1 = sr[3], dx0 = dr[0], dy0 = dr[1], dx1 = dr[2], dy1 = dr[3];
     if (dx1 < dx0) { int t = dx0; dx0 = dx1; dx1 = t; t = sx0; sx0 = sx1; sx1 = t; }
     if (dy1 < dy0) { int t = dy0; dy0 = dy1; dy1 = t; t = sy0; sy0 = sy1; sy1 = t; }
@@ -2198,6 +2281,7 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
     }
     commit();
     archive_maybe_save();
+    frames_presented = c->frames + 1;
     if (++c->frames % 600 == 1)
         mgl_log("presented frame %llu (%dx%d), %lu pipelines; this frame: %lu draws (%lu terrain sections), %lu dispatches%s",
                 c->frames, c->w, c->h, (unsigned long)pipelines.count, frame_draws, frame_sections, frame_dispatches,
