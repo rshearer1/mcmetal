@@ -29,6 +29,11 @@
 #define RT_REFLECTIONS // ray-traced reflections on water and glass
 #define RT_REFLECT_DISTANCE 128.0 // [32.0 64.0 128.0 256.0]
 
+#define LIGHT_SHAFTS // ray-traced light shafts (god rays) where sunlight comes through gaps
+#define LIGHT_SHAFTS_STRENGTH 1.0 // [0.25 0.5 0.75 1.0 1.5 2.0 3.0]
+#define LIGHT_SHAFTS_STEPS 6 // [4 6 8 12 16]
+#define LIGHT_SHAFTS_SCALE 0.5
+
 #define WAVE_HEIGHT 1.0 // [0.0 0.5 1.0 1.5 2.0 3.0]
 #define WAVE_SPEED 1.0 // [0.5 1.0 1.5 2.0]
 
@@ -68,4 +73,6 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef COLORED_SHADOWS
 #endif
 #ifdef COLORED_LIGHT
+#endif
+#ifdef LIGHT_SHAFTS
 #endif

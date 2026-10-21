@@ -9,7 +9,7 @@ const bool colortex0MipmapEnabled = true;   // composite1 meters the picture's b
 #include "/lib/uniforms.glsl"
 #include "/lib/sky.glsl"
 
-uniform sampler2D colortex0, depthtex0;
+uniform sampler2D colortex0, colortex8, depthtex0;
 
 in vec2 texcoord;
 flat in vec3 sunCol, skyAmb, sunDir;
@@ -37,6 +37,9 @@ void main() {
         float amount = max(haze, edge) * smoothstep(0.0, 0.2, float(eyeBrightnessSmooth.y) / 240.0 + edge);
         if (amount > 0.001) col = mix(col, skyColor(p / dist, sunDir), amount);
     }
+#if defined USE_RT && defined LIGHT_SHAFTS
+    if (isEyeInWater == 0) col += texture(colortex8, texcoord * LIGHT_SHAFTS_SCALE).rgb;   // deferred3.fsh
+#endif
     col *= 1.0 - max(blindness, darknessFactor) * smoothstep(2.0, 12.0, dist);
     outColor = vec4(col, 1.0);
 }
