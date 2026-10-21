@@ -877,27 +877,55 @@ static id<MTLFunction> compile_fn(const char *msl, NSString *what, char **err)
     return compile_fn_lib(msl, what, err, NULL);
 }
 
-/* Every sin( call in generated MSL -> precise::sin( (NULL if there is none). Not asin/sinh, nor already qualified. */
+/* sin( and pow( calls in generated MSL -> precise::sin( / precise::pow( (NULL if there is none); not asin, sinh
+   or already-qualified calls. The rest of the maths functions stay fast. */
+static char precise_names[32][16];
+static int precise_count;
+
+static void precise_init(void)
+{
+    /* MGL_PRECISE=sin,pow,exp,...: the functions made precise (for finding which one a pack needs) */
+    const char *e = getenv("MGL_PRECISE");
+    char list[256], *save = NULL;
+    snprintf(list, sizeof list, "%s", e ? e : "sin,pow");
+    for (char *t = strtok_r(list, ", ", &save); t && precise_count < 32; t = strtok_r(NULL, ", ", &save))
+        snprintf(precise_names[precise_count++], sizeof precise_names[0], "%s(", t);
+    mgl_log("precise maths functions: %s", e ? e : "sin,pow");
+}
+
+static int precise_at(const char *msl, const char *p, size_t *len)
+{
+    static pthread_once_t once = PTHREAD_ONCE_INIT;
+    pthread_once(&once, precise_init);
+    const int count = precise_count;
+    char (*names)[16] = precise_names;
+    char c = p > msl ? p[-1] : ' ';
+    if (isalnum((unsigned char)c) || c == '_' || c == ':' || c == '.')
+        return 0;
+    for (int i = 0; i < count; i++)
+        if (!strncmp(p, names[i], strlen(names[i]))) {
+            *len = strlen(names[i]);
+            return 1;
+        }
+    return 0;
+}
+
 static char *precise_sin(const char *msl)
 {
-    size_t n = 0;
-    for (const char *p = strstr(msl, "sin("); p; p = strstr(p + 4, "sin("))
-        n++;
+    size_t n = 0, len;
+    for (const char *p = msl; *p; p++)
+        n += precise_at(msl, p, &len);
     if (!n)
         return NULL;
     char *out = malloc(strlen(msl) + n * 9 + 1), *o = out;
-    const char *src = msl;
-    for (const char *p = strstr(msl, "sin("); p; p = strstr(p + 4, "sin(")) {
-        char c = p > msl ? p[-1] : ' ';
-        if (isalnum((unsigned char)c) || c == '_' || c == ':')
-            continue;
-        memcpy(o, src, (size_t)(p - src));
-        o += p - src;
-        memcpy(o, "precise::", 9);
-        o += 9;
-        src = p;
+    for (const char *p = msl; *p; p++) {
+        if (precise_at(msl, p, &len)) {
+            memcpy(o, "precise::", 9);
+            o += 9;
+        }
+        *o++ = *p;
     }
-    strcpy(o, src);
+    *o = 0;
     return out;
 }
 
@@ -917,10 +945,13 @@ static id<MTLFunction> compile_fn_lib(const char *msl, NSString *what, char **er
     }
     if (@available(macOS 15.0, *)) {
         o.mathMode = math == 0 ? MTLMathModeSafe : math == 2 ? MTLMathModeFast : MTLMathModeRelaxed;
-        /* fast pow/exp/cos etc. (all-precise functions cost SEUS PTGI 16 -> 10 fps), but sin is made precise
-           in the source (precise_sin): packs hash with fract(sin(x) * 43758.5) on large x, and the fast sin there
-           gave SEUS streaky noise across the sky and a stripe down the screen */
-        o.mathFloatingPointFunctions = MTLMathFloatingPointFunctionsFast;
+        /* fast exp/cos/sqrt etc. (all-precise functions cost SEUS PTGI 16 -> 10 fps), but sin and pow are made
+           precise in the source (precise_sin): packs hash with fract(sin(x) * 43758.5) on large x (fast sin gave
+           SEUS streaks across the sky), and fast pow(0, 0) is NaN where GL drivers give 1, which SEUS's temporal
+           buffers spread into grain and a seam down the screen. MGL_MATH_FUNCS=precise makes them all precise. */
+        o.mathFloatingPointFunctions = getenv("MGL_MATH_FUNCS") && !strcmp(getenv("MGL_MATH_FUNCS"), "precise")
+                                           ? MTLMathFloatingPointFunctionsPrecise
+                                           : MTLMathFloatingPointFunctionsFast;
     } else
         o.fastMathEnabled = math > 0;
     char *fixed = math > 0 && !getenv("MGL_FAST_SIN") ? precise_sin(msl) : NULL;
