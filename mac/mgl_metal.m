@@ -49,7 +49,7 @@ static unsigned long frame_draws, frame_sections, frame_dispatches, frame_probes
    the previous pass had, i.e. a blit/compute/flush split it), blit and compute encoders, command buffers, waits. */
 static int opt_profile = -1;
 static struct {
-    unsigned long draws, passes, reopened, blits, computes, cbs, finishes, skipped_presents;
+    unsigned long draws, passes, reopened, dontcare, blits, computes, cbs, finishes, skipped_presents;
     uint64_t wait_ns, start_ns, frames;
 } prof;
 static _Atomic uint64_t prof_gpu_ns;
@@ -523,6 +523,7 @@ struct mglb_program {
     void *vscaled;   /* NSMutableDictionary: scale mask -> specialised vertex MTLFunction */
     void *compute;   /* MTLComputePipelineState */
     uint32_t id;
+    int discards;    /* the fragment stage can discard (so a full-screen draw may not cover every pixel) */
     char label[112]; /* "GL program N [app name]", for error reports and MGL_*_PROGRAMS */
 };
 
@@ -895,6 +896,7 @@ mglb_program *mglb_program_new(const char *msl_vertex, const char *msl_fragment,
         }
         p->vfn = retain_obj(v);
         p->ffn = f ? retain_obj(f) : NULL;
+        p->discards = msl_fragment && strstr(msl_fragment, "discard_fragment");
         if (vlib) {
             p->vlib = retain_obj(vlib);
             p->vscaled = retain_obj([NSMutableDictionary dictionary]);
@@ -1506,6 +1508,8 @@ static void set_attachment(MTLRenderPassAttachmentDescriptor *ad, mglb_texture *
     ad.storeAction = MTLStoreActionStore;
 }
 
+static unsigned pass_dontcare; /* colour attachments the next begin_pass needn't load (see pass_for_draw) */
+
 /* Open a render pass on t. clear_colors / clear_depth turn the matching load actions into clears. */
 static id<MTLRenderCommandEncoder> begin_pass(const mgl_target *t, unsigned clear_colors, const float *rgba,
                                               int clear_depth, float depth)
@@ -1516,6 +1520,8 @@ static id<MTLRenderCommandEncoder> begin_pass(const mgl_target *t, unsigned clea
         if (!t->tex[i])
             continue;
         set_attachment(rp.colorAttachments[i], t->tex[i], t->level[i], t->layer[i]);
+        if (pass_dontcare & (1u << i))
+            rp.colorAttachments[i].loadAction = MTLLoadActionDontCare;
         if (clear_colors & (1u << i)) {
             rp.colorAttachments[i].loadAction = MTLLoadActionClear;
             rp.colorAttachments[i].clearColor = MTLClearColorMake(rgba[0], rgba[1], rgba[2], rgba[3]);
@@ -1549,6 +1555,35 @@ static id<MTLRenderCommandEncoder> pass_for(const mgl_target *t)
     if (renc && same_target(t, &renc_target))
         return renc;
     return begin_pass(t, 0, NULL, 0, 0);
+}
+
+/* MGL_SMART_LOAD=1: a new pass whose first draw is a full-screen triangle or quad that overwrites a colour
+   attachment (no blending, all channels written, no discard, no scissor) doesn't load that attachment's old
+   contents from memory first. Shader packs' composite passes are made of these; on Apple GPUs each load reads
+   the whole image into tile memory. */
+static unsigned opt_smart_load = ~0u;
+static id<MTLRenderCommandEncoder> pass_for_draw(const mgl_draw *d)
+{
+    const mgl_target *t = &d->target;
+    if (renc && same_target(t, &renc_target))
+        return renc;
+    if (opt_smart_load == ~0u)
+        opt_smart_load = opt("MGL_SMART_LOAD");
+    unsigned overwrite = 0;
+    if (opt_smart_load && d->instances <= 1 && d->count <= 6 && !d->multi_n && !d->program->discards &&
+        (!d->depth_test || !t->depth) &&
+        (d->primitive == GL_TRIANGLES || d->primitive == GL_TRIANGLE_STRIP) && d->viewport[0] <= 0 &&
+        d->viewport[1] <= 0 && d->viewport[0] + d->viewport[2] >= t->width && d->viewport[1] + d->viewport[3] >= t->height &&
+        (!d->scissor_enabled || (d->scissor[0] <= 0 && d->scissor[1] <= 0 && d->scissor[0] + d->scissor[2] >= t->width &&
+                                 d->scissor[1] + d->scissor[3] >= t->height)))
+        for (int i = 0; i < MGL_MAX_ATTACHMENTS; i++)
+            if (t->tex[i] && !d->blend[i].enabled && (d->blend[i].color_mask & 15) == 15)
+                overwrite |= 1u << i;
+    pass_dontcare = overwrite;
+    id<MTLRenderCommandEncoder> e = begin_pass(t, 0, NULL, 0, 0);
+    pass_dontcare = 0;
+    prof.dontcare += (unsigned long)__builtin_popcount(overwrite);
+    return e;
 }
 
 /* ---- built-in shaders: present, blit, partial clear ---- */
@@ -1893,7 +1928,7 @@ void mglb_draw(const mgl_draw *d)
     id<MTLRenderPipelineState> ps = get_pipeline(d, &d->target);
     if (!ps)
         return;
-    id<MTLRenderCommandEncoder> e = pass_for(&d->target);
+    id<MTLRenderCommandEncoder> e = pass_for_draw(d);
     [e setRenderPipelineState:ps];
     int probe = probe_program(d);
     [e setDepthStencilState:get_depth_state(d->depth_test && d->target.depth && !probe, /* GL: no depth writes with the test off */
@@ -2529,9 +2564,9 @@ static void profile_frame(unsigned long draws)
         return;
     double f = (double)prof.frames, ms = (double)(t - prof.start_ns) * 1e-6 / f;
     mgl_log("profile: %.0f fps; per frame: cpu %.2f ms (waiting %.2f), gpu %.2f ms; %.0f draws, %.1f passes "
-            "(%.1f reopened), %.1f blit + %.1f compute encoders, %.1f command buffers, %.2f finishes; %.0f%% presents skipped",
+            "(%.1f reopened, %.1f images not loaded), %.1f blit + %.1f compute encoders, %.1f command buffers, %.2f finishes; %.0f%% presents skipped",
             f * 1000.0 / ((double)(t - prof.start_ns) * 1e-6), ms, (double)prof.wait_ns * 1e-6 / f,
-            (double)atomic_load(&prof_gpu_ns) * 1e-6 / f, prof.draws / f, prof.passes / f, prof.reopened / f,
+            (double)atomic_load(&prof_gpu_ns) * 1e-6 / f, prof.draws / f, prof.passes / f, prof.reopened / f, prof.dontcare / f,
             prof.blits / f, prof.computes / f, prof.cbs / f, prof.finishes / f, 100.0 * prof.skipped_presents / f);
     memset(&prof, 0, sizeof prof);
     prof.start_ns = t;
@@ -2550,9 +2585,10 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
     }
     mgl_shot_tick(); /* MGL_SHOT_DIR test screenshots */
     end_encoders();
-    /* Vsync off: like OpenGL, don't wait for the screen. When the window still holds two frames waiting to be shown,
+    /* Vsync off: like OpenGL, don't wait for the screen. When two finished frames are already waiting to be shown,
        this frame is drawn but not presented, instead of blocking in nextDrawable (which held the game at twice the
-       refresh rate, 240 fps on a 120 Hz screen). MGL_PRESENT_EVERY_FRAME=1: old behaviour. */
+       refresh rate, 240 fps on a 120 Hz screen). Frames the GPU is still drawing don't count: when the GPU is
+       the limit every frame is shown. MGL_PRESENT_EVERY_FRAME=1: old behaviour. */
     static int every_frame = -1;
     if (every_frame < 0)
         every_frame = getenv("MGL_PRESENT_EVERY_FRAME") && atoi(getenv("MGL_PRESENT_EVERY_FRAME"));
@@ -2563,7 +2599,10 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
     prof.wait_ns += now_ns() - t_draw;
     prof.skipped_presents += skip;
     if (drawable) {
-        atomic_fetch_add(&presents_waiting, 1);
+        [current_cb() addCompletedHandler:^(id<MTLCommandBuffer> done) {
+          (void)done;
+          atomic_fetch_add(&presents_waiting, 1);
+        }];
         [drawable addPresentedHandler:^(id<MTLDrawable> d) {
           (void)d;
           atomic_fetch_sub(&presents_waiting, 1);
