@@ -2494,8 +2494,21 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
     }
     mgl_shot_tick(); /* MGL_SHOT_DIR test screenshots */
     end_encoders();
-    id<CAMetalDrawable> drawable = [c->layer nextDrawable];
+    /* Vsync off: like OpenGL, don't wait for the screen. When the window still holds two frames waiting to be shown,
+       this frame is drawn but not presented, instead of blocking in nextDrawable (which held the game at twice the
+       refresh rate, 240 fps on a 120 Hz screen). MGL_PRESENT_EVERY_FRAME=1: old behaviour. */
+    static int every_frame = -1;
+    if (every_frame < 0)
+        every_frame = getenv("MGL_PRESENT_EVERY_FRAME") && atoi(getenv("MGL_PRESENT_EVERY_FRAME"));
+    static atomic_int presents_waiting;
+    int skip = !c->vsync && !every_frame && atomic_load(&presents_waiting) >= 2;
+    id<CAMetalDrawable> drawable = skip ? nil : [c->layer nextDrawable];
     if (drawable) {
+        atomic_fetch_add(&presents_waiting, 1);
+        [drawable addPresentedHandler:^(id<MTLDrawable> d) {
+          (void)d;
+          atomic_fetch_sub(&presents_waiting, 1);
+        }];
         MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
         rp.colorAttachments[0].texture = drawable.texture;
         rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;

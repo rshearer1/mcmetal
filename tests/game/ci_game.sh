@@ -32,6 +32,7 @@ else
 fi
 
 shots_in_world() { # screenshots taken after the first frame that drew terrain (any frame for the title screen)
+    [ -f "$1" ] || { echo 0; return; }
     awk -v title="$2" '/presented frame/ && (title || !/\(0 terrain/) {on=1} on && /screenshot/ {n++} END {print n+0}' "$1" 2>/dev/null
 }
 
@@ -58,7 +59,8 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
         pid=$(cat "$WORK/client.pid" 2>/dev/null)
         if [ $t -gt 20 ] && [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then echo "game exited after ${t}s"; break; fi
         if [ "${GAME_BENCH:-}" = true ] && [ -n "$world" ]; then
-            if [ -z "${bench_from:-}" ] && [ "$(shots_in_world "$OUT/$name/mgl.log" 0)" -ge 1 ]; then
+            # start on the game's own "joined the game" line: Apple's OpenGL writes no mgl.log
+            if [ -z "${bench_from:-}" ] && grep -q 'joined the game' "$WORK/client.log" 2>/dev/null; then
                 sleep "${GAME_BENCH_SETTLE:-10}"; t=$((t + ${GAME_BENCH_SETTLE:-10}))
                 bench_from=$(grep -c '\] fps ' "$WORK/client.log" 2>/dev/null)
                 echo "world on screen, measuring ${GAME_BENCH_SECS:-30}s"
