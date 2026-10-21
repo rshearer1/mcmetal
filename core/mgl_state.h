@@ -103,7 +103,7 @@ typedef struct mgl_program {
     char *info_log;
     mgl_xlate_result x;
     mglb_program *gpu;
-    int rt_pos_loc, rt_region_off, rt_mv_off, rt_proj_off; /* terrain capture (mgl_rt.c); rt_pos_loc -1 = not terrain */
+    int rt_pos_loc, rt_ent_loc, rt_region_off, rt_mv_off, rt_proj_off; /* terrain capture (mgl_rt.c); rt_pos_loc -1 = not terrain */
     unsigned char *ublock[3];   /* default-block shadow per stage (vertex, fragment, compute) */
     int unit_of[MGL_MAX_TEXTURES * 3]; /* GL texture unit per x.textures[] entry (glUniform1i on a sampler) */
     int image_unit_of[MGL_MAX_TEXTURES * 3];

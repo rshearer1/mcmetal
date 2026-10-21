@@ -1767,21 +1767,37 @@ static const char *builtin_msl =
     "  float2 p = float2((vid << 1) & 2, vid & 2); return float4(p.x * 2 - 1, 1 - p.y * 2, v.x, 1); }\n"
 "fragment CO clear_fs(constant float4 &c [[buffer(0)]]) { CO o; o.c0 = o.c1 = o.c2 = o.c3 = o.c4 = o.c5 = o.c6 = o.c7 = c; return o; }\n"
     /* ray tracing: Sodium/Iris terrain vertices -> region-local float3 triangle list (see mgl_rt.c for the layout) */
-    "struct RtInfo { uint vbase, stride, ioff, itype, count; int base_vertex; };\n"
-    /* per triangle for the alpha test in mcm_trace: 3 packed texture coordinates (Sodium's 15-bit u/v) and the
-       alpha cutoff index from Sodium's material bits (0 = none) */
+    "struct RtInfo { uint vbase, stride, ioff, itype, count; int base_vertex; int ent_off; uint translucent; };\n"
+    /* per triangle, 12 words, for mcm_trace (core/mgl_program.c reads the same layout):
+         0-2 packed texture coordinates (Sodium's 15-bit u/v)   3 alpha cutoff index (0 = solid) | 0x100 translucent
+         4-6 vertex colours RGBA8   7 face normal (octahedral snorm16x2)   8-10 light (block, sky bytes)
+         11 Iris block id + 1 (0 = unknown)
+       Iris's extended vertex format keeps no material bits, so its triangles all get the 0.1 alpha test (solid
+       textures are opaque, so this only costs time). */
     "kernel void rt_decode(device const uchar *vb [[buffer(0)]], device const uchar *ib [[buffer(1)]],\n"
     "    device packed_float3 *out [[buffer(2)]], constant RtInfo &n [[buffer(3)]], device uint *tri [[buffer(4)]],\n"
-    "    uint i [[thread_position_in_grid]]) {\n"
-    "  if (i >= n.count) return;\n"
-    "  uint idx = n.itype == 2 ? uint(((device const ushort *)(ib + n.ioff))[i]) : ((device const uint *)(ib + n.ioff))[i];\n"
-    "  device const uint *w = (device const uint *)(vb + n.vbase + uint(int(idx) + n.base_vertex) * n.stride);\n"
-    "  uint hi = w[0], lo = w[1], sec = w[4] >> 24;\n"
-    "  tri[(i / 3) * 4 + i % 3] = w[3] & 0x7FFF7FFFu;\n"
-    "  if (i % 3 == 0) tri[(i / 3) * 4 + 3] = (w[4] >> 17) & 3u;\n"
-    "  uint3 q = (((uint3(hi) >> uint3(0, 10, 20)) & 0x3FF) << 10) | ((uint3(lo) >> uint3(0, 10, 20)) & 0x3FF);\n"
-    "  float3 p = float3(q) * (32.0 / 1048576.0) - 8.0;\n"
-    "  out[i] = p + 16.0 * float3((sec >> 5) & 7, sec & 3, (sec >> 2) & 7); }\n";
+    "    uint t [[thread_position_in_grid]]) {\n"
+    "  if (t * 3 >= n.count) return;\n"
+    "  float3 p[3]; uint r[12];\n"
+    "  for (uint k = 0; k < 3; k++) {\n"
+    "    uint i = t * 3 + k;\n"
+    "    uint idx = n.itype == 2 ? uint(((device const ushort *)(ib + n.ioff))[i]) : ((device const uint *)(ib + n.ioff))[i];\n"
+    "    device const uchar *v = vb + n.vbase + uint(int(idx) + n.base_vertex) * n.stride;\n"
+    "    device const uint *w = (device const uint *)v;\n"
+    "    uint hi = w[0], lo = w[1], sec = w[4] >> 24;\n"
+    "    uint3 q = (((uint3(hi) >> uint3(0, 10, 20)) & 0x3FF) << 10) | ((uint3(lo) >> uint3(0, 10, 20)) & 0x3FF);\n"
+    "    p[k] = float3(q) * (32.0 / 1048576.0) - 8.0 + 16.0 * float3((sec >> 5) & 7, sec & 3, (sec >> 2) & 7);\n"
+    "    out[i] = p[k];\n"
+    "    r[k] = w[3] & 0x7FFF7FFFu; r[4 + k] = w[2]; r[8 + k] = w[4] & 0xFFFFu;\n"
+    "    if (k == 0) {\n"
+    "      r[3] = (n.stride > 20 ? 1u : (w[4] >> 17) & 3u) | (n.translucent ? 0x100u : 0u);\n"
+    "      r[11] = n.ent_off >= 0 ? (*(device const uint *)(v + n.ent_off)) >> 1 : 0u; }\n"
+    "  }\n"
+    "  float3 c = cross(p[1] - p[0], p[2] - p[0]);\n"
+    "  float3 nn = length(c) > 0.0 ? c / (abs(c.x) + abs(c.y) + abs(c.z)) : float3(0, 1, 0);\n"
+    "  float2 o = nn.z >= 0.0 ? nn.xy : (1.0 - abs(nn.yx)) * select(float2(-1.0), float2(1.0), nn.xy >= 0.0);\n"
+    "  r[7] = pack_float_to_snorm2x16(o);\n"
+    "  for (uint k = 0; k < 12; k++) tri[t * 12 + k] = r[k]; }\n";
 
 static id<MTLLibrary> builtins;
 
@@ -2319,7 +2335,9 @@ typedef struct rt_key {
     void *vbuf, *ibuf;
     uint64_t vbase, ioff;
     int32_t stride, itype, count, base_vertex;
-    uint32_t gen, pad;
+    uint32_t gen;
+    int32_t ent_off;
+    uint32_t translucent, pad;
 } rt_key;
 
 static NSMutableDictionary<NSData *, RtSection *> *rt_sections;
@@ -2373,6 +2391,8 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer
     k.count = g->count;
     k.base_vertex = g->base_vertex;
     k.gen = g->gen;
+    k.ent_off = g->ent_off;
+    k.translucent = (uint32_t)g->translucent;
     NSData *key = [NSData dataWithBytes:&k length:sizeof k];
     RtSection *s = rt_sections[key];
     if (s) {
@@ -2386,15 +2406,15 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer
         return nil;
     /* 1. decode the section's vertices into a float3 triangle list */
     mglb_buffer *pos = mglb_buffer_new((size_t)tris * 3 * 12);
-    mglb_buffer *tri = mglb_buffer_new((size_t)tris * 16);
+    mglb_buffer *tri = mglb_buffer_new((size_t)tris * 48);
     if (!pos || !tri) {
         mglb_buffer_release(pos);
         mglb_buffer_release(tri);
         return nil;
     }
-    struct { uint32_t vbase, stride, ioff, itype, count; int32_t base_vertex; } info = {
+    struct { uint32_t vbase, stride, ioff, itype, count; int32_t base_vertex, ent_off; uint32_t translucent; } info = {
         (uint32_t)g->vbase, (uint32_t)g->stride, (uint32_t)g->ioff, g->itype == GL_UNSIGNED_SHORT ? 2u : 4u,
-        (uint32_t)(tris * 3), g->base_vertex};
+        (uint32_t)(tris * 3), g->base_vertex, g->ent_off, g->translucent ? 1u : 0u};
     id<MTLComputeCommandEncoder> c = compute_encoder();
     [c setComputePipelineState:ps];
     [c setBuffer:OBJ(id<MTLBuffer>, g->vbuf->mtl) offset:0 atIndex:0];
@@ -2403,7 +2423,7 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer
     [c setBytes:&info length:sizeof info atIndex:3];
     [c setBuffer:OBJ(id<MTLBuffer>, tri->mtl) offset:0 atIndex:4];
     use_buffer(tri);
-    [c dispatchThreads:MTLSizeMake((NSUInteger)tris * 3, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+    [c dispatchThreads:MTLSizeMake((NSUInteger)tris, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
     use_buffer(g->vbuf);
     use_buffer(g->ibuf);
     /* 2. build its acceleration structure (the position buffer is only needed during the build) */

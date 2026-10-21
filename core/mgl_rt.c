@@ -4,7 +4,10 @@
    with such a program is recorded as a section draw: vertex buffer + stride, index range, base vertex and the
    camera-relative region origin. Vertex layout (Sodium CompactChunkVertex; Iris appends fields after byte 20):
      byte 0  : x/y/z high 10 bits     byte 4 : x/y/z low 10 bits     (20-bit, value * 32 / 2^20 - 8)
-     byte 16 : light (16 bits), material (8), section index (8) -> section offset 16 * ((i>>5)&7, i&3, (i>>2)&7)
+     byte 8  : colour RGBA8 (biome tint; AO in rgb, or in alpha with Iris separate AO)
+     byte 12 : texture u/v (15 bits + sign each)
+     byte 16 : light (block, sky bytes), material (8; Iris: tangent sign bit), section index (8)
+               -> section offset 16 * ((i>>5)&7, i&3, (i>>2)&7)
    The Metal backend will build acceleration structures from this list; for now the list can be checked
    without a GPU: MGL_RT_SNAPSHOT=/path/out.ppm, then `touch /path/out.ppm.go` while the game runs, and the
    next terrain draw rasterises everything recorded in the last second, seen through the camera, on the CPU. */
@@ -44,10 +47,13 @@ static int uniform_offset(const mgl_program *p, const char *name)
 
 void mgl_rt_link(mgl_program *p)
 {
-    p->rt_pos_loc = -1;
-    for (int i = 0; i < p->x.num_attribs; i++)
+    p->rt_pos_loc = p->rt_ent_loc = -1;
+    for (int i = 0; i < p->x.num_attribs; i++) {
         if (!strcmp(p->x.attribs[i].name, "a_Position") && p->x.attribs[i].is_int && p->x.attribs[i].vecsize == 2)
             p->rt_pos_loc = p->x.attribs[i].location;
+        if (!strcmp(p->x.attribs[i].name, "iris_Entity") || !strcmp(p->x.attribs[i].name, "mc_Entity"))
+            p->rt_ent_loc = p->x.attribs[i].location; /* only there when the pack's terrain shader reads mc_Entity */
+    }
     p->rt_region_off = uniform_offset(p, "u_RegionOffset");
     p->rt_mv_off = uniform_offset(p, "iris_ModelViewMatrix");
     p->rt_proj_off = uniform_offset(p, "iris_ProjectionMatrix");
@@ -164,6 +170,12 @@ void mgl_rt_record(mgl_program *p, const mgl_draw *d)
             mgl_rt_atlas = d->textures[MGL_FRAGMENT][idx].tex;
     }
     const mgl_vertex_buf *vb = &d->vbufs[a->buffer];
+    int ent_off = -1; /* Iris: ((id + 1) << 1) | render type, 4 bytes */
+    if (p->rt_ent_loc >= 0) {
+        const mgl_vertex_attr *e = &d->attrs[p->rt_ent_loc];
+        if (e->enabled && e->buffer == a->buffer && e->offset >= a->offset && !((e->offset - a->offset) & 3))
+            ent_off = (int)(e->offset - a->offset);
+    }
     const float *region = (const float *)(p->ublock[MGL_VERTEX] + p->rt_region_off);
     double t = now_s();
 
@@ -178,13 +190,17 @@ void mgl_rt_record(mgl_program *p, const mgl_draw *d)
 
     rt_draw key = {{vb->buf, d->index_buf, vb->offset + (size_t)a->offset, vb->stride, d->index_offset,
                     d->index_type, d->count, d->base_vertex, 0, {region[0], region[1], region[2]},
-                    d->blend[0].enabled}, t};
+                    d->blend[0].enabled, ent_off}, t};
     for (int i = 0; i < num_draws; i++) {
         rt_draw *r = &draws[i];
         if (r->g.vbuf == key.g.vbuf && r->g.vbase == key.g.vbase && r->g.base_vertex == key.g.base_vertex &&
             r->g.ioff == key.g.ioff && r->g.count == key.g.count && r->g.ibuf == key.g.ibuf &&
             r->g.translucent == key.g.translucent) {
             memcpy(r->g.region, key.g.region, sizeof r->g.region);
+            if (key.g.ent_off >= 0 && r->g.ent_off != key.g.ent_off) { /* passes without mc_Entity keep it */
+                r->g.ent_off = key.g.ent_off;
+                r->g.gen++;
+            }
             r->seen = t;
             goto recorded;
         }
