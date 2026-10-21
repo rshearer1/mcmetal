@@ -205,8 +205,8 @@ static void gather_uniforms(mgl_draw *d, mgl_program *p)
     }
     if (p->x.uses_scene) /* mcm_trace's own storage block: the scene's per-instance triangle data */
         for (int i = 0; i < p->x.num_ssbos && i < 8; i++)
-            if (!strcmp(p->x.ssbos[i].name, "McmInstances")) {
-                d->ssbo[i] = mglb_rt_instances();
+            if (!strcmp(p->x.ssbos[i].name, "McmInstances") || !strcmp(p->x.ssbos[i].name, "McmLights")) {
+                d->ssbo[i] = p->x.ssbos[i].name[3] == 'I' ? mglb_rt_instances() : mglb_rt_lights();
                 d->ssbo_offset[i] = 0;
             }
 }

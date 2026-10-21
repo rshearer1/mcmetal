@@ -216,4 +216,10 @@ void mgl_shot_tick(void)
     if (mgl_write_png(path, px, w, h))
         mgl_log("screenshot %s (%dx%d)", path, w, h);
     free(px);
+    if (mglb_upscaled_read(&px, &w, &h)) { /* MCMETAL_UPSCALE: also the frame as shown, after MetalFX */
+        snprintf(path, sizeof path, "%s/shot-%03d-up.png", dir, n - 1);
+        if (mgl_write_png(path, px, w, h))
+            mgl_log("screenshot %s (%dx%d)", path, w, h);
+        free(px);
+    }
 }

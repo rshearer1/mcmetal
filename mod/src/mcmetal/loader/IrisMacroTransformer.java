@@ -87,7 +87,7 @@ public final class IrisMacroTransformer implements ITransformationService {
         }
     }
 
-    /** Adds "#define MCMETAL_RT 1" next to Iris's MC_OS_* define (the one-argument define() it is passed to). */
+    /** Adds "#define MCMETAL_RT 1" and "#define MCMETAL_LIGHTS 1" next to Iris's MC_OS_* define (the one-argument define() it is passed to). */
     static final class RtDefine implements ITransformer<MethodNode> {
         static final String PAIR = "net/irisshaders/iris/helpers/StringPair";
 
@@ -105,19 +105,21 @@ public final class IrisMacroTransformer implements ITransformationService {
             pre.add(new LdcInsnNode(MetalBootstrap.ACTIVE));
             pre.add(new MethodInsnNode(Opcodes.INVOKESTATIC, "java/lang/Boolean", "getBoolean", "(Ljava/lang/String;)Z"));
             pre.add(new JumpInsnNode(Opcodes.IFEQ, skip));
-            pre.add(new VarInsnNode(Opcodes.ALOAD, 0));
-            pre.add(new TypeInsnNode(Opcodes.NEW, PAIR));
-            pre.add(new InsnNode(Opcodes.DUP));
-            pre.add(new LdcInsnNode("MCMETAL_RT"));
-            pre.add(new LdcInsnNode("1"));
-            pre.add(new MethodInsnNode(Opcodes.INVOKESPECIAL, PAIR, "<init>", "(Ljava/lang/String;Ljava/lang/String;)V"));
-            pre.add(new MethodInsnNode(Opcodes.INVOKEINTERFACE, "java/util/List", "add", "(Ljava/lang/Object;)Z", true));
-            pre.add(new InsnNode(Opcodes.POP));
+            for (String name : new String[] {"MCMETAL_RT", "MCMETAL_LIGHTS"}) { // MCMETAL_LIGHTS: mcm_lights_near exists
+                pre.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                pre.add(new TypeInsnNode(Opcodes.NEW, PAIR));
+                pre.add(new InsnNode(Opcodes.DUP));
+                pre.add(new LdcInsnNode(name));
+                pre.add(new LdcInsnNode("1"));
+                pre.add(new MethodInsnNode(Opcodes.INVOKESPECIAL, PAIR, "<init>", "(Ljava/lang/String;Ljava/lang/String;)V"));
+                pre.add(new MethodInsnNode(Opcodes.INVOKEINTERFACE, "java/util/List", "add", "(Ljava/lang/Object;)Z", true));
+                pre.add(new InsnNode(Opcodes.POP));
+            }
             pre.add(skip);
             pre.add(new FrameNode(Opcodes.F_SAME, 0, null, 0, null));
             m.instructions.insert(pre);
             m.maxStack = Math.max(m.maxStack, 5);
-            MetalBootstrap.log("shader packs get MCMETAL_RT (hardware ray tracing through mcm_trace)");
+            MetalBootstrap.log("shader packs get MCMETAL_RT and MCMETAL_LIGHTS (hardware ray tracing through mcm_trace)");
             return m;
         }
 

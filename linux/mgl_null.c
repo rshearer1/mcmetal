@@ -60,8 +60,10 @@ void mglb_blit(const mgl_target *s, int sa, const int sr[4], const mgl_target *d
 void mglb_memory_barrier(void) {}
 void mglb_rt_update(const mgl_rt_geom *g, int n) {}
 mglb_buffer *mglb_rt_instances(void) { return NULL; }
+mglb_buffer *mglb_rt_lights(void) { return NULL; }
 
 void mglb_window_size(int *w, int *h) { *w = 1280; *h = 720; }
+int mglb_upscaled_read(unsigned char **px, int *w, int *h) { (void)px; (void)w; (void)h; return 0; }
 uint64_t mglb_fence(void) { return ++fence_counter; }
 int mglb_fence_wait(uint64_t id, uint64_t timeout) { return 1; }
 void mglb_flush(void) {}

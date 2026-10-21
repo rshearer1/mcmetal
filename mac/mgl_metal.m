@@ -5,6 +5,7 @@
    shaders flip Y. Only the final present flips the image for the window. */
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import <MetalFX/MetalFX.h>
 #include <ctype.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -283,11 +284,26 @@ static void commit(void)
     }
 }
 
+/* MGL_PROFILE=3: like 2, but every pass runs alone (its own command buffer, waited for), so the per-pass times
+   don't overlap. On Apple's tile GPUs consecutive passes run concurrently and level 2's shares come out nearly
+   flat. Frame rate drops a lot in this mode; only the shares mean anything. */
+static void prof_serialize(void)
+{
+    static int busy;
+    if (opt_profile < 3 || busy || !cb)
+        return;
+    busy = 1;
+    commit();
+    [last_cb waitUntilCompleted];
+    busy = 0;
+}
+
 static id<MTLBlitCommandEncoder> blit_encoder(void)
 {
     gs_flush();
     if (benc)
         return benc;
+    prof_serialize();
     end_encoders();
     id<MTLCommandBuffer> c = current_cb();
     int k = pt_pass("blits");
@@ -310,6 +326,7 @@ static id<MTLComputeCommandEncoder> compute_encoder(void)
         gs_flush();
     if (cenc)
         return cenc;
+    prof_serialize();
     end_encoders();
     id<MTLCommandBuffer> c = current_cb();
     int k = pt_pass("pass compute");
@@ -409,6 +426,63 @@ static void use_buffer(mglb_buffer *b)
 {
     if (b)
         b->last_use = cb_serial;
+}
+
+/* Transient memory for one command buffer: geometry-shader output and texture upload staging. Suballocated
+   from 32 MB chunks that are reused once the GPU has finished with them. Before this, each geometry-shader draw
+   allocated two fresh buffers: with ~190 of them in flight per frame the pool had nothing free, and the kernel
+   call behind each new buffer grew to 88% of the render thread (SEUS at 1x slid from 49 to 15 fps in 90 s). */
+#define TR_CHUNK ((size_t)32 << 20)
+#define TR_MAX 48
+static struct { mglb_buffer *b; size_t used; } tr_chunk[TR_MAX];
+static int tr_n, tr_cur = -1;
+
+typedef struct { id<MTLBuffer> buf; NSUInteger off; void *ptr; } transient_t;
+
+static transient_t transient(size_t size)
+{
+    current_cb(); /* cb_serial is this command buffer's */
+    size = (size + 255) & ~(size_t)255;
+    if (size > TR_CHUNK) {
+        mglb_buffer *b = mglb_buffer_new(size);
+        if (!b)
+            return (transient_t){nil, 0, NULL};
+        transient_t t = {OBJ(id<MTLBuffer>, b->mtl), 0, b->ptr};
+        use_buffer(b);
+        mglb_buffer_release(b);
+        return t;
+    }
+    int k = tr_cur;
+    if (k < 0 || tr_chunk[k].b->last_use != cb_serial || tr_chunk[k].used + size > TR_CHUNK) {
+        uint64_t done = atomic_load(&completed_serial);
+        k = -1;
+        for (int i = 0; i < tr_n && k < 0; i++)
+            if (tr_chunk[i].b->last_use <= done)
+                k = i;
+        if (k < 0 && tr_n < TR_MAX) {
+            mglb_buffer *b = mglb_buffer_new(TR_CHUNK);
+            if (b) {
+                k = tr_n++;
+                tr_chunk[k].b = b;
+            }
+        }
+        if (k < 0) { /* all chunks busy: a one-off buffer */
+            mglb_buffer *b = mglb_buffer_new(size);
+            if (!b)
+                return (transient_t){nil, 0, NULL};
+            transient_t t = {OBJ(id<MTLBuffer>, b->mtl), 0, b->ptr};
+            use_buffer(b);
+            mglb_buffer_release(b);
+            return t;
+        }
+        tr_chunk[k].used = 0;
+        tr_cur = k;
+    }
+    mglb_buffer *b = tr_chunk[k].b;
+    transient_t t = {OBJ(id<MTLBuffer>, b->mtl), (NSUInteger)tr_chunk[k].used, (char *)b->ptr + tr_chunk[k].used};
+    tr_chunk[k].used += size;
+    use_buffer(b);
+    return t;
 }
 
 /* ================================================================ textures */
@@ -547,28 +621,26 @@ void mglb_texture_upload(mglb_texture *t, int level, int x, int y, int z, int w,
     if (!t || t->pf == MTLPixelFormatDepth32Float_Stencil8)
         return;
     size_t bpt = (size_t)bytes_per_texel(t->pf), row = bpt * (size_t)w, img = row * (size_t)h;
-    mglb_buffer *stage = mglb_buffer_new(img * (size_t)d);
-    if (!stage)
+    transient_t stage = transient(img * (size_t)d);
+    if (!stage.buf)
         return;
     for (int zz = 0; zz < d; zz++)
         for (int yy = 0; yy < h; yy++)
-            memcpy((char *)stage->ptr + (size_t)zz * img + (size_t)yy * row,
+            memcpy((char *)stage.ptr + (size_t)zz * img + (size_t)yy * row,
                    (const char *)data + (size_t)zz * bytes_per_image + (size_t)yy * bytes_per_row, row);
     id<MTLBlitCommandEncoder> e = blit_encoder();
     id<MTLTexture> tex = OBJ(id<MTLTexture>, t->mtl);
     if (t->d.type == MGLT_3D) {
-        [e copyFromBuffer:OBJ(id<MTLBuffer>, stage->mtl) sourceOffset:0 sourceBytesPerRow:row sourceBytesPerImage:img
+        [e copyFromBuffer:stage.buf sourceOffset:stage.off sourceBytesPerRow:row sourceBytesPerImage:img
                  sourceSize:MTLSizeMake((NSUInteger)w, (NSUInteger)h, (NSUInteger)d) toTexture:tex destinationSlice:0
            destinationLevel:(NSUInteger)level destinationOrigin:MTLOriginMake((NSUInteger)x, (NSUInteger)y, (NSUInteger)z)];
     } else {
         for (int s = 0; s < d; s++)
-            [e copyFromBuffer:OBJ(id<MTLBuffer>, stage->mtl) sourceOffset:(NSUInteger)s * img sourceBytesPerRow:row
+            [e copyFromBuffer:stage.buf sourceOffset:stage.off + (NSUInteger)s * img sourceBytesPerRow:row
                 sourceBytesPerImage:img sourceSize:MTLSizeMake((NSUInteger)w, (NSUInteger)h, 1) toTexture:tex
                    destinationSlice:(NSUInteger)(z + s) destinationLevel:(NSUInteger)level
                   destinationOrigin:MTLOriginMake((NSUInteger)x, (NSUInteger)y, 0)];
     }
-    use_buffer(stage);
-    mglb_buffer_release(stage);
 }
 
 void mglb_texture_generate_mipmaps(mglb_texture *t)
@@ -1784,6 +1856,7 @@ static unsigned pass_dontcare; /* colour attachments the next begin_pass needn't
 static id<MTLRenderCommandEncoder> begin_pass(const mgl_target *t, unsigned clear_colors, const float *rgba,
                                               int clear_depth, float depth)
 {
+    prof_serialize();
     end_encoders();
     MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
     for (int i = 0; i < MGL_MAX_ATTACHMENTS; i++) {
@@ -1888,7 +1961,8 @@ static const char *builtin_msl =
     "  float2 p = float2((vid << 1) & 2, vid & 2); return float4(p.x * 2 - 1, 1 - p.y * 2, v.x, 1); }\n"
 "fragment CO clear_fs(constant float4 &c [[buffer(0)]]) { CO o; o.c0 = o.c1 = o.c2 = o.c3 = o.c4 = o.c5 = o.c6 = o.c7 = c; return o; }\n"
     /* ray tracing: Sodium/Iris terrain vertices -> region-local float3 triangle list (see mgl_rt.c for the layout) */
-    "struct RtInfo { uint vbase, stride, ioff, itype, count; int base_vertex; int ent_off; uint translucent; };\n"
+    "struct RtInfo { uint vbase, stride, ioff, itype, count; int base_vertex; int ent_off; uint translucent;\n"
+    "  int lmin, lmax; uint lcap; };\n"
     /* per triangle, 12 words, for mcm_trace (core/mgl_program.c reads the same layout):
          0-2 packed texture coordinates (Sodium's 15-bit u/v)   3 alpha cutoff index (0 = solid) | 0x100 translucent
          4-6 vertex colours RGBA8   7 face normal (octahedral snorm16x2)   8-10 light (block, sky bytes)
@@ -1897,7 +1971,7 @@ static const char *builtin_msl =
        textures are opaque, so this only costs time). */
     "kernel void rt_decode(device const uchar *vb [[buffer(0)]], device const uchar *ib [[buffer(1)]],\n"
     "    device packed_float3 *out [[buffer(2)]], constant RtInfo &n [[buffer(3)]], device uint *tri [[buffer(4)]],\n"
-    "    uint t [[thread_position_in_grid]]) {\n"
+    "    device atomic_uint *lc [[buffer(5)]], uint t [[thread_position_in_grid]]) {\n"
     "  if (t * 3 >= n.count) return;\n"
     "  float3 p[3]; uint r[12];\n"
     "  for (uint k = 0; k < 3; k++) {\n"
@@ -1918,7 +1992,51 @@ static const char *builtin_msl =
     "  float3 nn = length(c) > 0.0 ? c / (abs(c.x) + abs(c.y) + abs(c.z)) : float3(0, 1, 0);\n"
     "  float2 o = nn.z >= 0.0 ? nn.xy : (1.0 - abs(nn.yx)) * select(float2(-1.0), float2(1.0), nn.xy >= 0.0);\n"
     "  r[7] = pack_float_to_snorm2x16(o);\n"
-    "  for (uint k = 0; k < 12; k++) tri[t * 12 + k] = r[k]; }\n";
+    "  for (uint k = 0; k < 12; k++) tri[t * 12 + k] = r[k];\n"
+    /* light candidates (MCMETAL_LIGHT_IDS): the block this face belongs to, a little inside it from the centroid
+       (front faces wind counter-clockwise, so the face normal points out of the block) */
+    "  int id = int(r[11]) - 1;\n"
+    "  if (n.lcap > 0u && id >= n.lmin && id <= n.lmax) {\n"
+    "    uint k = atomic_fetch_add_explicit(&lc[0], 1u, memory_order_relaxed);\n"
+    "    if (k < n.lcap) {\n"
+    "      float3 in = (p[0] + p[1] + p[2]) / 3.0 - (length(c) > 0.0 ? normalize(c) : float3(0)) * 0.01;\n"
+    "      device uint *e = (device uint *)(lc + 4 + k * 4);\n"
+    "      e[0] = as_type<uint>(in.x); e[1] = as_type<uint>(in.y); e[2] = as_type<uint>(in.z); e[3] = uint(id); } } }\n"
+    /* per section, per frame: light candidates -> one light per block (hash on the block position) */
+    "struct RtLightSec { int3 off; float3 region; uint cap; };\n"
+    "kernel void rt_lights(device const uint *lc [[buffer(0)]], constant RtLightSec &s [[buffer(1)]],\n"
+    "    device atomic_uint *hash [[buffer(2)]], device atomic_uint *lights [[buffer(3)]], uint t [[thread_position_in_grid]]) {\n"
+    "  if (t >= min(lc[0], s.cap)) return;\n"
+    "  device const uint *e = lc + 4 + t * 4;\n"
+    "  float3 in = float3(as_type<float>(e[0]), as_type<float>(e[1]), as_type<float>(e[2]));\n"
+    "  int3 b = int3(floor(in)) + s.off + 512;\n"
+    "  if (any(b < 0) || any(b > 1023)) return;\n"
+    "  uint key = uint(b.x) | uint(b.y) << 10 | uint(b.z) << 20 | 0x40000000u;\n"
+    "  uint h = (key * 2654435761u) >> 19;\n"
+    "  for (int probe = 0; probe < 64; ) {\n"
+    "    uint expected = 0u;\n"
+    "    if (atomic_compare_exchange_weak_explicit(&hash[h], &expected, key, memory_order_relaxed, memory_order_relaxed)) {\n"
+    "      uint i = atomic_fetch_add_explicit(&lights[0], 1u, memory_order_relaxed);\n"
+    "      if (i < 2048u) {\n"
+    "        device float4 *l = (device float4 *)(lights + 4) + i;\n"
+    "        *l = float4(floor(in) + 0.5 + s.region, float(e[3])); }\n"
+    "      return; }\n"
+    "    if (expected == key) return;\n"
+    "    if (expected != 0u) { h = (h + 1u) & 8191u; probe++; } }\n"
+    "}\n"
+    /* per light: add it to every 4-block cell of the 16^3 grid (centred on the camera) it can reach within 16 blocks */
+    "kernel void rt_light_grid(device atomic_uint *lights [[buffer(0)]], uint t [[thread_position_in_grid]]) {\n"
+    "  if (t >= min(atomic_load_explicit(&lights[0], memory_order_relaxed), 2048u)) return;\n"
+    "  float3 p = ((device const float4 *)(lights + 4))[t].xyz;\n"
+    "  device atomic_uint *cells = lights + 4 + 2048 * 4;\n"
+    "  int3 c0 = max(int3(floor((p - 16.0 + 32.0) / 4.0)), 0), c1 = min(int3(floor((p + 16.0 + 32.0) / 4.0)), 15);\n"
+    "  for (int z = c0.z; z <= c1.z; z++) for (int y = c0.y; y <= c1.y; y++) for (int x = c0.x; x <= c1.x; x++) {\n"
+    "    float3 lo = float3(x, y, z) * 4.0 - 32.0, q = clamp(p, lo, lo + 4.0);\n"
+    "    if (distance(p, q) > 16.0) continue;\n"
+    "    device atomic_uint *cell = cells + ((z * 16 + y) * 16 + x) * 17;\n"
+    "    uint k = atomic_fetch_add_explicit(cell, 1u, memory_order_relaxed);\n"
+    "    if (k < 16u) atomic_store_explicit(cell + 1 + k, t, memory_order_relaxed); }\n"
+    "}\n";
 
 static id<MTLLibrary> builtins;
 
@@ -2366,13 +2484,11 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
         desc[i][3] = (int32_t)a->type | (a->size << 4) | (a->normalized ? 1 << 8 : 0);
     }
     size_t out_bytes = (size_t)triangles * (size_t)max_vertices * (size_t)record_vec4s * 16;
-    mglb_buffer *ov = mglb_buffer_new(out_bytes), *oc = mglb_buffer_new((size_t)triangles * 4);
-    if (!ov || !oc) {
-        mglb_buffer_release(ov);
-        mglb_buffer_release(oc);
+    transient_t ov = transient(out_bytes), oc = transient((size_t)triangles * 4);
+    if (!ov.buf || !oc.buf)
         return;
-    }
-    id<MTLBuffer> ovb = OBJ(id<MTLBuffer>, ov->mtl), ocb = OBJ(id<MTLBuffer>, oc->mtl);
+    id<MTLBuffer> ovb = ov.buf, ocb = oc.buf;
+    NSUInteger ovo = ov.off, oco = oc.off;
 
     /* 1. vertex + geometry stages as one compute job, one thread per input triangle */
     if (gs_batch < 0)
@@ -2387,16 +2503,15 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
     if (d->uses_scene)
         bind_scene(nil, c);
     [c setBytes:desc length:sizeof desc atIndex:MGL_BUF_INTERNAL_BASE];
-    for (int i = 0; i < 4; i++) {
-        mglb_buffer *b = i < d->num_vbufs ? d->vbufs[i].buf : (d->num_vbufs ? d->vbufs[0].buf : ov);
-        [c setBuffer:OBJ(id<MTLBuffer>, b->mtl) offset:0 atIndex:(NSUInteger)(MGL_BUF_INTERNAL_BASE + 1 + i)];
+    for (int i = 0; i < 4; i++) { /* unused slots get any valid buffer */
+        mglb_buffer *b = i < d->num_vbufs ? d->vbufs[i].buf : d->num_vbufs ? d->vbufs[0].buf : NULL;
+        [c setBuffer:b ? OBJ(id<MTLBuffer>, b->mtl) : ovb offset:0 atIndex:(NSUInteger)(MGL_BUF_INTERNAL_BASE + 1 + i)];
         use_buffer(b);
     }
-    mglb_buffer *ib = d->index_buf ? d->index_buf : ov;
-    [c setBuffer:OBJ(id<MTLBuffer>, ib->mtl) offset:0 atIndex:MGL_BUF_INTERNAL_BASE + 5];
-    use_buffer(ib);
-    [c setBuffer:ovb offset:0 atIndex:MGL_BUF_INTERNAL_BASE + 6];
-    [c setBuffer:ocb offset:0 atIndex:MGL_BUF_INTERNAL_BASE + 7];
+    [c setBuffer:d->index_buf ? OBJ(id<MTLBuffer>, d->index_buf->mtl) : ovb offset:0 atIndex:MGL_BUF_INTERNAL_BASE + 5];
+    use_buffer(d->index_buf);
+    [c setBuffer:ovb offset:ovo atIndex:MGL_BUF_INTERNAL_BASE + 6];
+    [c setBuffer:ocb offset:oco atIndex:MGL_BUF_INTERNAL_BASE + 7];
     NSUInteger lx = (NSUInteger)(d->local_size[0] > 0 ? d->local_size[0] : 64);
     [c dispatchThreadgroups:MTLSizeMake(((NSUInteger)triangles + lx - 1) / lx, 1, 1)
       threadsPerThreadgroup:MTLSizeMake(lx, 1, 1)];
@@ -2410,14 +2525,15 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
     id<MTLRenderPipelineState> ps = get_pipeline(p, &p->target);
     if (!ps) {
         free(p);
-        mglb_buffer_release(ov);
-        mglb_buffer_release(oc);
         return;
     }
-    NSData *u0 = p->uniforms[0] ? [NSData dataWithBytes:p->uniforms[0] length:(NSUInteger)p->uniform_size[0]] : nil;
-    NSData *u1 = p->uniforms[1] ? [NSData dataWithBytes:p->uniforms[1] length:(NSUInteger)p->uniform_size[1]] : nil;
-    p->uniforms[0] = u0.bytes;
-    p->uniforms[1] = u1.bytes;
+    /* plain malloc copies, freed with p: autoreleased objects are never drained on the game's render thread */
+    void *u0 = p->uniforms[0] && p->uniform_size[0] ? malloc((size_t)p->uniform_size[0]) : NULL;
+    void *u1 = p->uniforms[1] && p->uniform_size[1] ? malloc((size_t)p->uniform_size[1]) : NULL;
+    if (u0) memcpy(u0, p->uniforms[0], (size_t)p->uniform_size[0]);
+    if (u1) memcpy(u1, p->uniforms[1], (size_t)p->uniform_size[1]);
+    p->uniforms[0] = u0;
+    p->uniforms[1] = u1;
     for (int i = 0; i < 12; i++) /* busy from now, so a glBufferSubData before the flush can't write in place */
         use_buffer(p->ubo[i]);
     for (int i = 0; i < MGL_MAX_SSBOS; i++)
@@ -2426,7 +2542,6 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
                                                   p->depth_test && p->depth_write && p->target.depth, p->depth_func);
     NSUInteger vertices = (NSUInteger)triangles * (NSUInteger)(max_vertices - 2) * 3;
     gs_play play = ^(id<MTLRenderCommandEncoder> e) {
-        (void)u0; (void)u1;
         [e setRenderPipelineState:ps];
         [e setDepthStencilState:ds];
         [e setViewport:(MTLViewport){p->viewport[0], p->viewport[1], p->viewport[2], p->viewport[3], 0, 1}];
@@ -2454,16 +2569,14 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
             bind_stage_resources(e, nil, p, 1);
             if (p->uses_scene)
                 bind_scene(e, nil);
-            [e setVertexBuffer:ovb offset:0 atIndex:MGL_BUF_INTERNAL_BASE + 6];
-            [e setVertexBuffer:ocb offset:0 atIndex:MGL_BUF_INTERNAL_BASE + 7];
+            [e setVertexBuffer:ovb offset:ovo atIndex:MGL_BUF_INTERNAL_BASE + 6];
+            [e setVertexBuffer:ocb offset:oco atIndex:MGL_BUF_INTERNAL_BASE + 7];
             [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:vertices];
         }
+        free(u0);
+        free(u1);
         free(p);
     };
-    use_buffer(ov);
-    use_buffer(oc);
-    mglb_buffer_release(ov);
-    mglb_buffer_release(oc);
     if (!gs_pending)
         gs_pending = [NSMutableArray new];
     gs_target = d->target;
@@ -2497,11 +2610,14 @@ static void gs_flush(void)
 @property(nonatomic, strong) id<MTLAccelerationStructure> as;
 @property(nonatomic) uint64_t last_frame;
 @property(nonatomic) mglb_buffer *tris; /* per-triangle texture coordinates + alpha cutoff (rt_decode) */
+@property(nonatomic) mglb_buffer *lights; /* light candidates: count, then (position, id) per face */
+@property(nonatomic) uint32_t lcap;
 @end
 @implementation RtSection
 - (void)dealloc
 {
     mglb_buffer_release(_tris);
+    mglb_buffer_release(_lights);
 }
 @end
 static mglb_buffer *rt_inst;                    /* GPU address of each scene instance's triangle data */
@@ -2516,7 +2632,8 @@ typedef struct rt_key {
     int32_t stride, itype, count, base_vertex;
     uint32_t gen;
     int32_t ent_off;
-    uint32_t translucent, pad;
+    uint32_t translucent;
+    int32_t lmin, lmax;
 } rt_key;
 
 static NSMutableDictionary<NSData *, RtSection *> *rt_sections;
@@ -2557,7 +2674,7 @@ static id<MTLAccelerationStructure> build_as(MTLAccelerationStructureDescriptor 
     return as;
 }
 
-static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer **tris_out)
+static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer **tris_out, RtSection **sec_out)
 {
     rt_key k;
     memset(&k, 0, sizeof k);
@@ -2572,11 +2689,14 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer
     k.gen = g->gen;
     k.ent_off = g->ent_off;
     k.translucent = (uint32_t)g->translucent;
-    NSData *key = [NSData dataWithBytes:&k length:sizeof k];
+    k.lmin = mgl_rt_light_ids[0];
+    k.lmax = mgl_rt_light_ids[1];
+    NSData *key = [[NSData alloc] initWithBytes:&k length:sizeof k];
     RtSection *s = rt_sections[key];
     if (s) {
         s.last_frame = rt_frame;
         *tris_out = s.tris;
+        *sec_out = s;
         return s.as;
     }
     id<MTLComputePipelineState> ps = rt_decode_pipeline();
@@ -2591,9 +2711,17 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer
         mglb_buffer_release(tri);
         return nil;
     }
-    struct { uint32_t vbase, stride, ioff, itype, count; int32_t base_vertex, ent_off; uint32_t translucent; } info = {
+    uint32_t lcap = mgl_rt_light_ids[0] >= 0 && g->ent_off >= 0 ? (uint32_t)(tris < 1024 ? tris : 1024) : 0;
+    mglb_buffer *lights = lcap ? mglb_buffer_new(16 + (size_t)lcap * 16) : NULL;
+    if (!lights)
+        lcap = 0;
+    else
+        *(uint32_t *)lights->ptr = 0; /* candidate count */
+    struct { uint32_t vbase, stride, ioff, itype, count; int32_t base_vertex, ent_off; uint32_t translucent;
+             int32_t lmin, lmax; uint32_t lcap; } info = {
         (uint32_t)g->vbase, (uint32_t)g->stride, (uint32_t)g->ioff, g->itype == GL_UNSIGNED_SHORT ? 2u : 4u,
-        (uint32_t)(tris * 3), g->base_vertex, g->ent_off, g->translucent ? 1u : 0u};
+        (uint32_t)(tris * 3), g->base_vertex, g->ent_off, g->translucent ? 1u : 0u,
+        mgl_rt_light_ids[0], mgl_rt_light_ids[1], lcap};
     id<MTLComputeCommandEncoder> c = compute_encoder();
     [c setComputePipelineState:ps];
     [c setBuffer:OBJ(id<MTLBuffer>, g->vbuf->mtl) offset:0 atIndex:0];
@@ -2601,7 +2729,9 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer
     [c setBuffer:OBJ(id<MTLBuffer>, pos->mtl) offset:0 atIndex:2];
     [c setBytes:&info length:sizeof info atIndex:3];
     [c setBuffer:OBJ(id<MTLBuffer>, tri->mtl) offset:0 atIndex:4];
+    [c setBuffer:OBJ(id<MTLBuffer>, (lights ? lights : tri)->mtl) offset:0 atIndex:5];
     use_buffer(tri);
+    use_buffer(lights);
     [c dispatchThreads:MTLSizeMake((NSUInteger)tris, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
     use_buffer(g->vbuf);
     use_buffer(g->ibuf);
@@ -2619,6 +2749,7 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer
     mglb_buffer_release(pos);
     if (!as) {
         mglb_buffer_release(tri);
+        mglb_buffer_release(lights);
         return nil;
     }
     if (!rt_sections)
@@ -2626,13 +2757,99 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer
     s = [RtSection new];
     s.as = as;
     s.tris = tri;
+    s.lights = lights;
+    s.lcap = lcap;
     s.last_frame = rt_frame;
     rt_sections[key] = s;
     *tris_out = tri;
+    *sec_out = s;
     return as;
 }
 
+/* The light list for mcm_lights_near (layout in core/mgl_program.c): every section's light candidates, one light
+   per block, then a grid of the lights each 4-block cell can reach. Rebuilt each frame, on the GPU. */
+#define RT_LIGHTS_BYTES (16 + 2048 * 16 + 16 * 16 * 16 * 17 * 4)
+static mglb_buffer *rt_lights_buf;
+
+mglb_buffer *mglb_rt_lights(void)
+{
+    if (!rt_lights_buf && (rt_lights_buf = mglb_buffer_new(RT_LIGHTS_BYTES)))
+        memset(rt_lights_buf->ptr, 0, RT_LIGHTS_BYTES); /* no lights yet */
+    return rt_lights_buf;
+}
+
+static id<MTLComputePipelineState> builtin_compute(NSString *name)
+{
+    static NSMutableDictionary<NSString *, id<MTLComputePipelineState>> *cache;
+    if (!cache)
+        cache = [NSMutableDictionary dictionary];
+    id<MTLComputePipelineState> ps = cache[name];
+    if (!ps) {
+        NSError *e = nil;
+        id<MTLFunction> f = builtin(name);
+        ps = f ? [dev newComputePipelineStateWithFunction:f error:&e] : nil;
+        if (!ps) {
+            mgl_log("%s pipeline: %s", name.UTF8String, e ? e.localizedDescription.UTF8String : "no function");
+            return nil;
+        }
+        cache[name] = ps;
+    }
+    return ps;
+}
+
+static void rt_build_lights(const mgl_rt_geom *g, RtSection *__strong *secs, const int *sec_geom, int count)
+{
+    if (mgl_rt_light_ids[0] < 0)
+        return;
+    id<MTLComputePipelineState> pl = builtin_compute(@"rt_lights"), pg = builtin_compute(@"rt_light_grid");
+    mglb_buffer *lb = mglb_buffer_new(RT_LIGHTS_BYTES), *hash = mglb_buffer_new(8192 * 4);
+    if (!pl || !pg || !lb || !hash) {
+        mglb_buffer_release(lb);
+        mglb_buffer_release(hash);
+        return;
+    }
+    id<MTLBlitCommandEncoder> b = blit_encoder();
+    [b fillBuffer:OBJ(id<MTLBuffer>, lb->mtl) range:NSMakeRange(0, RT_LIGHTS_BYTES) value:0];
+    [b fillBuffer:OBJ(id<MTLBuffer>, hash->mtl) range:NSMakeRange(0, 8192 * 4) value:0];
+    id<MTLComputeCommandEncoder> c = compute_encoder();
+    [c setComputePipelineState:pl];
+    [c setBuffer:OBJ(id<MTLBuffer>, hash->mtl) offset:0 atIndex:2];
+    [c setBuffer:OBJ(id<MTLBuffer>, lb->mtl) offset:0 atIndex:3];
+    const float *r0 = count ? g[sec_geom[0]].region : NULL;
+    for (int i = 0; i < count; i++) {
+        RtSection *s = secs[i];
+        if (!s.lights)
+            continue;
+        const float *r = g[sec_geom[i]].region;
+        /* sections sit on the block grid, so their offsets from the first one are whole blocks */
+        struct { int32_t off[4]; float region[4]; uint32_t cap, pad[3]; } info = {
+            {(int32_t)lroundf(r[0] - r0[0]), (int32_t)lroundf(r[1] - r0[1]), (int32_t)lroundf(r[2] - r0[2]), 0},
+            {r[0], r[1], r[2], 0}, s.lcap, {0, 0, 0}};
+        [c setBuffer:OBJ(id<MTLBuffer>, s.lights->mtl) offset:0 atIndex:0];
+        [c setBytes:&info length:sizeof info atIndex:1];
+        [c dispatchThreads:MTLSizeMake(s.lcap, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+        use_buffer(s.lights);
+    }
+    [c memoryBarrierWithScope:MTLBarrierScopeBuffers];
+    [c setComputePipelineState:pg];
+    [c setBuffer:OBJ(id<MTLBuffer>, lb->mtl) offset:0 atIndex:0];
+    [c dispatchThreads:MTLSizeMake(2048, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+    use_buffer(lb);
+    use_buffer(hash);
+    mglb_buffer_release(hash);
+    mglb_buffer_release(rt_lights_buf); /* the pool keeps it until the GPU is done with it */
+    rt_lights_buf = lb;
+}
+
+static void rt_update(const mgl_rt_geom *g, int n);
 void mglb_rt_update(const mgl_rt_geom *g, int n)
+{
+    @autoreleasepool { /* the game's render thread has no pool of its own: descriptors and keys would pile up */
+        rt_update(g, n);
+    }
+}
+
+static void rt_update(const mgl_rt_geom *g, int n)
 {
     if (!dev.supportsRaytracing) {
         static int said;
@@ -2652,11 +2869,16 @@ void mglb_rt_update(const mgl_rt_geom *g, int n)
     free(rt_tris_c);
     rt_tris_c = (__unsafe_unretained id<MTLResource> *)calloc((size_t)(n ? n : 1), sizeof(id));
     int count = 0;
+    RtSection *__strong *secs = (RtSection *__strong *)calloc((size_t)(n ? n : 1), sizeof(RtSection *));
+    int *sec_geom = calloc((size_t)(n ? n : 1), sizeof(int));
     for (int i = 0; i < n; i++) {
         mglb_buffer *tris = NULL;
-        id<MTLAccelerationStructure> as = section_as(&g[i], &tris);
+        RtSection *sec = nil;
+        id<MTLAccelerationStructure> as = section_as(&g[i], &tris, &sec);
         if (!as)
             continue;
+        secs[count] = sec;
+        sec_geom[count] = i;
         addr[count] = OBJ(id<MTLBuffer>, tris->mtl).gpuAddress;
         rt_tris_c[count] = OBJ(id<MTLBuffer>, tris->mtl);
         MTLAccelerationStructureUserIDInstanceDescriptor *d = &descs[count];
@@ -2682,6 +2904,11 @@ void mglb_rt_update(const mgl_rt_geom *g, int n)
           [old addObject:k];
     }];
     [rt_sections removeObjectsForKeys:old];
+    rt_build_lights(g, secs, sec_geom, count);
+    for (int i = 0; i < count; i++)
+        secs[i] = nil;
+    free(secs);
+    free(sec_geom);
     if (!count) {
         mglb_buffer_release(table);
         rt_tris_n = 0;
@@ -2908,17 +3135,93 @@ const char *mgl_renderer_name(void)
     return renderer;
 }
 
+/* MCMETAL_UPSCALE=1: the game renders at the window's point size (half the pixels each way on Retina, GLFW
+   reports that size, see glfw/mtl_context.m) and MetalFX's spatial upscaler sharpens it to the Retina drawable. */
+static int upscale_on(void)
+{
+    static int on = -1;
+    if (on < 0)
+        on = getenv("MCMETAL_UPSCALE") && atoi(getenv("MCMETAL_UPSCALE")) > 0;
+    return on;
+}
+
 static void update_size(mgl_ctx *c)
 {
-    CGSize px = c->layer.bounds.size;
+    CGSize pt = c->layer.bounds.size, px = pt;
     px.width *= c->layer.contentsScale;
     px.height *= c->layer.contentsScale;
     if (px.width < 1 || px.height < 1)
         return;
     if (!CGSizeEqualToSize(c->layer.drawableSize, px))
         c->layer.drawableSize = px;
-    c->w = (int)px.width;
-    c->h = (int)px.height;
+    int up = upscale_on() && c->layer.contentsScale > 1;
+    c->w = (int)(up ? pt.width : px.width);
+    c->h = (int)(up ? pt.height : px.height);
+}
+
+static id<MTLTexture> upscaled; /* last MetalFX output, for test screenshots */
+
+/* RGBA8 copy of the last upscaled frame (GL row order, like window_color), for MGL_SHOT_DIR; 0 when none. */
+int mglb_upscaled_read(unsigned char **px, int *w, int *h)
+{
+    if (!upscaled)
+        return 0;
+    *w = (int)upscaled.width;
+    *h = (int)upscaled.height;
+    size_t row = (size_t)*w * 4;
+    mglb_buffer *stage = mglb_buffer_new(row * (size_t)*h);
+    if (!stage || !(*px = malloc(row * (size_t)*h))) {
+        mglb_buffer_release(stage);
+        return 0;
+    }
+    [blit_encoder() copyFromTexture:upscaled sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
+                         sourceSize:MTLSizeMake(upscaled.width, upscaled.height, 1) toBuffer:OBJ(id<MTLBuffer>, stage->mtl)
+                  destinationOffset:0 destinationBytesPerRow:row destinationBytesPerImage:row * (size_t)*h];
+    use_buffer(stage);
+    mglb_finish();
+    memcpy(*px, stage->ptr, row * (size_t)*h);
+    mglb_buffer_release(stage);
+    return 1;
+}
+
+/* The upscaled frame, the right way down for the present blit. NULL when off or MetalFX can't. */
+static id<MTLTexture> upscale(mgl_ctx *c, id<MTLTexture> in, NSUInteger ow, NSUInteger oh)
+{
+    static id<MTLFXSpatialScaler> fx;
+    static id<MTLTexture> out;
+    static int failed;
+    if (failed || (in.width == ow && in.height == oh))
+        return nil;
+    if (!fx || fx.inputWidth != in.width || fx.inputHeight != in.height || fx.outputWidth != ow || fx.outputHeight != oh) {
+        MTLFXSpatialScalerDescriptor *d = [[MTLFXSpatialScalerDescriptor alloc] init];
+        d.inputWidth = in.width;
+        d.inputHeight = in.height;
+        d.outputWidth = ow;
+        d.outputHeight = oh;
+        d.colorTextureFormat = in.pixelFormat;
+        d.outputTextureFormat = in.pixelFormat;
+        d.colorProcessingMode = MTLFXSpatialScalerColorProcessingModePerceptual;
+        if (![MTLFXSpatialScalerDescriptor supportsDevice:dev] || !(fx = [d newSpatialScalerWithDevice:dev])) {
+            mgl_log("MetalFX upscaler not available, drawing at %lux%lu without it", (unsigned long)in.width,
+                    (unsigned long)in.height);
+            failed = 1;
+            return nil;
+        }
+        MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:in.pixelFormat width:ow
+                                                                                     height:oh mipmapped:NO];
+        td.usage = fx.outputTextureUsage | MTLTextureUsageShaderRead;
+        td.storageMode = MTLStorageModePrivate;
+        out = [dev newTextureWithDescriptor:td];
+        mgl_log("MetalFX upscaler: %lux%lu -> %lux%lu", (unsigned long)in.width, (unsigned long)in.height,
+                (unsigned long)ow, (unsigned long)oh);
+    }
+    fx.colorTexture = in;
+    fx.outputTexture = out;
+    fx.inputContentWidth = in.width;
+    fx.inputContentHeight = in.height;
+    [fx encodeToCommandBuffer:current_cb()];
+    upscaled = out;
+    return out;
 }
 
 void mglb_window_size(int *w, int *h)
@@ -3024,6 +3327,12 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
           (void)d;
           atomic_fetch_sub(&presents_waiting, 1);
         }];
+        id<MTLTexture> src = OBJ(id<MTLTexture>, mgl->window_color->mtl);
+        if (upscale_on()) {
+            id<MTLTexture> up = upscale(c, src, drawable.texture.width, drawable.texture.height);
+            if (up)
+                src = up;
+        }
         MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
         rp.colorAttachments[0].texture = drawable.texture;
         rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
@@ -3036,7 +3345,7 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
             /* top of the window = last GL row */
             float rect[4] = {0, 1, 1, 0};
             [e setVertexBytes:rect length:sizeof rect atIndex:0];
-            [e setFragmentTexture:OBJ(id<MTLTexture>, mgl->window_color->mtl) atIndex:0];
+            [e setFragmentTexture:src atIndex:0];
             [e setFragmentSamplerState:blit_sampler(1) atIndex:0];
             [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
         }

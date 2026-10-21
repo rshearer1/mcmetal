@@ -314,6 +314,46 @@ static void emit_range(sb *o, const toks *ts, int a, int b, const renames *m)
     }
 }
 
+/* A vertex-shader global with an initialiser, such as Iris's
+     vec4 iris_Entity = vec4(int(mc_Entity >> 1u) - 1, mc_Entity & 1u, 0, 1);
+   In GL it is evaluated per vertex, after the attributes are read. In the compute job the attributes are fetched
+   inside the per-vertex loop, so the declaration keeps no initialiser and the assignment goes into
+   mgl_v_init(), called before each vertex's main. Returns 0 (emit as is) when nothing needs splitting. */
+static int split_global_init(sb *decl, sb *init, const toks *ts, const stmt *s, const renames *m)
+{
+    int any = 0;
+    for (int k = 0; k < s->nnames; k++) {
+        int j = s->names[k] + 1;
+        while (j < s->end && tok_is(&ts->t[j], "["))
+            j = match(ts, j) + 1;
+        any |= j < s->end && tok_is(&ts->t[j], "=");
+    }
+    if (!any)
+        return 0;
+    for (int k = 0; k < s->nnames; k++) {
+        int n = s->names[k], j = n + 1;
+        while (j < s->end && tok_is(&ts->t[j], "["))
+            j = match(ts, j) + 1;
+        emit_range(decl, ts, s->start, s->type_end, m); /* qualifiers and type */
+        emit_range(decl, ts, n, j, m);                  /* name and array suffix */
+        sb_puts(decl, ";\n");
+        if (j < s->end && tok_is(&ts->t[j], "=")) {
+            int e = j + 1;
+            while (e < s->end && !tok_is(&ts->t[e], ",") && !tok_is(&ts->t[e], ";")) {
+                if (tok_is(&ts->t[e], "(") || tok_is(&ts->t[e], "[") || tok_is(&ts->t[e], "{"))
+                    e = match(ts, e);
+                e++;
+            }
+            sb_puts(init, "  ");
+            emit_range(init, ts, n, n + 1, m);
+            sb_puts(init, "= ");
+            emit_range(init, ts, j + 1, e, m);
+            sb_puts(init, ";\n");
+        }
+    }
+    return 1;
+}
+
 /* a loose uniform declaration without layout(location = N), keeping image formats and bindings */
 static void emit_uniform(sb *o, const toks *ts, const stmt *s, const renames *m)
 {
@@ -552,7 +592,7 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
     }
     toks tv = tokenize(pv), tg = tokenize(pg);
     stmts sv = parse_top(&tv), sg = parse_top(&tg);
-    sb vs = {0}, gs = {0}, comp = {0}, pass = {0};
+    sb vs = {0}, vinit = {0}, gs = {0}, comp = {0}, pass = {0};
     renames rv = {0}, rg = {0};
     vs_attr attrs[32];
     int nattrs = 0;
@@ -604,6 +644,9 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
             emit_uniform(&vs, &tv, s, &rv); /* drop layout(location=) on loose uniforms */
             continue;
         }
+        if (s->kind == S_DECL && !(s->quals & (Q_CONST | Q_UNIFORM | Q_BUFFER | Q_SHARED)) && s->nnames > 0 &&
+            split_global_init(&vs, &vinit, &tv, s, &rv))
+            continue;
         emit_range(&vs, &tv, s->start, s->end, &rv);
     }
     for (int i = 0, next_loc = 0; i < nattrs; i++) /* attributes without layout(location): next free location */
@@ -699,6 +742,10 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
     /* ---- compute shader ---- */
     sb_puts(&comp, compute_prelude);
     sb_add(&comp, vs.s, vs.n);
+    sb_puts(&comp, "void mgl_v_init() {\n");
+    if (vinit.n)
+        sb_add(&comp, vinit.s, vinit.n);
+    sb_puts(&comp, "}\n");
     sb_add(&comp, gs.s, gs.n);
     sb_printf(&comp, "void mgl_emit() {\n  if (mgl_emitted >= %du) return;\n"
                      "  uint rec = (uint(mgl_prim_id) * %du + mgl_emitted) * %du;\n  mgl_ov[rec] = mgl_g_Position;\n",
@@ -720,7 +767,7 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
         const char *fetch = a->is_int || a->is_uint ? "mgl_fetchi" : "mgl_fetchf";
         sb_printf(&comp, "    %s = %s(%s(%d, vtx)%s);\n", a->renamed, a->type, fetch, a->location, swz[a->comps]);
     }
-    sb_puts(&comp, "    mgl_v_Position = vec4(0.0, 0.0, 0.0, 1.0);\n    mgl_v_PointSize = 1.0;\n    mgl_v_main();\n"
+    sb_puts(&comp, "    mgl_v_Position = vec4(0.0, 0.0, 0.0, 1.0);\n    mgl_v_PointSize = 1.0;\n    mgl_v_init();\n    mgl_v_main();\n"
                    "    mgl_gin[c].pos = mgl_v_Position;\n    mgl_gin[c].pointSize = mgl_v_PointSize;\n");
     for (int i = 0; i < ngin; i++) { /* only inputs the vertex shader writes; the rest stay zero */
         tok t = {T_ID, gin[i].name, (int)strlen(gin[i].name)};
@@ -789,6 +836,7 @@ out:
     free(sv.s);
     free(sg.s);
     free(vs.s);
+    free(vinit.s);
     free(gs.s);
     free(comp.s);
     free(pass.s);

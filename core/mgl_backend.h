@@ -162,6 +162,9 @@ void mglb_rt_update(const mgl_rt_geom *g, int n);
 mglb_buffer *mglb_rt_instances(void); /* this frame's per-instance triangle-data addresses (mcm_trace's McmInstances) */
 /* The block atlas the terrain was last drawn with, for mcm_trace's alpha test (mcm_atlas); set by mgl_rt.c. */
 extern mglb_texture *mgl_rt_atlas;
+/* Block ids the light list collects (MCMETAL_LIGHT_IDS in a pack), {-1, -1} = none; set by mgl_program.c. */
+extern int mgl_rt_light_ids[2];
+mglb_buffer *mglb_rt_lights(void); /* this frame's light list (mcm_lights_near's McmLights) */
 
 void mglb_draw(const mgl_draw *d);
 void mglb_dispatch(const mgl_draw *d, int gx, int gy, int gz); /* uses program, uniforms, ubo, textures[2] */
@@ -175,7 +178,8 @@ void mglb_blit(const mgl_target *src, int src_att, const int src_rect[4],
 void mglb_memory_barrier(void);
 
 /* ---- frame and sync ---- */
-void mglb_window_size(int *w, int *h);    /* current drawable size in pixels */
+void mglb_window_size(int *w, int *h);
+int mglb_upscaled_read(unsigned char **px, int *w, int *h); /* MetalFX output (RGBA8, GL row order) or 0 */    /* current drawable size in pixels */
 uint64_t mglb_fence(void);                /* id that completes when all work recorded so far is done */
 int mglb_fence_wait(uint64_t id, uint64_t timeout_ns); /* 1 done, 0 timeout */
 void mglb_flush(void);                    /* commit recorded work */

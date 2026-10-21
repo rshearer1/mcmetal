@@ -66,6 +66,19 @@ public final class MetalBootstrap implements GraphicsBootstrapper {
                     + " Metal will be tried again next launch (see mcmetal/last-start-failed)");
             return;
         }
+        Path options = home.resolve("options.txt");
+        if (!Files.exists(options))
+            Files.writeString(options, """
+                    # mcmetal options, read when the game starts. Remove the # in front of a line to turn it on.
+                    #
+                    # Heavy shader packs (SEUS PTGI, path tracing) on a Retina screen: draw at half the resolution
+                    # each way and sharpen to full size with Apple's MetalFX upscaler. About 2.5x faster, a little
+                    # softer than native.
+                    #MCMETAL_UPSCALE=1
+                    #
+                    # Draw at half resolution on a Retina screen without the upscaler (fastest, softest).
+                    #MCMETAL_RETINA=0
+                    """);
         Path gl = unpack("libmcmetal.dylib", dir);
         Path glfw = unpack("libglfw.dylib", dir); // finds libmcmetal.dylib next to itself
         Files.writeString(marker, "mcmetal was starting at " + java.time.Instant.now() + "\n");
