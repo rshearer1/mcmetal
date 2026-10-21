@@ -167,7 +167,58 @@ static int needs_sampler(const uint32_t *w, size_t n, uint32_t var)
     return 0;
 }
 
-static spvc_bool cross_stage(mgl_xlate_result *r, int stage, const uint32_t *words, size_t nwords, int *next_tex)
+/* GL matches vertex outputs to fragment inputs by name; glslang numbers each stage's locations in declaration
+   order, so "out float d; out vec4 c;" against "in vec4 c; in float d;" would cross the wires (and hang the GPU on
+   Metal: Sodium's terrain and cloud shaders do this). The vertex stage records its outputs here, and the fragment
+   stage takes its input locations from them. */
+typedef struct varying_map {
+    struct { char name[96]; unsigned loc; } v[128];
+    int n, have_vertex;
+    unsigned next_free;
+} varying_map;
+
+/* blocks match by block name, plain variables by variable name */
+static void varying_key(spvc_compiler comp, const spvc_reflected_resource *res, char *key)
+{
+    spvc_type t = spvc_compiler_get_type_handle(comp, res->base_type_id);
+    if (spvc_type_get_basetype(t) == SPVC_BASETYPE_STRUCT)
+        snprintf(key, 96, "block %s", spvc_compiler_get_name(comp, res->base_type_id));
+    else
+        copy_name(key, res->name);
+}
+
+static void match_varyings(spvc_compiler comp, spvc_resources res, int stage, varying_map *vm)
+{
+    const spvc_reflected_resource *list;
+    size_t count;
+    char key[96];
+    if (stage == MGL_VERTEX) {
+        spvc_resources_get_resource_list_for_type(res, SPVC_RESOURCE_TYPE_STAGE_OUTPUT, &list, &count);
+        vm->have_vertex = 1;
+        for (size_t i = 0; i < count && vm->n < 128; i++) {
+            varying_key(comp, &list[i], key);
+            snprintf(vm->v[vm->n].name, 96, "%s", key);
+            vm->v[vm->n].loc = spvc_compiler_get_decoration(comp, list[i].id, SpvDecorationLocation);
+            if (vm->v[vm->n].loc + 64 > vm->next_free)
+                vm->next_free = vm->v[vm->n].loc + 64; /* past anything an array or matrix output can span */
+            vm->n++;
+        }
+    } else if (stage == MGL_FRAGMENT && vm->have_vertex) {
+        spvc_resources_get_resource_list_for_type(res, SPVC_RESOURCE_TYPE_STAGE_INPUT, &list, &count);
+        for (size_t i = 0; i < count; i++) {
+            varying_key(comp, &list[i], key);
+            int k = 0;
+            while (k < vm->n && strcmp(vm->v[k].name, key))
+                k++;
+            /* an input the vertex stage never writes gets a location of its own (GL leaves it undefined) */
+            unsigned loc = k < vm->n ? vm->v[k].loc : (vm->next_free += 64);
+            spvc_compiler_set_decoration(comp, list[i].id, SpvDecorationLocation, loc);
+        }
+    }
+}
+
+static spvc_bool cross_stage(mgl_xlate_result *r, int stage, const uint32_t *words, size_t nwords, int *next_tex,
+                             varying_map *vm)
 {
     spvc_context ctx = NULL;
     spvc_parsed_ir ir = NULL;
@@ -197,6 +248,7 @@ static spvc_bool cross_stage(mgl_xlate_result *r, int stage, const uint32_t *wor
     spvc_set active = NULL;
     spvc_compiler_get_active_interface_variables(comp, &active);
     spvc_compiler_create_shader_resources_for_active_variables(comp, &res, active);
+    match_varyings(comp, res, stage, vm);
 
     /* Uniform blocks: default block -> buffer 0, others -> MGL_BUF_UBO_BASE + their binding */
     spvc_resources_get_resource_list_for_type(res, SPVC_RESOURCE_TYPE_UNIFORM_BUFFER, &list, &count);
@@ -394,9 +446,11 @@ static int xlate_once(const char *src[MGL_NUM_STAGES], mgl_xlate_result *r)
     glslang_shader_t *sh[MGL_NUM_STAGES] = {0};
     glslang_program_t *prog = NULL;
     int next_tex[MGL_NUM_STAGES] = {0};
+    static __thread varying_map vm;
     const int msgs = GLSLANG_MSG_SPV_RULES_BIT | GLSLANG_MSG_VULKAN_RULES_BIT;
 
     memset(r, 0, sizeof *r);
+    memset(&vm, 0, sizeof vm);
     if (!initialized) {
         glslang_initialize_process();
         initialized = 1;
@@ -443,7 +497,7 @@ static int xlate_once(const char *src[MGL_NUM_STAGES], mgl_xlate_result *r)
             continue;
         glslang_program_t *pp = split && s == MGL_COMPUTE ? cprog : prog;
         glslang_program_SPIRV_generate(pp, gl_stage[s]);
-        if (!cross_stage(r, s, glslang_program_SPIRV_get_ptr(pp), glslang_program_SPIRV_get_size(pp), next_tex))
+        if (!cross_stage(r, s, glslang_program_SPIRV_get_ptr(pp), glslang_program_SPIRV_get_size(pp), next_tex, &vm))
             goto done;
     }
     r->ok = 1;
