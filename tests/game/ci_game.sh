@@ -134,7 +134,15 @@ complementary|ComplementaryReimagined_r5.9.3.zip|-|-"
 EUPHORIA="https://cdn.modrinth.com/data/4H6sumDB/versions/QMsRXtSJ/EuphoriaPatcher-1.10.5-r5.9.3-neoforge.jar|2b3f92878d6867fa0199937da25ba882b9db7902"
 EUPHORIA_PACK="ComplementaryReimagined_r5.9.3 + EuphoriaPatches_1.10.5"
 
-third_party() { # pack-NAME / packnight-NAME [mesa]: one third-party pack in the pool scene, at noon or midnight
+# packnight-NAME turns each pack's coloured block light on (all ship with it off except Solas and RV)
+PACK_LIGHT="photon|COLORED_LIGHTS=true
+bliss|LPV_ENABLED=true
+bsl|MULTICOLORED_BLOCKLIGHT=true
+unbound|COLORED_LIGHTING=128
+complementary|COLORED_LIGHTING=128"
+
+third_party() { # pack-NAME / packnight-NAME: one third-party pack in the pool scene, at noon (pack settings as
+                # shipped) or midnight (coloured block light on)
     local p=$1 name=${1#*-} file url sha
     IFS='|' read -r _ file url sha <<< "$(grep "^${name%%+*}|" <<< "$PACKS")"
     [ -n "$file" ] || { echo "unknown pack $name"; return; }
@@ -146,8 +154,15 @@ third_party() { # pack-NAME / packnight-NAME [mesa]: one third-party pack in the
             "$SRC/tools" "$url" "$G/mods/euphoria-patcher.jar" "$sha" || return
         file=$EUPHORIA_PACK ;;
     esac
-    case $p in packnight-*) scene midnight ;; *) scene noon ;; esac
+    local opts=$G/shaderpacks/$file.txt
+    rm -f "$opts"
+    case $p in
+    packnight-*) scene midnight
+        grep "^${name%%+*}|" <<< "$PACK_LIGHT" | cut -d'|' -f2 > "$opts"; [ -s "$opts" ] || rm -f "$opts" ;;
+    *) scene noon ;;
+    esac
     PACK=$file run_phase "$p" 240 metal true
+    rm -f "$opts"
     rm -f "$G/mods/euphoria-patcher.jar"
     [ "$url" != - ] && rm -rf "$G/shaderpacks/$file"
     rm -rf "$G/shaderpacks/$EUPHORIA_PACK"*
