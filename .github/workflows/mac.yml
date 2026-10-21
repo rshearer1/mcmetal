@@ -54,6 +54,7 @@ jobs:
           X=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
           if [ -z "$X" ]; then echo "no Xcode 26 on this runner"; exit 0; fi
           echo "using $X"
+          grep -h "@property" $X/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks/MetalFX.framework/Headers/MTLFXFrameInterpolator.h || true
           DEVELOPER_DIR=$X/Contents/Developer xcrun clang -arch arm64 -fsyntax-only -Wall -Wno-unused-parameter \
             -mmacosx-version-min=14.0 -fobjc-arc -Icore -Ibuild/deps/include mac/mgl_metal.m
       - name: Offline MSL compile

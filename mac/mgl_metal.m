@@ -6,6 +6,7 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <MetalFX/MetalFX.h>
+#import <objc/message.h>
 #include <ctype.h>
 #include <math.h>
 #include <stdatomic.h>
@@ -3480,7 +3481,6 @@ API_AVAILABLE(macos(26.0)) static int fg_setup(int w, int h, MTLPixelFormat fmt)
     d.inputHeight = h;
     d.outputWidth = w;
     d.outputHeight = h;
-    d.requiresPrevColorTexture = YES;
     id<MTLFXFrameInterpolator> fi = [d newFrameInterpolatorWithDevice:dev];
     if (!fi) {
         mgl_log("frame interpolation: MetalFX wouldn't make an interpolator for %dx%d", w, h);
@@ -3610,7 +3610,14 @@ static id<MTLTexture> fg_interpolate(double frame_s)
         fi.colorTexture = fg.color[fg.cur];
         fi.prevColorTexture = fg.color[fg.cur ^ 1];
         fi.uiTexture = fg.ui;
-        fi.UITextureComposited = YES;
+        /* "the colour texture has the HUD in it"; named differently across macOS 26 SDKs */
+        for (int i = 0; i < 2; i++) {
+            SEL sel = NSSelectorFromString(i ? @"setIsUITextureComposited:" : @"setUITextureComposited:");
+            if ([fi respondsToSelector:sel]) {
+                ((void (*)(id, SEL, BOOL))objc_msgSend)(fi, sel, YES);
+                break;
+            }
+        }
         fi.depthTexture = fg.depth;
         fi.motionTexture = fg.motion;
         fi.outputTexture = fg.out;
@@ -3624,11 +3631,6 @@ static id<MTLTexture> fg_interpolate(double frame_s)
         fi.aspectRatio = p[5] / p[0];
         fi.nearPlane = p[14] / (p[10] - 1.0f);
         fi.farPlane = p[14] / (p[10] + 1.0f);
-        simd_float4x4 view, proj;
-        memcpy(&view, fg.view, 64);
-        memcpy(&proj, fg.proj, 64);
-        fi.worldToViewMatrix = view;
-        fi.viewToClipMatrix = proj;
         fi.shouldResetHistory = fg.reset;
         fg.reset = 0;
         [fi encodeToCommandBuffer:current_cb()];
