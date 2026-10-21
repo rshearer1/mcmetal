@@ -46,7 +46,9 @@ void main() {
         float phase = 0.3 / (4.0 * PI) + 0.7 * (1.0 - g * g) / (4.0 * PI * pow(1.0 + g * g - 2.0 * g * mu, 1.5));
         // thicker indoors (dusty air, and the eye adapts to the dark), so shafts through a roof hole show
         float indoors = 1.0 - float(eyeBrightnessSmooth.y) / 240.0;
-        float density = 0.005 * LIGHT_SHAFTS_STRENGTH * (1.0 + 3.0 * rainStrength + 3.0 * indoors);
+        // clear air at midday, hazier with a low sun (morning, evening) and in rain
+        float density = 0.005 * LIGHT_SHAFTS_STRENGTH * mix(1.0, 0.25, smoothstep(0.25, 0.7, lightDir.y))
+                      * (1.0 + 3.0 * rainStrength + 3.0 * indoors);
         float stepLen = dist / float(LIGHT_SHAFTS_STEPS);
         float jitter = ign(gl_FragCoord.xy, frameCounter);
         float lit = 0.0;
@@ -56,7 +58,10 @@ void main() {
             float vis = exp(-t * density);
             if (mcm_trace(dir * t, lightDir, 256.0) < 0.0) lit += vis;
         }
-        scatter = sunCol * phase * density * stepLen * lit * 4.0 * PI;   // x 4pi: our lights skip the 1/pi of diffuse
+        // a beam in shade (sun through a roof hole or a gap in the trees) stands out the way it does in real dusty
+        // air: the less of the view ray is lit, the more each lit step counts. Open air (all lit) stays clear
+        float shade = 1.0 - lit / float(LIGHT_SHAFTS_STEPS);
+        scatter = sunCol * phase * density * stepLen * lit * (1.0 + 8.0 * shade) * 4.0 * PI;   // x 4pi: our lights skip the 1/pi of diffuse
         if (any(isnan(scatter)) || any(isinf(scatter))) scatter = vec3(0.0);
     }
 #endif
