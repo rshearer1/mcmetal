@@ -52,10 +52,21 @@ public final class MetalBootstrap implements GraphicsBootstrapper {
             log("org.lwjgl.opengl.libname is already set to " + preset + ", leaving it");
             return;
         }
-        Path dir = gameDir(args).resolve("mcmetal").resolve("natives");
+        Path home = gameDir(args).resolve("mcmetal");
+        Path dir = home.resolve("natives");
         Files.createDirectories(dir);
+        // libmcmetal deletes this marker once the game has drawn real screens. If it's still here, the last
+        // launch died on the way: use Apple's OpenGL this once, and try Metal again on the launch after.
+        Path marker = home.resolve("starting");
+        if (Files.exists(marker)) {
+            Files.move(marker, home.resolve("last-start-failed"), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            log("the last launch on Metal did not get to the menu, so this one uses Apple's OpenGL;"
+                    + " Metal will be tried again next launch (see mcmetal/last-start-failed)");
+            return;
+        }
         Path gl = unpack("libmcmetal.dylib", dir);
         Path glfw = unpack("libglfw.dylib", dir); // finds libmcmetal.dylib next to itself
+        Files.writeString(marker, "mcmetal was starting at " + java.time.Instant.now() + "\n");
         System.setProperty("org.lwjgl.opengl.libname", gl.toString());
         System.setProperty("org.lwjgl.glfw.libname", glfw.toString());
         System.setProperty(ACTIVE, "true");

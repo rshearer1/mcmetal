@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <dlfcn.h>
 #include <mach/mach_time.h>
 #include <pthread.h>
 #include "mgl_state.h"
@@ -43,6 +44,26 @@ static int opt(const char *name)
 }
 static unsigned long frame_draws, frame_sections, frame_dispatches, frame_probes; /* reset at each present */
 static unsigned long long frames_presented; /* for MGL_FRAME_DUMP */
+
+/* The mcmetal mod writes <game>/mcmetal/starting before switching the game to us, and goes back to Apple's
+   OpenGL on the next launch if it is still there. Once the game has drawn real screens (NeoForge's early
+   loading window only does a few draws a frame) we remove it: this launch worked. The file sits one folder
+   above this dylib (<game>/mcmetal/natives/libmcmetal.dylib). */
+static void note_started(unsigned long draws)
+{
+    static int busy_frames, done;
+    if (done || draws < 30 || ++busy_frames < 120)
+        return;
+    done = 1;
+    Dl_info info;
+    const char *slash;
+    char path[4096];
+    if (!dladdr((const void *)note_started, &info) || !info.dli_fname || !(slash = strrchr(info.dli_fname, '/')))
+        return;
+    snprintf(path, sizeof path, "%.*s/../starting", (int)(slash - info.dli_fname), info.dli_fname);
+    if (unlink(path) == 0)
+        mgl_log("started fine, cleared the mod's start marker");
+}
 /* MGL_FRAME_DUMP=N: log every clear, blit and draw of frame N (order, targets, depth state) */
 static int dump_this_frame(void)
 {
@@ -2357,6 +2378,7 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
     commit();
     archive_maybe_save();
     frames_presented = c->frames + 1;
+    note_started(frame_draws);
     if (++c->frames % 600 == 1)
         mgl_log("presented frame %llu (%dx%d), %lu pipelines; this frame: %lu draws (%lu terrain sections), %lu dispatches%s",
                 c->frames, c->w, c->h, (unsigned long)pipelines.count, frame_draws, frame_sections, frame_dispatches,

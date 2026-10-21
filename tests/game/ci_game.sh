@@ -57,6 +57,10 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     pid=$(cat "$WORK/client.pid" 2>/dev/null); [ -n "$pid" ] && kill "$pid" 2>/dev/null; sleep 5
     [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null
     cp "$WORK/client.log" "$OUT/$name/client.log" 2>/dev/null
+    # mcmetal clears the mod's start marker once real screens are drawn; left behind, the next launch would
+    # fall back to Apple's OpenGL, so report it and clear it for the next phase
+    [ -e "$G/mcmetal/starting" ] && { echo "WARNING: start marker not cleared (mcmetal never drew a full screen)"; rm -f "$G/mcmetal/starting"; }
+    grep -q 'last launch on Metal did not' "$OUT/$name/client.log" 2>/dev/null && echo "WARNING: this phase ran on Apple's OpenGL (fallback)"
     grep -h '\[mcmetal\]' "$OUT/$name/client.log" 2>/dev/null | grep -v 'presented frame\|screenshot' | head -5
     cp "$G/logs/latest.log" "$OUT/$name/latest.log" 2>/dev/null
     ls "$G"/hs_err_pid*.log >/dev/null 2>&1 && mv "$G"/hs_err_pid*.log "$OUT/$name/"
