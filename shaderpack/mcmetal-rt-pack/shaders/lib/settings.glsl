@@ -5,8 +5,9 @@
 #define RT_MODE 1 // [0 1 2] 0 = shadow map only, 1 = hardware ray tracing when mcmetal provides it, 2 = always ray tracing
 #if RT_MODE == 2 || (RT_MODE == 1 && defined MCMETAL_RT)
     #define USE_RT
-    // coloured block light needs mcmetal's list of nearby light blocks
-    #if defined MCMETAL_LIGHTS && defined COLORED_LIGHT
+    // coloured block light needs mcmetal's list of nearby light blocks (mcm_lights_near). Every mcmetal build that
+    // gives packs MCMETAL_RT has it; mcmetal's own MCMETAL_LIGHTS define comes too late for Iris's preprocessor
+    #if defined MCMETAL_RT && defined COLORED_LIGHT
         #define USE_LIGHTS
     #endif
 #endif
