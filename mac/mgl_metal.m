@@ -6,6 +6,7 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <MetalFX/MetalFX.h>
+#import <AppKit/AppKit.h>
 #include <ctype.h>
 #include <math.h>
 #include <stdatomic.h>
@@ -40,7 +41,8 @@ static id<MTLComputeCommandEncoder> cenc;
                           an object may be missing for a frame or two the first time it is seen)
    MGL_FRAME_PACING=0     ON BY DEFAULT (M3: SEUS 47 fps with ~75% judder -> an even 40, plain world even 120);
                           =0 turns it off. Waits on completion signals instead of polling, and presents at an even rate
-                          (120/60/40/30 fps, whichever the last frames' cost sustains; MGL_TARGET_FPS forces one).
+                          (120/60/40/30 fps, whichever the last frames' cost sustains, only rates that divide the screen's
+                          refresh rate; MGL_TARGET_FPS forces one, over the power cap too: it's a test override).
                           Only with vsync on. MGL_PRESENT_STATS=1 logs how evenly frames reach the screen. */
 static int opt(const char *name)
 {
@@ -3148,25 +3150,38 @@ static int choose_paced_fps(mgl_ctx *c)
     const char *forced = getenv("MGL_TARGET_FPS");
     if (forced && atoi(forced) > 0)
         return atoi(forced);
-    int cap = power_cap_fps(), cur = 3;
+    /* Only rates that are a whole number of the screen's refreshes (40 on a 60 Hz screen would judder) and
+       within the power cap. A screen none of them divides (e.g. 144 Hz) gets them all, as before. */
+    static int hz;
+    if (!hz) {
+        hz = (int)[NSScreen mainScreen].maximumFramesPerSecond;
+        if (hz <= 0)
+            hz = 60;
+        mgl_log("frame pacing: screen refreshes at %d Hz", hz);
+    }
+    int cap = power_cap_fps(), allowed[4], any = 0;
+    for (int i = 0; i < 4; i++)
+        any |= allowed[i] = hz % rates[i] == 0 && rates[i] <= hz && (!cap || rates[i] <= cap);
+    for (int i = 0; i < 4 && !any; i++)
+        any |= allowed[i] = !cap || rates[i] <= cap;
+    if (!any)
+        allowed[3] = 1;
+    int slowest = 3;
+    while (!allowed[slowest])
+        slowest--;
     uint64_t t = now_ns();
-    if (!c->paced_fps) { /* start at the fastest rate the cost fits */
-        int fit = 3;
-        for (int i = 3; i >= 0; i--)
-            if ((!cap || rates[i] <= cap) && c->avg_frame_ms <= 1000.0 / rates[i])
+    int cur = -1;
+    for (int i = 0; i < 4; i++)
+        if (rates[i] == c->paced_fps)
+            cur = i;
+    if (cur < 0 || !allowed[cur]) { /* first frame, or the cap or screen changed: the fastest allowed rate the cost fits */
+        int fit = slowest;
+        for (int i = slowest; i >= 0; i--)
+            if (allowed[i] && c->avg_frame_ms <= 1000.0 / rates[i])
                 fit = i;
         c->window_start_ns = t;
         c->grace_until_ns = t + 1000000000ull;
         return rates[fit];
-    }
-    for (int i = 0; i < 4; i++)
-        if (rates[i] == c->paced_fps)
-            cur = i;
-    if (cap && c->paced_fps > cap) {
-        for (cur = 0; cur < 3 && rates[cur] > cap; cur++)
-            ;
-        c->grace_until_ns = t + 1000000000ull;
-        return rates[cur];
     }
     if (t - c->window_start_ns < 500000000ull)
         return c->paced_fps;
@@ -3175,7 +3190,7 @@ static int choose_paced_fps(mgl_ctx *c)
     double budget = 1000.0 / c->paced_fps;
     int bad = t >= c->grace_until_ns && shown >= 4 && missed * 10 > shown && c->avg_frame_ms > 0.6 * budget;
     c->bad_windows = bad ? c->bad_windows + 1 : 0;
-    if (c->bad_windows >= 2 && cur < 3) {
+    if (c->bad_windows >= 2 && cur < slowest) {
         if (t - c->stepped_up_ns < 3000000000ull) { /* the try at this rate failed */
             c->up_backoff_s = c->up_backoff_s ? (c->up_backoff_s < 80 ? c->up_backoff_s * 2 : 80) : 10;
             c->blocked_fps = c->paced_fps;
@@ -3183,16 +3198,23 @@ static int choose_paced_fps(mgl_ctx *c)
         }
         c->bad_windows = 0;
         c->grace_until_ns = t + 1000000000ull;
-        return rates[cur + 1];
+        int down = cur + 1;
+        while (!allowed[down])
+            down++;
+        return rates[down];
     }
     if (c->stepped_up_ns && t - c->stepped_up_ns > 10000000000ull)
         c->up_backoff_s = 0; /* the last step up held */
-    int best = cur;
+    int best = cur, next = -1; /* next: the first allowed rate faster than the current one */
     for (int i = cur - 1; i >= 0; i--) {
-        if ((cap && rates[i] > cap) || (t < c->no_up_until_ns && rates[i] >= c->blocked_fps))
+        if (!allowed[i])
+            continue;
+        if (t < c->no_up_until_ns && rates[i] >= c->blocked_fps)
             break;
+        if (next < 0)
+            next = i;
         double b = 1000.0 / rates[i];
-        if (c->avg_frame_ms * 1.25 <= b || (i == cur - 1 && c->avg_frame_ms <= b))
+        if (c->avg_frame_ms * 1.25 <= b || (i == next && c->avg_frame_ms <= b))
             best = i;
     }
     if (best < cur) {
@@ -3556,8 +3578,8 @@ static void fg_snapshot(const mgl_target *t)
             u.cam_delta[i] = mgl_cam.pos[0][i] - mgl_cam.pos[1][i];
         static int neg = -1, flip = -1;
         if (neg < 0) {
-            neg = getenv("MCMETAL_FG_NEG") != NULL;
-            flip = getenv("MCMETAL_FG_FLIP") != NULL;
+            neg = opt("MCMETAL_FG_NEG");
+            flip = opt("MCMETAL_FG_FLIP");
         }
         u.cam_delta[3] = neg ? -1.0f : 1.0f;
         u.size[0] = (float)t->width;
@@ -3726,11 +3748,17 @@ static void watch_drawable(id<CAMetalDrawable> drawable)
     [drawable addPresentedHandler:^(id<MTLDrawable> d) {
       atomic_fetch_sub(&presents_waiting, 1);
       static double last_shown;
-      double when = d.presentedTime;
+      static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER; /* handlers may run on more than one thread */
+      double when = d.presentedTime, iv = 0;
       if (when > 0) {
-          if (last_shown > 0)
-              pace_presented((when - last_shown) * 1000.0);
-          last_shown = when;
+          pthread_mutex_lock(&lock);
+          if (last_shown > 0 && when > last_shown)
+              iv = (when - last_shown) * 1000.0;
+          if (when > last_shown)
+              last_shown = when;
+          pthread_mutex_unlock(&lock);
+          if (iv > 0)
+              pace_presented(iv);
       }
       if (stats)
           present_stat(when);
@@ -3798,7 +3826,7 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
         id<MTLTexture> mid = fg_interpolate(frame_s);
         static int fg_no_present = -1;
         if (fg_no_present < 0)
-            fg_no_present = getenv("MCMETAL_FG_NO_PRESENT") != NULL;
+            fg_no_present = opt("MCMETAL_FG_NO_PRESENT");
         if (mid && fg_no_present) /* test: make the extra frame but don't show it (its GPU cost alone) */
             mid = nil;
         if (mid) {
