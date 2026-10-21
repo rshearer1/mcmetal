@@ -1606,6 +1606,32 @@ static void bind_stage_resources(id<MTLRenderCommandEncoder> e, id<MTLComputeCom
     }
 }
 
+/* GL's base vertex, applied as a vertex-buffer offset instead of Metal's baseVertex: with Sodium's large base
+   vertices (~192000 into a 3.9 MB buffer) Apple's paravirtual GPU drew nothing (gl_smoke test 8). Returns the
+   baseVertex left for Metal: 0 when every per-vertex buffer could be offset, else the GL value unchanged. */
+static int apply_base_vertex(id<MTLRenderCommandEncoder> e, const mgl_draw *d, long base)
+{
+    static int use_metal_base = -1;
+    if (use_metal_base < 0)
+        use_metal_base = opt("MGL_METAL_BASE_VERTEX");
+    if (use_metal_base)
+        return (int)base;
+    for (int i = 0; i < d->num_vbufs; i++)
+        if (!d->vbufs[i].divisor && d->vbufs[i].stride > 0 && base < 0 &&
+            (long)d->vbufs[i].offset + base * d->vbufs[i].stride < 0)
+            return (int)base; /* would go below the buffer start: leave it to Metal */
+    for (int i = 0; i < d->num_vbufs; i++)
+        if (!d->vbufs[i].divisor && d->vbufs[i].stride > 0 && ((long)d->vbufs[i].offset + base * d->vbufs[i].stride) % 4)
+            return (int)base; /* Metal wants 4-byte aligned buffer offsets */
+    for (int i = 0; i < d->num_vbufs; i++) {
+        const mgl_vertex_buf *vb = &d->vbufs[i];
+        if (vb->divisor || vb->stride <= 0)
+            continue; /* per-instance and constant data ignore the base vertex in GL too */
+        [e setVertexBufferOffset:(NSUInteger)((long)vb->offset + base * vb->stride) atIndex:(NSUInteger)(MGL_BUF_VERTEX_BASE + i)];
+    }
+    return 0;
+}
+
 void mglb_draw(const mgl_draw *d)
 {
     int ok;
@@ -1678,16 +1704,19 @@ void mglb_draw(const mgl_draw *d)
         id<MTLBuffer> ib = OBJ(id<MTLBuffer>, d->index_buf->mtl);
         MTLIndexType it = d->index_type == GL_UNSIGNED_SHORT ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32;
         for (int i = 0; i < d->multi_n; i++)
-            if (d->multi_count[i] > 0)
+            if (d->multi_count[i] > 0) {
+                int bv = apply_base_vertex(e, d, d->multi_base[i]);
                 [e drawIndexedPrimitives:pt indexCount:(NSUInteger)d->multi_count[i] indexType:it indexBuffer:ib
                        indexBufferOffset:(NSUInteger)(size_t)d->multi_offset[i] instanceCount:1
-                              baseVertex:d->multi_base[i] baseInstance:0];
+                              baseVertex:bv baseInstance:0];
+            }
         use_buffer(d->index_buf);
     } else if (d->index_buf) {
+        int bv = apply_base_vertex(e, d, d->base_vertex);
         [e drawIndexedPrimitives:pt indexCount:(NSUInteger)d->count
                        indexType:d->index_type == GL_UNSIGNED_SHORT ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32
                      indexBuffer:OBJ(id<MTLBuffer>, d->index_buf->mtl) indexBufferOffset:d->index_offset
-                   instanceCount:(NSUInteger)d->instances baseVertex:d->base_vertex baseInstance:0];
+                   instanceCount:(NSUInteger)d->instances baseVertex:bv baseInstance:0];
         use_buffer(d->index_buf);
     } else {
         [e drawPrimitives:pt vertexStart:(NSUInteger)d->first vertexCount:(NSUInteger)d->count
