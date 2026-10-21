@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
-#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act (default: the first three)
+#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-rain (default: the first three)
 # WORK holds the game install (cacheable), OUT gets screenshots and logs. Needs Java 21 as `java` or $JAVA.
 set -uo pipefail
 SRC=$(cd "$(dirname "$0")/../.." && pwd)
@@ -71,15 +71,23 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     grep -E "joined the game|ERROR|Exception" "$OUT/$name/latest.log" 2>/dev/null | grep -viE "sound|openal" | head -8 | cut -c1-220
 }
 
-scene() { # time: copy the test scene datapack (pool, waterfall, lights) into the world, at this time of day
+scene() { # time [weather [stage]]: copy the test datapack into the world; it builds STAGE (default: scene, the
+          # pool with lights; showcase: the feature gallery) next to the player at this time of day and weather
     rm -rf "$G/saves/metal/datapacks/mcm-scene"; mkdir -p "$G/saves/metal/datapacks"
     cp -r "$SRC/tests/game/scene" "$G/saves/metal/datapacks/mcm-scene"
-    echo "time set $1" > "$G/saves/metal/datapacks/mcm-scene/data/mcm/function/time.mcfunction"
+    local f="$G/saves/metal/datapacks/mcm-scene/data/mcm/function"
+    printf 'time set %s\nweather %s 100000\n' "$1" "${2:-clear}" > "$f/time.mcfunction"
+    echo "function mcm:${3:-scene}" > "$f/build.mcfunction"
 }
 
-act() { # on|off: Complementary's Advanced Colour Tracing (ships off; 128 = the size the inventory was taken at)
+act() { # on|off|showcase: Complementary's options. ACT ships off; "on" = 128, the size the inventory was taken at;
+        # "showcase" = everything Iris's Mac flag used to lock away, at high settings
     local f="$G/shaderpacks/ComplementaryReimagined_r5.9.3.zip.txt"
-    if [ "$1" = on ]; then echo "COLORED_LIGHTING=128" > "$f"; else rm -f "$f"; fi
+    case $1 in
+    on) echo "COLORED_LIGHTING=128" > "$f" ;;
+    showcase) printf 'COLORED_LIGHTING=256\nWORLD_SPACE_REFLECTIONS=1\nRAIN_PUDDLES=1\nDETAIL_QUALITY=3\n' > "$f" ;;
+    *) rm -f "$f" ;;
+    esac
 }
 
 for p in $PHASES; do
@@ -98,5 +106,7 @@ for p in $PHASES; do
     water-shaders) scene noon; run_phase water-shaders 240 metal true ;;  # Complementary water + reflections
     night) scene midnight; run_phase night 240 metal true ;;             # Complementary at night, ACT off (as shipped)
     night-act) scene midnight; act on; run_phase night-act 240 metal true ;;  # ACT coloured light (voxel images from vertex shaders)
+    showcase) scene midnight clear showcase; act showcase; run_phase showcase 240 metal true ;;     # feature gallery
+    showcase-rain) scene 13800 rain showcase; act showcase; run_phase showcase-rain 240 metal true ;;  # + improved rain, puddles
     esac
 done

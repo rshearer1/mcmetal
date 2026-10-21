@@ -653,8 +653,8 @@ static void debug_sync(const char *what, const mgl_draw *d, long a, long b)
 /* GL converts integer vertex data to float when glVertexAttribPointer isn't normalising (Iris feeds Sodium's
    mid-texture coordinate as plain unsigned shorts and scales it in the shader). Metal has no such "scaled"
    formats: integer data only reaches integer inputs. So such attributes are fetched normalised (0..1) and the
-   vertex function multiplies them back up: every float input N reads in.NAME * mgl_vscale_N, a function constant
-   that defaults to 1 and is specialised per pipeline (255, 127, 65535 or 32767) when the attribute needs it. */
+   vertex function multiplies them back up: main0 starts with in.NAME *= mgl_vscale_N for every float input N, a
+   function constant that defaults to 1 and is specialised per pipeline (255, 127, 65535 or 32767) when needed. */
 #define MGL_VSCALE_FC 100 /* function constant index base */
 static char *scale_vertex_inputs(const char *msl)
 {
@@ -688,32 +688,24 @@ static char *scale_vertex_inputs(const char *msl)
                               "constant float mgl_vscale_%d = is_function_constant_defined(mgl_vscale_%d_fc) ? "
                               "mgl_vscale_%d_fc : 1.0;\n",
                               in[i].loc, MGL_VSCALE_FC + in[i].loc, in[i].loc, in[i].loc, in[i].loc);
-    const char *body = end;
-    memcpy(out + o, st, (size_t)(body - st));
-    o += (size_t)(body - st);
-    #define IDCH(c) ((c) == '_' || ((c) >= 'a' && (c) <= 'z') || ((c) >= 'A' && (c) <= 'Z') || ((c) >= '0' && (c) <= '9'))
-    for (const char *c = body; *c;) {
-        if (o + 256 > cap) {
-            cap *= 2;
-            out = realloc(out, cap);
-        }
-        int hit = -1;
-        if (!strncmp(c, "in.", 3) && !IDCH(c[-1]) && c[-1] != '.') /* c > body: c[-1] is in the string */
-            for (int i = 0; i < n; i++) {
-                size_t k = strlen(in[i].name);
-                if (!strncmp(c + 3, in[i].name, k) && !IDCH(c[3 + k])) {
-                    hit = i;
-                    break;
-                }
-            }
-        if (hit >= 0) {
-            o += (size_t)snprintf(out + o, cap - o, "(in.%s * mgl_vscale_%d)", in[hit].name, in[hit].loc);
-            c += 3 + strlen(in[hit].name);
-        } else {
-            out[o++] = *c++;
-        }
+    /* the input struct is a by-value parameter: scale it in place at the top of main0, so every use (also those
+       passed by reference to helper functions) sees GL's values */
+    const char *fn = strstr(end, " main0(");
+    const char *open = fn ? strstr(fn, "\n{\n") : NULL;
+    if (!open) {
+        free(out);
+        return NULL;
     }
-    #undef IDCH
+    open += 3;
+    memcpy(out + o, st, (size_t)(open - st));
+    o += (size_t)(open - st);
+    for (int i = 0; i < n; i++)
+        o += (size_t)snprintf(out + o, cap - o, "    in.%s *= mgl_vscale_%d;\n", in[i].name, in[i].loc);
+    size_t rest = strlen(open);
+    if (o + rest + 1 > cap)
+        out = realloc(out, cap = o + rest + 1);
+    memcpy(out + o, open, rest);
+    o += rest;
     out[o] = 0;
     return out;
 }
