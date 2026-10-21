@@ -49,7 +49,13 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
 for p in $PHASES; do
     case $p in
     title) run_phase title 60 "" false ;;
-    world) run_phase world 180 metal false ;;
+    world) run_phase world 180 metal false
+        # replay Sodium's own cutout shaders (dumped by this run) in the headless terrain tests
+        fsh=$(grep -l "define USE_FRAGMENT_DISCARD" "$OUT/world/glsl/"*.fsh 2>/dev/null | head -1)
+        if [ -n "$fsh" ] && [ -x "$SRC/build/gl_smoke" ]; then
+            "$SRC/build/gl_smoke" "${fsh%.fsh}.vsh" "$fsh" > "$OUT/world/replay-sodium-cutout.txt" 2>&1
+            grep -E "use|FAIL|cutout|replayed|failed" "$OUT/world/replay-sodium-cutout.txt"
+        fi ;;
     complementary) run_phase complementary 300 metal true ;;
     esac
 done

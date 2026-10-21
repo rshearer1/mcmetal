@@ -91,7 +91,42 @@ static int near(unsigned px, unsigned want)
     return 1;
 }
 
-int main(void)
+static char *read_file(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f)
+        return NULL;
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    rewind(f);
+    char *b = malloc((size_t)n + 1);
+    b[fread(b, 1, (size_t)n, f)] = 0;
+    fclose(f);
+    return b;
+}
+
+/* gl_smoke VSH FSH: run the terrain tests (6, 8, 9) with these shader files instead of the built-in look-alike,
+   e.g. the GLSL a game run dumped (MGL_DUMP_DIR), with Sodium's attribute bindings */
+static GLuint program_from_files(const char *vs_path, const char *fs_path)
+{
+    char *vs = read_file(vs_path), *fs = read_file(fs_path);
+    if (!vs || !fs) {
+        printf("cannot read %s / %s\n", vs_path, fs_path);
+        exit(1);
+    }
+    GLuint p = glCreateProgram();
+    glAttachShader(p, shader(GL_VERTEX_SHADER, vs));
+    glAttachShader(p, shader(GL_FRAGMENT_SHADER, fs));
+    static const char *names[4] = {"a_Position", "a_Color", "a_TexCoord", "a_LightAndData"};
+    for (int i = 0; i < 4; i++)
+        glBindAttribLocation(p, (GLuint)i, names[i]);
+    glBindFragDataLocation(p, 0, "fragColor");
+    glLinkProgram(p);
+    printf("terrain tests use %s + %s\n", vs_path, fs_path);
+    return p;
+}
+
+int main(int argc, char **argv)
 {
     static unsigned px[64 * 64];
     const char *r = (const char *)glGetString(GL_RENDERER);
@@ -256,6 +291,8 @@ int main(void)
         "  if (v_FragDistance > u_FogStart) c.rgb = mix(c.rgb, u_FogColor.rgb, smoothstep(u_FogStart, u_FogEnd, v_FragDistance));\n"
         "  fragColor = c;\n"
         "}\n", NULL);
+    if (argc == 3)
+        terrain = program_from_files(argv[1], argv[2]);
     check(really_linked(terrain), "Sodium-style terrain program links");
     /* 4 junk vertices, then the quad; positions decode to clip-space corners at z 0.5 (identity matrices) */
     struct { unsigned pos[2]; unsigned char color[4]; unsigned short uv[2]; unsigned char light[4]; } tv[8];
