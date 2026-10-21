@@ -162,6 +162,9 @@ void mglb_rt_update(const mgl_rt_geom *g, int n);
 mglb_buffer *mglb_rt_instances(void); /* this frame's per-instance triangle-data addresses (mcm_trace's McmInstances) */
 /* The block atlas the terrain was last drawn with, for mcm_trace's alpha test (mcm_atlas); set by mgl_rt.c. */
 extern mglb_texture *mgl_rt_atlas;
+/* Block ids the light list collects (MCMETAL_LIGHT_IDS in a pack), {-1, -1} = none; set by mgl_program.c. */
+extern int mgl_rt_light_ids[2];
+mglb_buffer *mglb_rt_lights(void); /* this frame's light list (mcm_lights_near's McmLights) */
 
 void mglb_draw(const mgl_draw *d);
 void mglb_dispatch(const mgl_draw *d, int gx, int gy, int gz); /* uses program, uniforms, ubo, textures[2] */
