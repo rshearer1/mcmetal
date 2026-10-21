@@ -146,11 +146,13 @@ void mgl_rt_record(mgl_program *p, const mgl_draw *d)
     }
 
     rt_draw key = {{vb->buf, d->index_buf, vb->offset + (size_t)a->offset, vb->stride, d->index_offset,
-                    d->index_type, d->count, d->base_vertex, 0, {region[0], region[1], region[2]}}, t};
+                    d->index_type, d->count, d->base_vertex, 0, {region[0], region[1], region[2]},
+                    d->blend[0].enabled}, t};
     for (int i = 0; i < num_draws; i++) {
         rt_draw *r = &draws[i];
         if (r->g.vbuf == key.g.vbuf && r->g.vbase == key.g.vbase && r->g.base_vertex == key.g.base_vertex &&
-            r->g.ioff == key.g.ioff && r->g.count == key.g.count && r->g.ibuf == key.g.ibuf) {
+            r->g.ioff == key.g.ioff && r->g.count == key.g.count && r->g.ibuf == key.g.ibuf &&
+            r->g.translucent == key.g.translucent) {
             memcpy(r->g.region, key.g.region, sizeof r->g.region);
             r->seen = t;
             goto recorded;

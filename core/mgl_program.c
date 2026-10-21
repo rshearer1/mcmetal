@@ -264,7 +264,7 @@ static void add_ray_tracing(mgl_shader *s)
     static const char body[] =
         "\nfloat mcm_trace(vec3 origin, vec3 dir, float tmax) {\n"
         "  rayQueryEXT q;\n"
-        "  rayQueryInitializeEXT(q, mcm_scene, gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT, 0xFF,\n"
+        "  rayQueryInitializeEXT(q, mcm_scene, gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT, 0x01,\n"
         "                        origin, 0.001, dir, tmax);\n"
         "  while (rayQueryProceedEXT(q)) {}\n"
         "  return rayQueryGetIntersectionTypeEXT(q, true) != gl_RayQueryCommittedIntersectionNoneEXT\n"

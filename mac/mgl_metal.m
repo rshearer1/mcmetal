@@ -2429,7 +2429,7 @@ void mglb_rt_update(const mgl_rt_geom *g, int n)
         d->transformationMatrix.columns[2] = MTLPackedFloat3Make(0, 0, 1);
         d->transformationMatrix.columns[3] = MTLPackedFloat3Make(g[i].region[0], g[i].region[1], g[i].region[2]);
         d->options = MTLAccelerationStructureInstanceOptionOpaque;
-        d->mask = 0xFF;
+        d->mask = g[i].translucent ? 0x02 : 0x01; /* mcm_trace sees solid and cutout terrain only (mask 1) */
         d->accelerationStructureIndex = (uint32_t)count;
         d->userID = (uint32_t)i;
         [parts addObject:as];
