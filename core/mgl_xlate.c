@@ -560,6 +560,21 @@ static char *rename_vulkan_words(const char *src)
     char *out = malloc(cap);
     int changed = 0;
     for (const char *p = src; *p;) {
+        /* comments are copied as they are: "// FMA for precision" in Sodium's terrain shader once had its
+           "precision ... ;" blanked through the next line's statement (v_Material = ...), which broke cutout */
+        if (p[0] == '/' && (p[1] == '/' || p[1] == '*')) {
+            const char *e = p[1] == '/' ? strchr(p, '\n') : strstr(p + 2, "*/");
+            e = !e ? p + strlen(p) : p[1] == '/' ? e : e + 2;
+            size_t m = (size_t)(e - p);
+            if (o + m + 8 > cap) {
+                cap = (cap + m + 8) * 2;
+                out = realloc(out, cap);
+            }
+            memcpy(out + o, p, m);
+            o += m;
+            p = e;
+            continue;
+        }
         if (isalpha((unsigned char)*p) || *p == '_') {
             const char *q = p;
             while (isalnum((unsigned char)*q) || *q == '_')
