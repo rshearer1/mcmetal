@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       phases:
-        description: game phases (title world complementary)
+        description: game phases (title world complementary water water-shaders night)
         default: title world complementary
       env:
         description: extra env for every phase, e.g. MGL_DEBUG_DRAWS=1

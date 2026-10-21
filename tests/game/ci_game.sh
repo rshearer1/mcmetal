@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
-#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary (default: all three)
+#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night (default: the first three)
 # WORK holds the game install (cacheable), OUT gets screenshots and logs. Needs Java 21 as `java` or $JAVA.
 set -uo pipefail
 SRC=$(cd "$(dirname "$0")/../.." && pwd)
@@ -47,6 +47,12 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     grep -E "joined the game|ERROR|Exception" "$OUT/$name/latest.log" 2>/dev/null | grep -viE "sound|openal" | head -8 | cut -c1-220
 }
 
+scene() { # time: copy the test scene datapack (pool, waterfall, lights) into the world, at this time of day
+    rm -rf "$G/saves/metal/datapacks/mcm-scene"; mkdir -p "$G/saves/metal/datapacks"
+    cp -r "$SRC/tests/game/scene" "$G/saves/metal/datapacks/mcm-scene"
+    echo "time set $1" > "$G/saves/metal/datapacks/mcm-scene/data/mcm/function/time.mcfunction"
+}
+
 for p in $PHASES; do
     case $p in
     title) run_phase title 60 "" false ;;
@@ -58,5 +64,8 @@ for p in $PHASES; do
             grep -E "use|FAIL|cutout|replayed|failed" "$OUT/world/replay-sodium-cutout.txt"
         fi ;;
     complementary) run_phase complementary 300 metal true ;;
+    water) scene noon; run_phase water 150 metal false ;;                  # Sodium water, glass, waterfall
+    water-shaders) scene noon; run_phase water-shaders 240 metal true ;;  # Complementary water + reflections
+    night) scene midnight; run_phase night 240 metal true ;;             # Complementary ACT coloured light
     esac
 done
