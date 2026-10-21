@@ -12,8 +12,8 @@ on:
       env:
         description: extra env for every phase, e.g. MGL_DEBUG_DRAWS=1
         default: ''
-      quick:
-        description: 'quick check: each phase plays for a third of the time'
+      long:
+        description: 'soak test: play each phase for its full time instead of stopping after 4 screenshots in the world'
         type: boolean
         default: false
 defaults:
@@ -110,7 +110,7 @@ jobs:
           path: ~/mcgame
           key: mc-1.21.1-neoforge-21.1.259-sodium-iris-v1
       - name: Real game on mcmetal (screenshots)
-        run: GAME_QUICK="${{ github.event.inputs.quick }}" GAME_ENV="${{ github.event.inputs.env }}" bash tests/game/ci_game.sh ~/mcgame game-out ${{ matrix.phase }}
+        run: GAME_LONG="${{ github.event.inputs.long }}" GAME_ENV="${{ github.event.inputs.env }}" bash tests/game/ci_game.sh ~/mcgame game-out ${{ matrix.phase }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

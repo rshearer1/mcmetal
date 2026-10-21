@@ -15,9 +15,16 @@ mkdir -p "$G/config" "$G/saves"
 cp "$SRC/tests/game/options.txt" "$G/options.txt"
 rm -rf "$G/saves/metal" && tar xzf "$SRC/tests/game/world-metal.tgz" -C "$G/saves"
 
+shots_in_world() { # screenshots taken after the first frame that drew terrain (any frame for the title screen)
+    awk -v title="$2" '/presented frame/ && (title || !/\(0 terrain/) {on=1} on && /screenshot/ {n++} END {print n+0}' "$1" 2>/dev/null
+}
+
 run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this phase
     local name=$1 secs=$2 world=$3 shaders=$4; shift 4
-    [ "${GAME_QUICK:-}" = true ] && secs=$(( secs / 3 > 50 ? secs / 3 : 50 ))  # quick check: enough to load in and draw a few hundred frames
+    # by default a phase ends once it has GAME_SHOTS screenshots of the loaded world; GAME_LONG=true plays the
+    # full time (soak test: frame counts, leaks, late GPU faults)
+    local want=${GAME_SHOTS:-4} title=0
+    [ -z "$world" ] && { want=2; title=1; }
     printf 'enableShaders=%s\nshaderPack=ComplementaryReimagined_r5.9.3.zip\ncolorSpace=SRGB\ndisableUpdateMessage=true\n' \
         "$shaders" > "$G/config/iris.properties"
     mkdir -p "$OUT/$name"
@@ -25,7 +32,7 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     [ -n "$world" ] && wargs+=(--world "$world")
     mkdir -p "$OUT/$name/glsl"
     echo "=== phase $name: ${secs}s, world=${world:-none}, shaders=$shaders"
-    MGL_LOG="$OUT/$name/mgl.log" MGL_SHOT_DIR="$OUT/$name" MGL_SHOT_EVERY=${MGL_SHOT_EVERY:-15} \
+    MGL_LOG="$OUT/$name/mgl.log" MGL_SHOT_DIR="$OUT/$name" MGL_SHOT_EVERY=${MGL_SHOT_EVERY:-10} \
     MGL_CACHE_DIR="$WORK/cache" MGL_DUMP_DIR="$OUT/$name/glsl" env ${GAME_ENV:-} "$@" \
         python3 -I "$SRC/tools/bare_mc.py" launch "$WORK" --java "$JAVA" "${wargs[@]}" \
         --gl "$SRC/build/libmcmetal.dylib" --glfw "$SRC/build/libglfw.dylib" > "$OUT/$name/launch.out" 2>&1 &
@@ -34,6 +41,9 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
         sleep 5; t=$((t + 5))
         pid=$(cat "$WORK/client.pid" 2>/dev/null)
         if [ $t -gt 20 ] && [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then echo "game exited after ${t}s"; break; fi
+        if [ "${GAME_LONG:-}" != true ] && [ "$(shots_in_world "$OUT/$name/mgl.log" $title)" -ge "$want" ]; then
+            echo "got $want screenshots in the world after ${t}s"; break
+        fi
     done
     pid=$(cat "$WORK/client.pid" 2>/dev/null); [ -n "$pid" ] && kill "$pid" 2>/dev/null; sleep 5
     [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null
