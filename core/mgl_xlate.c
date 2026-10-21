@@ -39,12 +39,17 @@ static void xlog(mgl_xlate_result *r, const char *fmt, ...)
 static void copy_name(char *dst, const char *src)
 {
     snprintf(dst, 96, "%s", src ? src : "");
+    size_t n = strlen(dst); /* names renamed by rename_vulkan_words: report the pack's own name to GL */
+    if (n > 4 && !strcmp(dst + n - 4, "_mgl"))
+        dst[n - 4] = 0;
 }
 
 #define GROW(arr, n) ((arr) = realloc((arr), sizeof(*(arr)) * ((n) + 1)), memset(&(arr)[n], 0, sizeof(*(arr))), &(arr)[(n)++])
 
-static mgl_uniform *find_uniform(mgl_xlate_result *r, const char *name)
+static mgl_uniform *find_uniform(mgl_xlate_result *r, const char *raw)
 {
+    char name[96];
+    copy_name(name, raw);
     for (int i = 0; i < r->num_uniforms; i++)
         if (!strcmp(r->uniforms[i].name, name))
             return &r->uniforms[i];
@@ -55,8 +60,10 @@ static mgl_uniform *find_uniform(mgl_xlate_result *r, const char *name)
     return u;
 }
 
-static mgl_texture_slot *find_texture(mgl_xlate_result *r, const char *name)
+static mgl_texture_slot *find_texture(mgl_xlate_result *r, const char *raw)
 {
+    char name[96];
+    copy_name(name, raw);
     for (int i = 0; i < r->num_textures; i++)
         if (!strcmp(r->textures[i].name, name))
             return &r->textures[i];
@@ -376,7 +383,7 @@ static spvc_bool cross_stage(mgl_xlate_result *r, int stage, const uint32_t *wor
             mgl_frag_out *o = GROW(r->outs, r->num_outs);
             copy_name(o->name, list[i].name);
             for (int k = 0; k < num_frag_binds; k++) /* glBindFragDataLocation wins over the shader's own location */
-                if (!strcmp(frag_binds[k].name, list[i].name))
+                if (!strcmp(frag_binds[k].name, o->name))
                     spvc_compiler_set_decoration(comp, list[i].id, SpvDecorationLocation, (unsigned)frag_binds[k].loc);
             o->location = (int)spvc_compiler_get_decoration(comp, list[i].id, SpvDecorationLocation);
         }
@@ -576,12 +583,31 @@ static void mark_bools(mgl_xlate_result *r, const char *src)
 }
 
 /* We compile desktop GLSL with Vulkan rules, which reserve some words desktop GLSL lets packs use as names
-   (Photon has "sampler2D sampler"). Rename those identifiers. Returns a new string, or NULL if nothing changed. */
+   (Photon has "sampler2D sampler"). Rename those identifiers. The MSL that SPIRV-Cross writes is C++ with
+   "using namespace metal", so C++ keywords (BSL's "bool new") and the pack's own functions named like Metal
+   library ones (Bliss's bias(), Photon's length_squared()) break there; rename those too. The added _mgl suffix
+   is taken off again in reflection (copy_name), so GL names still match. Returns a new string, or NULL if
+   nothing changed. */
 static char *rename_vulkan_words(const char *src)
 {
     static const char *words[] = {"sampler", "samplerShadow", "texture1D", "texture2D", "texture3D", "textureCube",
                                   "texture1DArray", "texture2DArray", "textureCubeArray", "textureBuffer", "texture2DMS",
                                   "texture2DMSArray", "texture2DRect", "subpassInput", "subpassInputMS", NULL};
+    /* C++ keywords that GLSL leaves free, Metal address spaces / stages, and metal:: functions packs define */
+    static const char *cxx[] = {"new", "delete", "this", "operator", "friend", "virtual", "typename", "explicit",
+                                "mutable", "private", "protected", "throw", "try", "catch", "nullptr", "and", "or",
+                                "not", "xor", "bitand", "bitor", "compl", "and_eq", "or_eq", "not_eq", "xor_eq",
+                                "char", "signed", "wchar_t", "constexpr", "decltype", "alignas", "alignof",
+                                "noexcept", "static_assert", "thread_local", "export", "register", "typeid",
+                                "dynamic_cast", "static_cast", "const_cast", "reinterpret_cast", "auto",
+                                "constant", "device", "thread", "threadgroup", "kernel", "vertex", "fragment",
+                                "bias", "level", "gradient2d", "gradient3d", "gradientcube", "min_lod_clamp",
+                                "length_squared", "distance_squared", "rotate", "sincos", "lerp", "square", "rsqrt",
+                                "rcp", "atan2", "cbrt", "fmin", "fmax", "fmod", "select", "powr", "exp10",
+                                "sinpi", "cospi", "tanpi", "rint", "copysign", "fdim", "popcount", "clz", "ctz",
+                                "extract_bits", "insert_bits", "reverse_bits", "mulhi", "hadd", "rhadd",
+                                "addsat", "subsat", "abs_diff", "max3", "min3", "median3", "fmin3", "fmax3",
+                                "saturate", "divide", "recip", "as_type", NULL};
     if (!src)
         return NULL;
     size_t len = strlen(src), cap = len + 64, o = 0;
@@ -638,6 +664,8 @@ static char *rename_vulkan_words(const char *src)
                     /* texture2D(...) is the old lookup function, not a name; leave calls alone */
                     hit = i < 2 || *r != '(';
                 }
+            for (int i = 0; cxx[i] && !hit; i++)
+                hit = cxx[i][0] == *p && strlen(cxx[i]) == n && !memcmp(p, cxx[i], n);
             if (o + n + 8 > cap) {
                 cap = (cap + n + 8) * 2;
                 out = realloc(out, cap);
