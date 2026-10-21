@@ -877,7 +877,7 @@ static id<MTLFunction> compile_fn(const char *msl, NSString *what, char **err)
     return compile_fn_lib(msl, what, err, NULL);
 }
 
-/* sin( and pow( calls in generated MSL -> precise::sin( / precise::pow( (NULL if there is none); not asin, sinh
+/* sin(, cos( and pow( calls in generated MSL -> precise:: versions (NULL if there is none); not asin, sinh
    or already-qualified calls. The rest of the maths functions stay fast. */
 static char precise_names[32][16];
 static int precise_count;
@@ -887,10 +887,10 @@ static void precise_init(void)
     /* MGL_PRECISE=sin,pow,exp,...: the functions made precise (for finding which one a pack needs) */
     const char *e = getenv("MGL_PRECISE");
     char list[256], *save = NULL;
-    snprintf(list, sizeof list, "%s", e ? e : "sin,pow");
+    snprintf(list, sizeof list, "%s", e ? e : "sin,cos,pow");
     for (char *t = strtok_r(list, ", ", &save); t && precise_count < 32; t = strtok_r(NULL, ", ", &save))
         snprintf(precise_names[precise_count++], sizeof precise_names[0], "%s(", t);
-    mgl_log("precise maths functions: %s", e ? e : "sin,pow");
+    mgl_log("precise maths functions: %s", e ? e : "sin,cos,pow");
 }
 
 static int precise_at(const char *msl, const char *p, size_t *len)
@@ -945,10 +945,10 @@ static id<MTLFunction> compile_fn_lib(const char *msl, NSString *what, char **er
     }
     if (@available(macOS 15.0, *)) {
         o.mathMode = math == 0 ? MTLMathModeSafe : math == 2 ? MTLMathModeFast : MTLMathModeRelaxed;
-        /* fast exp/cos/sqrt etc. (all-precise functions cost SEUS PTGI 16 -> 10 fps), but sin and pow are made
+        /* fast exp/sqrt etc. (all-precise functions cost SEUS PTGI 16 -> 10 fps), but sin, cos and pow are made
            precise in the source (precise_sin): packs hash with fract(sin(x) * 43758.5) on large x (fast sin gave
-           SEUS streaks across the sky), and fast pow(0, 0) is NaN where GL drivers give 1, which SEUS's temporal
-           buffers spread into grain and a seam down the screen. MGL_MATH_FUNCS=precise makes them all precise. */
+           SEUS streaks across the sky; fast cos, found by bisecting on an M3, grain and a seam down the screen
+           that SEUS's temporal buffers kept). MGL_MATH_FUNCS=precise makes them all precise. */
         o.mathFloatingPointFunctions = getenv("MGL_MATH_FUNCS") && !strcmp(getenv("MGL_MATH_FUNCS"), "precise")
                                            ? MTLMathFloatingPointFunctionsPrecise
                                            : MTLMathFloatingPointFunctionsFast;
@@ -2517,8 +2517,13 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer
 
 void mglb_rt_update(const mgl_rt_geom *g, int n)
 {
-    if (!dev.supportsRaytracing)
+    if (!dev.supportsRaytracing) {
+        static int said;
+        if (!said++)
+            mgl_log("ray tracing: this GPU (%s) has no Metal ray tracing; mcm_trace misses everything",
+                    dev.name.UTF8String);
         return;
+    }
     rt_frame++;
     NSMutableArray<id<MTLAccelerationStructure>> *parts = [NSMutableArray arrayWithCapacity:(NSUInteger)n];
     mglb_buffer *inst = mglb_buffer_new(sizeof(MTLAccelerationStructureUserIDInstanceDescriptor) * (size_t)(n ? n : 1));
