@@ -12,13 +12,19 @@ on:
       env:
         description: extra env for every phase, e.g. MGL_DEBUG_DRAWS=1
         default: ''
+      quick:
+        description: 'quick check: each phase plays for a third of the time'
+        type: boolean
+        default: false
 defaults:
   run:
     shell: bash  # bash -eo pipefail: a failing build isn't hidden by `| tee`
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 75
+    timeout-minutes: 30
+    outputs:
+      phases: ${{ steps.plan.outputs.phases }}
     steps:
       - uses: actions/checkout@v4
       - name: Cache glslang + SPIRV-Cross
@@ -53,6 +59,47 @@ jobs:
       - name: Device info
         if: always()
         run: system_profiler SPDisplaysDataType || true
+      - name: Pick game phases
+        id: plan
+        run: |
+          phases="${{ github.event.inputs.phases }}"
+          [ -n "$phases" ] || phases="title world complementary"
+          if [ "${{ github.event_name }}" = push ] && grep -q '\[no game\]' <<< "${{ github.event.head_commit.message }}"; then phases=""; fi
+          echo "phases=$(printf '%s\n' $phases | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().split()))')" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin
+          path: |
+            build/libmcmetal.dylib
+            build/libglfw.dylib
+            build/gl_smoke
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: logs
+          path: |
+            build.log
+            smoke*.txt
+            smoke*-mgl.log
+            msl/
+
+  # each game phase on its own Mac, side by side
+  game:
+    needs: build
+    if: ${{ needs.build.outputs.phases != '[]' && needs.build.outputs.phases != '' }}
+    runs-on: macos-15
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        phase: ${{ fromJSON(needs.build.outputs.phases) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: bin
+          path: build
+      - run: chmod +x build/gl_smoke
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -63,22 +110,12 @@ jobs:
           path: ~/mcgame
           key: mc-1.21.1-neoforge-21.1.259-sodium-iris-v1
       - name: Real game on mcmetal (screenshots)
-        if: ${{ !contains(github.event.head_commit.message, '[no game]') }}
-        run: GAME_ENV="${{ github.event.inputs.env }}" bash tests/game/ci_game.sh ~/mcgame game-out ${{ github.event.inputs.phases }}
+        run: GAME_QUICK="${{ github.event.inputs.quick }}" GAME_ENV="${{ github.event.inputs.env }}" bash tests/game/ci_game.sh ~/mcgame game-out ${{ matrix.phase }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: game
+          name: game-${{ matrix.phase }}
           # the GLSL dumps hold Complementary's and Sodium's shader source: keep them off this public repo
           path: |
             game-out/
             !game-out/**/glsl/**
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: logs
-          path: |
-            build.log
-            smoke*.txt
-            smoke*-mgl.log
-            msl/

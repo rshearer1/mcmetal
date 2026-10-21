@@ -17,6 +17,7 @@ rm -rf "$G/saves/metal" && tar xzf "$SRC/tests/game/world-metal.tgz" -C "$G/save
 
 run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this phase
     local name=$1 secs=$2 world=$3 shaders=$4; shift 4
+    [ "${GAME_QUICK:-}" = true ] && secs=$(( secs / 3 > 50 ? secs / 3 : 50 ))  # quick check: enough to load in and draw a few hundred frames
     printf 'enableShaders=%s\nshaderPack=ComplementaryReimagined_r5.9.3.zip\ncolorSpace=SRGB\ndisableUpdateMessage=true\n' \
         "$shaders" > "$G/config/iris.properties"
     mkdir -p "$OUT/$name"
