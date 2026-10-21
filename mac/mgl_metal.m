@@ -5,6 +5,7 @@
    shaders flip Y. Only the final present flips the image for the window. */
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import <MetalFX/MetalFX.h>
 #include <ctype.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -2911,17 +2912,67 @@ const char *mgl_renderer_name(void)
     return renderer;
 }
 
+/* MCMETAL_UPSCALE=1: the game renders at the window's point size (half the pixels each way on Retina, GLFW
+   reports that size, see glfw/mtl_context.m) and MetalFX's spatial upscaler sharpens it to the Retina drawable. */
+static int upscale_on(void)
+{
+    static int on = -1;
+    if (on < 0)
+        on = getenv("MCMETAL_UPSCALE") && atoi(getenv("MCMETAL_UPSCALE")) > 0;
+    return on;
+}
+
 static void update_size(mgl_ctx *c)
 {
-    CGSize px = c->layer.bounds.size;
+    CGSize pt = c->layer.bounds.size, px = pt;
     px.width *= c->layer.contentsScale;
     px.height *= c->layer.contentsScale;
     if (px.width < 1 || px.height < 1)
         return;
     if (!CGSizeEqualToSize(c->layer.drawableSize, px))
         c->layer.drawableSize = px;
-    c->w = (int)px.width;
-    c->h = (int)px.height;
+    int up = upscale_on() && c->layer.contentsScale > 1;
+    c->w = (int)(up ? pt.width : px.width);
+    c->h = (int)(up ? pt.height : px.height);
+}
+
+/* The upscaled frame, the right way down for the present blit. NULL when off or MetalFX can't. */
+static id<MTLTexture> upscale(mgl_ctx *c, id<MTLTexture> in, NSUInteger ow, NSUInteger oh)
+{
+    static id<MTLFXSpatialScaler> fx;
+    static id<MTLTexture> out;
+    static int failed;
+    if (failed || (in.width == ow && in.height == oh))
+        return nil;
+    if (!fx || fx.inputWidth != in.width || fx.inputHeight != in.height || fx.outputWidth != ow || fx.outputHeight != oh) {
+        MTLFXSpatialScalerDescriptor *d = [[MTLFXSpatialScalerDescriptor alloc] init];
+        d.inputWidth = in.width;
+        d.inputHeight = in.height;
+        d.outputWidth = ow;
+        d.outputHeight = oh;
+        d.colorTextureFormat = in.pixelFormat;
+        d.outputTextureFormat = in.pixelFormat;
+        d.colorProcessingMode = MTLFXSpatialScalerColorProcessingModePerceptual;
+        if (![MTLFXSpatialScalerDescriptor supportsDevice:dev] || !(fx = [d newSpatialScalerWithDevice:dev])) {
+            mgl_log("MetalFX upscaler not available, drawing at %lux%lu without it", (unsigned long)in.width,
+                    (unsigned long)in.height);
+            failed = 1;
+            return nil;
+        }
+        MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:in.pixelFormat width:ow
+                                                                                     height:oh mipmapped:NO];
+        td.usage = fx.outputTextureUsage | MTLTextureUsageShaderRead;
+        td.storageMode = MTLStorageModePrivate;
+        out = [dev newTextureWithDescriptor:td];
+        mgl_log("MetalFX upscaler: %lux%lu -> %lux%lu", (unsigned long)in.width, (unsigned long)in.height,
+                (unsigned long)ow, (unsigned long)oh);
+    }
+    fx.colorTexture = in;
+    fx.outputTexture = out;
+    fx.inputContentWidth = in.width;
+    fx.inputContentHeight = in.height;
+    [fx encodeToCommandBuffer:current_cb()];
+    return out;
 }
 
 void mglb_window_size(int *w, int *h)
@@ -3027,6 +3078,12 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
           (void)d;
           atomic_fetch_sub(&presents_waiting, 1);
         }];
+        id<MTLTexture> src = OBJ(id<MTLTexture>, mgl->window_color->mtl);
+        if (upscale_on()) {
+            id<MTLTexture> up = upscale(c, src, drawable.texture.width, drawable.texture.height);
+            if (up)
+                src = up;
+        }
         MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
         rp.colorAttachments[0].texture = drawable.texture;
         rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
@@ -3039,7 +3096,7 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
             /* top of the window = last GL row */
             float rect[4] = {0, 1, 1, 0};
             [e setVertexBytes:rect length:sizeof rect atIndex:0];
-            [e setFragmentTexture:OBJ(id<MTLTexture>, mgl->window_color->mtl) atIndex:0];
+            [e setFragmentTexture:src atIndex:0];
             [e setFragmentSamplerState:blit_sampler(1) atIndex:0];
             [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
         }

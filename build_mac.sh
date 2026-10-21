@@ -23,7 +23,7 @@ mv ./*.o build/obj/
 clang "${CFLAGS[@]}" -fobjc-arc -Icore -c mac/*.m
 mv ./*.o build/obj/
 clang -arch arm64 -dynamiclib -o build/libmcmetal.dylib build/obj/*.o $D/libspirvcross_all.a $D/libglslang_all.a -lc++ \
-    -install_name @rpath/libmcmetal.dylib -framework Metal -framework QuartzCore -framework Foundation
+    -install_name @rpath/libmcmetal.dylib -framework Metal -framework MetalFX -framework QuartzCore -framework Foundation
 echo "libmcmetal: $(nm -gU build/libmcmetal.dylib | grep -c ' _gl') GL symbols exported"
 
 # 4. Patched GLFW 3.4 (nsgl_context.m replaced by glfw/mtl_context.m)
