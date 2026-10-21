@@ -73,13 +73,16 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
                 pid=$(cat "$WORK/client.pid" 2>/dev/null)
                 if [ -n "$pid" ]; then
                     echo "sampling CPU stacks"
-                    # each tool gets a time limit (macOS has no timeout command): a 1 fps game can stall them
-                    sample "$pid" 5 -mayDie -file "$OUT/$name/sample.txt" >/dev/null 2>&1 & local sp=$!
+                    # each tool gets a time limit (macOS has no timeout command) and no handle on the step's output:
+                    # jcmd can't attach to a 1 fps game and would otherwise keep the CI step open forever
+                    sample "$pid" 5 -mayDie -file "$OUT/$name/sample.txt" </dev/null >/dev/null 2>&1 &
                     for k in 1 2 3; do
-                        (jcmd "$pid" Thread.print 2>/dev/null | awk '/^"Render thread"/,/^$/' >> "$OUT/$name/render-thread.txt") & local jp=$!
-                        sleep 4; kill "$jp" 2>/dev/null
+                        jcmd "$pid" Thread.print </dev/null > "$OUT/$name/jstack-$k.txt" 2>/dev/null &
+                        sleep 4
                     done
-                    sleep 20; kill "$sp" 2>/dev/null
+                    sleep 12; pkill -9 -x jcmd; pkill -9 -x sample
+                    cat "$OUT/$name"/jstack-*.txt 2>/dev/null | awk '/^"Render thread"/,/^$/' > "$OUT/$name/render-thread.txt"
+                    rm -f "$OUT/$name"/jstack-*.txt
                     echo "sampling done"
                 fi
                 touch "$OUT/$name/shoot"; sleep 3; rm -f "$OUT/$name/shoot"; break
