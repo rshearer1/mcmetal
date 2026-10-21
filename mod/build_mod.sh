@@ -26,7 +26,7 @@ cp_of() { find "$LIB" -path "*/$1/*" -name '*.jar' ! -name '*sources*' | sort -V
 CP=$(cp_of net/neoforged/fancymodloader/loader):$(cp_of cpw/mods/modlauncher):$(cp_of org/ow2/asm/asm-tree):$(cp_of org/ow2/asm/asm)
 W=$(mktemp -d)
 mkdir -p "$W/classes"
-if command -v javac >/dev/null && command -v jar >/dev/null; then
+if javac -version >/dev/null 2>&1 && jar --version >/dev/null 2>&1; then # macOS ships /usr/bin stubs without a JDK
     javac --release 21 -nowarn -cp "$CP" -d "$W/classes" $(find "$HERE/src" -name '*.java')
     cp -r "$HERE/resources/." "$W/classes/"
     printf 'Automatic-Module-Name: mcmetal.loader\nImplementation-Title: mcmetal\n' > "$W/manifest"
