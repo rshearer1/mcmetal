@@ -898,6 +898,28 @@ void glShaderStorageBlockBinding(GLuint prog, GLuint index, GLuint binding)
 
 /* ---- writing uniform values ---- */
 
+mgl_camera mgl_cam;
+
+/* Keep Iris's camera uniforms for the backend (see mgl_camera); names only checked for float mat4 / vec3 writes */
+static void note_camera(const char *name, int n, int cols, const void *data)
+{
+    static const char *mats[] = {"gbufferModelView", "gbufferProjection", "gbufferPreviousModelView", "gbufferPreviousProjection"};
+    static const char *vecs[] = {"cameraPosition", "previousCameraPosition"};
+    if (cols == 4 && n == 4) {
+        for (int i = 0; i < 4; i++)
+            if (!strcmp(name, mats[i])) {
+                memcpy(mgl_cam.mat[i], data, sizeof mgl_cam.mat[i]);
+                mgl_cam.seen |= 1u << i;
+            }
+    } else if (cols <= 1 && n == 3) {
+        for (int i = 0; i < 2; i++)
+            if (!strcmp(name, vecs[i])) {
+                memcpy(mgl_cam.pos[i], data, sizeof mgl_cam.pos[i]);
+                mgl_cam.seen |= 1u << (4 + i);
+            }
+    }
+}
+
 /* Write `count` elements of n components each (floats or 32-bit ints) for location loc of program p. */
 static void write_uniform(mgl_program *p, GLint loc, int n, int cols, GLsizei count, const void *data, int is_int)
 {
@@ -916,6 +938,8 @@ static void write_uniform(mgl_program *p, GLint loc, int n, int cols, GLsizei co
         return;
     }
     mgl_uniform *u = &p->x.uniforms[idx];
+    if (!is_int && count == 1 && el == 0 && (u->name[0] == 'g' || u->name[0] == 'c' || u->name[0] == 'p'))
+        note_camera(u->name, n, cols, data);
     const char *src = data;
     for (GLsizei e = 0; e < count && el + e < u->array_size; e++) {
         for (int s = 0; s < 3; s++) {

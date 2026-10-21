@@ -166,6 +166,17 @@ extern mglb_texture *mgl_rt_atlas;
 extern int mgl_rt_light_ids[2];
 mglb_buffer *mglb_rt_lights(void); /* this frame's light list (mcm_lights_near's McmLights) */
 
+/* Camera from Iris's uniforms, as the pack was last given them (column-major, GL conventions), for MetalFX frame
+   interpolation's motion vectors (MCMETAL_FRAMEGEN): gbufferModelView, gbufferProjection,
+   gbufferPreviousModelView, gbufferPreviousProjection; cameraPosition, previousCameraPosition. seen: bit per
+   value set since the backend last cleared it. Filled by mgl_program.c. */
+typedef struct mgl_camera {
+    float mat[4][16];
+    float pos[2][3];
+    unsigned seen;
+} mgl_camera;
+extern mgl_camera mgl_cam;
+
 void mglb_draw(const mgl_draw *d);
 void mglb_dispatch(const mgl_draw *d, int gx, int gy, int gz); /* uses program, uniforms, ubo, textures[2] */
 /* Geometry-shader program (see mgl_gs.c): run the compute stage over `triangles` input triangles, fetching

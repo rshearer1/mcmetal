@@ -2091,9 +2091,16 @@ static id<MTLFunction> clear_fragment(const mgl_target *t)
     return f;
 }
 
+static void fg_snapshot(const mgl_target *t);
+static int fg_enabled(void);
+
 void mglb_clear(const mgl_target *t, unsigned mask_color, const float rgba[4], int clear_depth, float depth,
                 const int *scissor, uint8_t cmask)
 {
+    /* Minecraft clears only the depth of its main target right before drawing the HUD: keep the finished world
+       picture and its depth for frame interpolation */
+    if (clear_depth && !mask_color && !scissor && !t->is_default && t->tex[0] && t->depth && fg_enabled())
+        fg_snapshot(t);
     if (dump_this_frame())
         mgl_log("frame dump: clear target %p%s depth %p, colour mask 0x%x (write 0x%x), depth %d (%g), scissor %d", (void *)t->tex[0],
                 t->is_default ? " (window)" : "", (void *)t->depth, mask_color, cmask, clear_depth, depth, scissor != NULL);
@@ -3074,6 +3081,7 @@ typedef struct mgl_ctx {
     uint64_t last_wait_ns, last_gpu_ns;
     int paced_fps;
     uint64_t window_start_ns, stepped_up_ns, no_up_until_ns; /* see choose_paced_fps */
+    double avg_swap_ms;     /* smoothed time between swaps (real frames), for frame interpolation */
     unsigned up_backoff_s;
 } mgl_ctx;
 
@@ -3329,6 +3337,289 @@ static id<MTLTexture> upscale(mgl_ctx *c, id<MTLTexture> in, NSUInteger ow, NSUI
     return out;
 }
 
+
+/* ================================================================ MetalFX frame interpolation (MCMETAL_FRAMEGEN=1)
+
+   Experimental, macOS 26+. MetalFX makes an extra frame between two real ones from both pictures, motion vectors
+   and depth, so ~48 real fps can show as ~96. Packs don't hand us motion vectors, so they are worked out from the
+   depth and Iris's camera uniforms (current and previous view and projection, camera position): camera motion
+   only, so moving mobs, water waves and particles are guessed by MetalFX from the pictures alone. The held item
+   (depth below MCMETAL_FG_HAND, default 0.56 like packs use) gets no motion.
+   The HUD: Minecraft clears the main target's depth just before drawing it, and there we copy the world picture
+   (no HUD) and depth (fg_snapshot); MetalFX gets that and the finished frame with the HUD ("composited UI") and
+   keeps the HUD from smearing. A frame without that clear (menus, loading) is shown as is and resets MetalFX.
+   Each swap then presents the made-up frame, then the real one half a frame later: about half a frame more
+   input lag. MCMETAL_FG_FLIP=1 flips the motion's Y for MetalFX, MCMETAL_FG_NEG=1 its sign (conventions to check
+   on a real Mac). */
+#if defined(__MAC_26_0) && __MAC_OS_X_VERSION_MAX_ALLOWED >= __MAC_26_0
+#define MGL_HAVE_FRAMEGEN 1
+#endif
+
+static int fg_enabled(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        on = 0;
+#ifdef MGL_HAVE_FRAMEGEN
+        const char *e = getenv("MCMETAL_FRAMEGEN");
+        if (e && atoi(e) > 0) {
+            if (@available(macOS 26.0, *)) {
+                init_device();
+                on = [MTLFXFrameInterpolatorDescriptor supportsDevice:dev];
+                mgl_log("frame interpolation: %s", on ? "on" : "this Mac can't (MetalFX says no)");
+            } else
+                mgl_log("frame interpolation needs macOS 26");
+        }
+#else
+        if (getenv("MCMETAL_FRAMEGEN"))
+            mgl_log("frame interpolation: this build has no macOS 26 SDK");
+#endif
+    }
+    return on;
+}
+
+#ifdef MGL_HAVE_FRAMEGEN
+static struct {
+    id<MTLTexture> color[2], depth, motion, ui, out; /* color[cur] = this frame's world picture */
+    int cur, w, h;
+    MTLPixelFormat fmt;
+    uint64_t snap_frame;       /* frames_presented when the last snapshot was taken */
+    int have_prev;             /* the previous frame had a snapshot too */
+    float view[16], proj[16];  /* camera at the snapshot, for MetalFX */
+    id<MTLRenderPipelineState> mv_pipe;
+    id fi;                     /* id<MTLFXFrameInterpolator> */
+    int failed, reset;
+    double hand;
+} fg;
+
+static const char *fg_msl =
+    "#include <metal_stdlib>\nusing namespace metal;\n"
+    "struct FgU { float4x4 inv_proj, inv_view, prev_view, prev_proj; float4 cam_delta; float2 size; float hand, flip; };\n"
+    "vertex float4 fg_vs(uint v [[vertex_id]]) { float2 p = float2((v << 1) & 2, v & 2); return float4(p * 2.0 - 1.0, 0.0, 1.0); }\n"
+    "struct FgOut { float2 mv [[color(0)]]; float d [[depth(any)]]; };\n"
+    "fragment FgOut fg_fs(float4 pos [[position]], depth2d<float> dep [[texture(0)]], constant FgU &u [[buffer(0)]]) {\n"
+    "    uint2 px = uint2(pos.xy);\n"
+    "    float d = dep.read(px);\n"
+    "    FgOut o; o.d = d; o.mv = float2(0.0);\n"
+    "    if (d < u.hand) return o;\n"
+    "    float2 uv = (float2(px) + 0.5) / u.size;\n" /* texture rows are GL rows here, so uv is GL's */
+    "    float4 v = u.inv_proj * float4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);\n"
+    "    v /= v.w;\n"
+    "    float3 w = (u.inv_view * v).xyz + u.cam_delta.xyz;\n"
+    "    float4 pc = u.prev_proj * (u.prev_view * float4(w, 1.0));\n"
+    "    if (pc.w <= 0.0) return o;\n"
+    "    float2 m = (pc.xy / pc.w * 0.5 + 0.5) - uv;\n"
+    "    o.mv = float2(m.x, m.y * u.flip) * u.cam_delta.w;\n"
+    "    return o;\n"
+    "}\n";
+
+static void mat_inverse(const float *m, float *out)
+{
+    float inv[16];
+    inv[0] = m[5] * m[10] * m[15] - m[5] * m[11] * m[14] - m[9] * m[6] * m[15] + m[9] * m[7] * m[14] + m[13] * m[6] * m[11] - m[13] * m[7] * m[10];
+    inv[4] = -m[4] * m[10] * m[15] + m[4] * m[11] * m[14] + m[8] * m[6] * m[15] - m[8] * m[7] * m[14] - m[12] * m[6] * m[11] + m[12] * m[7] * m[10];
+    inv[8] = m[4] * m[9] * m[15] - m[4] * m[11] * m[13] - m[8] * m[5] * m[15] + m[8] * m[7] * m[13] + m[12] * m[5] * m[11] - m[12] * m[7] * m[9];
+    inv[12] = -m[4] * m[9] * m[14] + m[4] * m[10] * m[13] + m[8] * m[5] * m[14] - m[8] * m[6] * m[13] - m[12] * m[5] * m[10] + m[12] * m[6] * m[9];
+    inv[1] = -m[1] * m[10] * m[15] + m[1] * m[11] * m[14] + m[9] * m[2] * m[15] - m[9] * m[3] * m[14] - m[13] * m[2] * m[11] + m[13] * m[3] * m[10];
+    inv[5] = m[0] * m[10] * m[15] - m[0] * m[11] * m[14] - m[8] * m[2] * m[15] + m[8] * m[3] * m[14] + m[12] * m[2] * m[11] - m[12] * m[3] * m[10];
+    inv[9] = -m[0] * m[9] * m[15] + m[0] * m[11] * m[13] + m[8] * m[1] * m[15] - m[8] * m[3] * m[13] - m[12] * m[1] * m[11] + m[12] * m[3] * m[9];
+    inv[13] = m[0] * m[9] * m[14] - m[0] * m[10] * m[13] - m[8] * m[1] * m[14] + m[8] * m[2] * m[13] + m[12] * m[1] * m[10] - m[12] * m[2] * m[9];
+    inv[2] = m[1] * m[6] * m[15] - m[1] * m[7] * m[14] - m[5] * m[2] * m[15] + m[5] * m[3] * m[14] + m[13] * m[2] * m[7] - m[13] * m[3] * m[6];
+    inv[6] = -m[0] * m[6] * m[15] + m[0] * m[7] * m[14] + m[4] * m[2] * m[15] - m[4] * m[3] * m[14] - m[12] * m[2] * m[7] + m[12] * m[3] * m[6];
+    inv[10] = m[0] * m[5] * m[15] - m[0] * m[7] * m[13] - m[4] * m[1] * m[15] + m[4] * m[3] * m[13] + m[12] * m[1] * m[7] - m[12] * m[3] * m[5];
+    inv[14] = -m[0] * m[5] * m[14] + m[0] * m[6] * m[13] + m[4] * m[1] * m[14] - m[4] * m[2] * m[13] - m[12] * m[1] * m[6] + m[12] * m[2] * m[5];
+    inv[3] = -m[1] * m[6] * m[11] + m[1] * m[7] * m[10] + m[5] * m[2] * m[11] - m[5] * m[3] * m[10] - m[9] * m[2] * m[7] + m[9] * m[3] * m[6];
+    inv[7] = m[0] * m[6] * m[11] - m[0] * m[7] * m[10] - m[4] * m[2] * m[11] + m[4] * m[3] * m[10] + m[8] * m[2] * m[7] - m[8] * m[3] * m[6];
+    inv[11] = -m[0] * m[5] * m[11] + m[0] * m[7] * m[9] + m[4] * m[1] * m[11] - m[4] * m[3] * m[9] - m[8] * m[1] * m[7] + m[8] * m[3] * m[5];
+    inv[15] = m[0] * m[5] * m[10] - m[0] * m[6] * m[9] - m[4] * m[1] * m[10] + m[4] * m[2] * m[9] + m[8] * m[1] * m[6] - m[8] * m[2] * m[5];
+    float det = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];
+    det = det != 0 ? 1.0f / det : 0.0f;
+    for (int i = 0; i < 16; i++)
+        out[i] = inv[i] * det;
+}
+
+static id<MTLTexture> fg_texture(MTLPixelFormat pf, int w, int h, MTLTextureUsage usage)
+{
+    MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:pf width:w height:h mipmapped:NO];
+    td.usage = usage | MTLTextureUsageShaderRead;
+    td.storageMode = MTLStorageModePrivate;
+    return [dev newTextureWithDescriptor:td];
+}
+
+API_AVAILABLE(macos(26.0)) static int fg_setup(int w, int h, MTLPixelFormat fmt)
+{
+    if (fg.fi && fg.w == w && fg.h == h && fg.fmt == fmt)
+        return 1;
+    MTLFXFrameInterpolatorDescriptor *d = [[MTLFXFrameInterpolatorDescriptor alloc] init];
+    d.colorTextureFormat = fmt;
+    d.outputTextureFormat = fmt;
+    d.uiTextureFormat = fmt;
+    d.depthTextureFormat = MTLPixelFormatDepth32Float;
+    d.motionTextureFormat = MTLPixelFormatRG16Float;
+    d.inputWidth = w;
+    d.inputHeight = h;
+    d.outputWidth = w;
+    d.outputHeight = h;
+    d.requiresPrevColorTexture = YES;
+    id<MTLFXFrameInterpolator> fi = [d newFrameInterpolatorWithDevice:dev];
+    if (!fi) {
+        mgl_log("frame interpolation: MetalFX wouldn't make an interpolator for %dx%d", w, h);
+        fg.failed = 1;
+        return 0;
+    }
+    fg.fi = fi;
+    fg.w = w;
+    fg.h = h;
+    fg.fmt = fmt;
+    for (int i = 0; i < 2; i++)
+        fg.color[i] = fg_texture(fmt, w, h, fi.colorTextureUsage);
+    fg.ui = fg_texture(fmt, w, h, fi.uiTextureUsage);
+    fg.out = fg_texture(fmt, w, h, fi.outputTextureUsage | MTLTextureUsageRenderTarget);
+    fg.depth = fg_texture(MTLPixelFormatDepth32Float, w, h, fi.depthTextureUsage | MTLTextureUsageRenderTarget);
+    fg.motion = fg_texture(MTLPixelFormatRG16Float, w, h, fi.motionTextureUsage | MTLTextureUsageRenderTarget);
+    fg.have_prev = 0;
+    fg.reset = 1;
+    if (!fg.mv_pipe) {
+        NSError *e = nil;
+        id<MTLLibrary> lib = [dev newLibraryWithSource:[NSString stringWithUTF8String:fg_msl] options:nil error:&e];
+        MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
+        pd.vertexFunction = [lib newFunctionWithName:@"fg_vs"];
+        pd.fragmentFunction = [lib newFunctionWithName:@"fg_fs"];
+        pd.colorAttachments[0].pixelFormat = MTLPixelFormatRG16Float;
+        pd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+        fg.mv_pipe = lib ? [dev newRenderPipelineStateWithDescriptor:pd error:&e] : nil;
+        if (!fg.mv_pipe) {
+            mgl_log("frame interpolation: motion shader failed: %s", e.localizedDescription.UTF8String);
+            fg.failed = 1;
+            return 0;
+        }
+    }
+    const char *hand = getenv("MCMETAL_FG_HAND");
+    fg.hand = hand ? atof(hand) : 0.56;
+    mgl_log("frame interpolation: %dx%d ready", w, h);
+    return 1;
+}
+#endif
+
+static void fg_snapshot(const mgl_target *t)
+{
+#ifdef MGL_HAVE_FRAMEGEN
+    if (@available(macOS 26.0, *)) {
+        if (fg.failed || !mgl->window_color || t->width != mgl->window_color->d.width ||
+            t->height != mgl->window_color->d.height || (mgl_cam.seen & 0x3f) != 0x3f)
+            return;
+        id<MTLTexture> col = OBJ(id<MTLTexture>, t->tex[0]->mtl), dep = OBJ(id<MTLTexture>, t->depth->mtl);
+        if (!fg_setup(t->width, t->height, col.pixelFormat))
+            return;
+        if (fg.snap_frame != frames_presented + 1) { /* first snapshot this frame: use the other picture slot */
+            fg.have_prev = fg.snap_frame == frames_presented; /* the previous frame had one */
+            fg.cur ^= 1;
+        }
+        fg.snap_frame = frames_presented + 1;
+        end_encoders();
+        id<MTLBlitCommandEncoder> b = [current_cb() blitCommandEncoder];
+        [b copyFromTexture:col toTexture:fg.color[fg.cur]];
+        [b endEncoding];
+
+        struct {
+            float inv_proj[16], inv_view[16], prev_view[16], prev_proj[16];
+            float cam_delta[4];
+            float size[2], hand, flip;
+        } u;
+        mat_inverse(mgl_cam.mat[1], u.inv_proj);
+        mat_inverse(mgl_cam.mat[0], u.inv_view);
+        memcpy(u.prev_view, mgl_cam.mat[2], 64);
+        memcpy(u.prev_proj, mgl_cam.mat[3], 64);
+        for (int i = 0; i < 3; i++)
+            u.cam_delta[i] = mgl_cam.pos[0][i] - mgl_cam.pos[1][i];
+        u.cam_delta[3] = getenv("MCMETAL_FG_NEG") ? -1.0f : 1.0f;
+        u.size[0] = (float)t->width;
+        u.size[1] = (float)t->height;
+        u.hand = (float)fg.hand;
+        u.flip = getenv("MCMETAL_FG_FLIP") ? -1.0f : 1.0f;
+        memcpy(fg.view, mgl_cam.mat[0], 64);
+        memcpy(fg.proj, mgl_cam.mat[1], 64);
+
+        MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
+        rp.colorAttachments[0].texture = fg.motion;
+        rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+        rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+        rp.depthAttachment.texture = fg.depth;
+        rp.depthAttachment.loadAction = MTLLoadActionDontCare;
+        rp.depthAttachment.storeAction = MTLStoreActionStore;
+        id<MTLRenderCommandEncoder> e = [current_cb() renderCommandEncoderWithDescriptor:rp];
+        static id<MTLDepthStencilState> always;
+        if (!always) {
+            MTLDepthStencilDescriptor *dd = [[MTLDepthStencilDescriptor alloc] init];
+            dd.depthCompareFunction = MTLCompareFunctionAlways;
+            dd.depthWriteEnabled = YES;
+            always = [dev newDepthStencilStateWithDescriptor:dd];
+        }
+        [e setRenderPipelineState:fg.mv_pipe];
+        [e setDepthStencilState:always];
+        [e setFragmentTexture:dep atIndex:0];
+        [e setFragmentBytes:&u length:sizeof u atIndex:0];
+        [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+        [e endEncoding];
+    }
+#else
+    (void)t;
+#endif
+}
+
+/* The made-up frame between the last two real ones, or nil (no snapshot this frame or the last, or off). Called at
+   swap, with the finished frame (HUD included) in window_color. */
+static id<MTLTexture> fg_interpolate(double frame_s)
+{
+#ifdef MGL_HAVE_FRAMEGEN
+    if (@available(macOS 26.0, *)) {
+        if (!fg_enabled() || fg.failed || !fg.fi)
+            return nil;
+        int fresh = fg.snap_frame == frames_presented + 1;
+        if (!fresh || !fg.have_prev) {
+            fg.reset = 1;
+            return nil;
+        }
+        id<MTLTexture> win = OBJ(id<MTLTexture>, mgl->window_color->mtl);
+        if (win.pixelFormat != fg.fmt || (int)win.width != fg.w || (int)win.height != fg.h)
+            return nil;
+        id<MTLBlitCommandEncoder> b = [current_cb() blitCommandEncoder];
+        [b copyFromTexture:win toTexture:fg.ui];
+        [b endEncoding];
+        id<MTLFXFrameInterpolator> fi = fg.fi;
+        fi.colorTexture = fg.color[fg.cur];
+        fi.prevColorTexture = fg.color[fg.cur ^ 1];
+        fi.uiTexture = fg.ui;
+        fi.UITextureComposited = YES;
+        fi.depthTexture = fg.depth;
+        fi.motionTexture = fg.motion;
+        fi.outputTexture = fg.out;
+        fi.motionVectorScaleX = (float)fg.w;
+        fi.motionVectorScaleY = (float)fg.h;
+        fi.depthReversed = NO;
+        fi.deltaTime = (float)frame_s;
+        const float *p = fg.proj;
+        float fov = 2.0f * atanf(1.0f / p[5]);
+        fi.fieldOfView = fov * 180.0f / (float)M_PI;
+        fi.aspectRatio = p[5] / p[0];
+        fi.nearPlane = p[14] / (p[10] - 1.0f);
+        fi.farPlane = p[14] / (p[10] + 1.0f);
+        simd_float4x4 view, proj;
+        memcpy(&view, fg.view, 64);
+        memcpy(&proj, fg.proj, 64);
+        fi.worldToViewMatrix = view;
+        fi.viewToClipMatrix = proj;
+        fi.shouldResetHistory = fg.reset;
+        fg.reset = 0;
+        [fi encodeToCommandBuffer:current_cb()];
+        return fg.out;
+    }
+#else
+    (void)frame_s;
+#endif
+    return nil;
+}
+
 void mglb_window_size(int *w, int *h)
 {
     *w = current ? current->w : 0;
@@ -3398,6 +3689,59 @@ static void profile_frame(unsigned long draws)
     atomic_store(&prof_gpu_ns, 0);
 }
 
+static atomic_int presents_waiting; /* drawn but not yet on screen */
+
+/* Count a drawable as waiting until it is shown, and feed pacing and MGL_PRESENT_STATS its time on screen. */
+static void watch_drawable(id<CAMetalDrawable> drawable)
+{
+    [current_cb() addCompletedHandler:^(id<MTLCommandBuffer> done) {
+      (void)done;
+      atomic_fetch_add(&presents_waiting, 1);
+    }];
+    static int stats = -1;
+    if (stats < 0)
+        stats = opt_profile > 0 || opt("MGL_PRESENT_STATS");
+    [drawable addPresentedHandler:^(id<MTLDrawable> d) {
+      atomic_fetch_sub(&presents_waiting, 1);
+      static double last_shown;
+      double when = d.presentedTime;
+      if (when > 0) {
+          if (last_shown > 0)
+              pace_presented((when - last_shown) * 1000.0);
+          last_shown = when;
+      }
+      if (stats)
+          present_stat(when);
+    }];
+}
+
+/* Draw a frame (GL row order) into the drawable the right way up, through MetalFX's upscaler when that's on. */
+static void draw_to_drawable(mgl_ctx *c, id<MTLTexture> src, id<CAMetalDrawable> drawable)
+{
+    if (upscale_on()) {
+        id<MTLTexture> up = upscale(c, src, drawable.texture.width, drawable.texture.height);
+        if (up)
+            src = up;
+    }
+    MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
+    rp.colorAttachments[0].texture = drawable.texture;
+    rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+    rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+    id<MTLRenderCommandEncoder> e = [current_cb() renderCommandEncoderWithDescriptor:rp];
+    id<MTLRenderPipelineState> ps = blit_pipeline(MTLPixelFormatBGRA8Unorm);
+    if (ps) {
+        [e setRenderPipelineState:ps];
+        [e setViewport:(MTLViewport){0, 0, (double)drawable.texture.width, (double)drawable.texture.height, 0, 1}];
+        /* top of the window = last GL row */
+        float rect[4] = {0, 1, 1, 0};
+        [e setVertexBytes:rect length:sizeof rect atIndex:0];
+        [e setFragmentTexture:src atIndex:0];
+        [e setFragmentSamplerState:blit_sampler(1) atIndex:0];
+        [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    }
+    [e endEncoding];
+}
+
 /* Copy GL framebuffer 0 into the window, flipping it the right way up. */
 MGL_EXPORT void mgl_glfw_swap(void *ctx)
 {
@@ -3417,7 +3761,6 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
     static int every_frame = -1;
     if (every_frame < 0)
         every_frame = getenv("MGL_PRESENT_EVERY_FRAME") && atoi(getenv("MGL_PRESENT_EVERY_FRAME"));
-    static atomic_int presents_waiting;
     int skip = !c->vsync && !every_frame && atomic_load(&presents_waiting) >= 2;
     uint64_t t_draw = now_ns();
     id<CAMetalDrawable> drawable = skip ? nil : [c->layer nextDrawable];
@@ -3425,48 +3768,23 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
     pace_wait_ns += now_ns() - t_draw;
     prof.skipped_presents += skip;
     if (drawable) {
-        [current_cb() addCompletedHandler:^(id<MTLCommandBuffer> done) {
-          (void)done;
-          atomic_fetch_add(&presents_waiting, 1);
-        }];
-        static int stats = -1;
-        if (stats < 0)
-            stats = opt_profile > 0 || opt("MGL_PRESENT_STATS");
-        [drawable addPresentedHandler:^(id<MTLDrawable> d) {
-          atomic_fetch_sub(&presents_waiting, 1);
-          static double last_shown;
-          double when = d.presentedTime;
-          if (when > 0) {
-              if (last_shown > 0)
-                  pace_presented((when - last_shown) * 1000.0);
-              last_shown = when;
-          }
-          if (stats)
-              present_stat(when);
-        }];
-        id<MTLTexture> src = OBJ(id<MTLTexture>, mgl->window_color->mtl);
-        if (upscale_on()) {
-            id<MTLTexture> up = upscale(c, src, drawable.texture.width, drawable.texture.height);
-            if (up)
-                src = up;
-        }
-        MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
-        rp.colorAttachments[0].texture = drawable.texture;
-        rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
-        rp.colorAttachments[0].storeAction = MTLStoreActionStore;
-        id<MTLRenderCommandEncoder> e = [current_cb() renderCommandEncoderWithDescriptor:rp];
-        id<MTLRenderPipelineState> ps = blit_pipeline(MTLPixelFormatBGRA8Unorm);
-        if (ps) {
-            [e setRenderPipelineState:ps];
-            [e setViewport:(MTLViewport){0, 0, (double)drawable.texture.width, (double)drawable.texture.height, 0, 1}];
-            /* top of the window = last GL row */
-            float rect[4] = {0, 1, 1, 0};
-            [e setVertexBytes:rect length:sizeof rect atIndex:0];
-            [e setFragmentTexture:src atIndex:0];
-            [e setFragmentSamplerState:blit_sampler(1) atIndex:0];
-            [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
-        }
-        [e endEncoding];
+        watch_drawable(drawable);
+        id<MTLTexture> mid = fg_interpolate(c->avg_swap_ms * 1e-3);
+        if (mid) { /* frame interpolation: the made-up frame now, the real one half a frame after it */
+            draw_to_drawable(c, mid, drawable);
+            double half = c->avg_swap_ms * 0.5e-3;
+            [current_cb() presentDrawable:drawable afterMinimumDuration:half];
+            uint64_t t_d2 = now_ns();
+            drawable = [c->layer nextDrawable];
+            prof.wait_ns += now_ns() - t_d2;
+            pace_wait_ns += now_ns() - t_d2;
+            if (drawable) {
+                watch_drawable(drawable);
+                draw_to_drawable(c, OBJ(id<MTLTexture>, mgl->window_color->mtl), drawable);
+                [current_cb() presentDrawable:drawable afterMinimumDuration:half];
+            }
+        } else
+            draw_to_drawable(c, OBJ(id<MTLTexture>, mgl->window_color->mtl), drawable);
         uint64_t t = now_ns(), gpu = atomic_load(&pace_gpu_ns);
         if (c->last_swap_ns) {
             double cpu = (double)(t - c->last_swap_ns - (pace_wait_ns - c->last_wait_ns)) * 1e-6;
@@ -3474,10 +3792,16 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
             if (ms > 0 && ms < 250)
                 c->avg_frame_ms = c->avg_frame_ms ? c->avg_frame_ms * 0.9 + ms * 0.1 : ms;
         }
+        if (c->last_swap_ns && t > c->last_swap_ns) {
+            double iv = (double)(t - c->last_swap_ns) * 1e-6;
+            if (iv < 250)
+                c->avg_swap_ms = c->avg_swap_ms ? c->avg_swap_ms * 0.9 + iv * 0.1 : iv;
+        }
         c->last_swap_ns = t;
         c->last_wait_ns = pace_wait_ns;
         c->last_gpu_ns = gpu;
-        if (opt_pacing > 0 && c->vsync && c->avg_frame_ms > 0) {
+        if (mid || !drawable) {
+        } else if (opt_pacing > 0 && c->vsync && c->avg_frame_ms > 0) {
             int fps = choose_paced_fps(c);
             if (fps != c->paced_fps) {
                 c->paced_fps = fps;
