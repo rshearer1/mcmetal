@@ -49,7 +49,8 @@ public final class IrisMacroTransformer implements ITransformationService {
     static final class OsString implements ITransformer<MethodNode> {
         @Override
         public MethodNode transform(MethodNode m, ITransformerVotingContext ctx) {
-            if (!Boolean.getBoolean(MetalBootstrap.ACTIVE))
+            // MCMETAL_KEEP_MAC_FLAG=1: packs see a Mac as on Apple's OpenGL (same features), for like-for-like benchmarks
+            if (!Boolean.getBoolean(MetalBootstrap.ACTIVE) || System.getenv("MCMETAL_KEEP_MAC_FLAG") != null)
                 return m;
             // if (Boolean.getBoolean("mcmetal.active")) return "MC_OS_UNKNOWN";
             LabelNode original = new LabelNode();
