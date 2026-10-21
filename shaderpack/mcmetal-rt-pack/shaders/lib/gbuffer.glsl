@@ -64,6 +64,10 @@ void main() {
 #ifdef FORWARD_SHADOW
     #include "/lib/shadow.glsl"
 #endif
+#if defined WATER && defined USE_RT && defined RT_REFLECTIONS && defined FORWARD_SHADOW
+    #define WATER_RT_REFLECT
+    #include "/lib/reflect.glsl"
+#endif
 uniform sampler2D gtexture;
 in vec2 texcoord;
 in vec2 lmcoord;
@@ -122,17 +126,22 @@ void main() {
   #else
     vec3 L = lightDirection();
     #ifdef FORWARD_SHADOW
-    float sh = 0.0;
+    vec3 sh = vec3(0.0);
     if (dot(n, L) > 0.0 || mat == MAT_FOLIAGE) sh = sunShadow(playerPos, n, L, mat);
     #else
-    float sh = smoothstep(0.85, 0.97, lmcoord.y);   // particles, rain, clouds: lit where the sky is open
+    vec3 sh = vec3(smoothstep(0.85, 0.97, lmcoord.y));   // particles, rain, clouds: lit where the sky is open
     #endif
     vec3 col = albedo * surfaceLight(playerPos, n, lmcoord, ao, mat, L, sunCol, skyAmb, sh) + emission(albedo, mat);
     #ifdef WATER
-    // sky mirrored in water (ray-traced reflections replace this in step 4)
+    // reflections: a hardware ray finds what the surface mirrors (on or off screen); otherwise just the sky
     vec3 v = normalize(playerPos);
     float f = 0.02 + 0.98 * pow(1.0 - clamp(dot(-v, n), 0.0, 1.0), 5.0);
-    vec3 refl = skyColor(reflect(v, n), sunDirection()) * smoothstep(0.3, 0.9, lmcoord.y);
+    float skyOpen = smoothstep(0.3, 0.9, lmcoord.y);
+      #ifdef WATER_RT_REFLECT
+    vec3 refl = traceReflection(playerPos + n * 0.02, reflect(v, n), L, sunCol, skyAmb, sunDirection(), skyOpen);
+      #else
+    vec3 refl = skyColor(reflect(v, n), sunDirection()) * skyOpen;
+      #endif
     col = mix(col, refl, f);
     c.a = mix(c.a, 1.0, f);
     #endif

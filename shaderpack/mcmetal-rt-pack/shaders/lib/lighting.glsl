@@ -12,7 +12,7 @@ void lightColors(out vec3 sunCol, out vec3 skyAmb) {
     vec3 moon = lightTransmittance(-sunDir) * (MOON_INTENSITY * 0.2 * moonLight) * vec3(0.8, 0.9, 1.15);
     sunCol = (sun + moon) * SUN_STRENGTH;
     vec3 h = normalize(vec3(sunDir.x, 0.0, sunDir.z) + vec3(0.0001));
-    skyAmb = PI * (0.5 * skyColor(vec3(0.0, 1.0, 0.0), sunDir)
+    skyAmb = (0.5 * skyColor(vec3(0.0, 1.0, 0.0), sunDir)
                    + 0.25 * skyColor(normalize(h + vec3(0.0, 0.2, 0.0)), sunDir)
                    + 0.25 * skyColor(normalize(-h + vec3(0.0, 0.2, 0.0)), sunDir)) * SKY_LIGHT_STRENGTH;
     // rain: clouds block the sun and grey the sky
@@ -25,7 +25,7 @@ vec3 blockLightColor() { return vec3(BLOCK_LIGHT_R, BLOCK_LIGHT_G, BLOCK_LIGHT_B
 
 // Light arriving at a surface, before it's multiplied by the surface colour.
 // sh = sun shadow (1 lit, 0 shadowed); ao = vanilla corner darkening for now (ray-traced AO in step 2).
-vec3 surfaceLight(vec3 p, vec3 n, vec2 lm, float ao, int mat, vec3 L, vec3 sunCol, vec3 skyAmb, float sh) {
+vec3 surfaceLight(vec3 p, vec3 n, vec2 lm, float ao, int mat, vec3 L, vec3 sunCol, vec3 skyAmb, vec3 sh) {
     float ndl = dot(n, L);
     float diff = mat == MAT_FOLIAGE ? 0.55 + 0.45 * abs(ndl) : max(ndl, 0.0);
     vec3 direct = sunCol * diff * sh;

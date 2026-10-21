@@ -90,6 +90,14 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     ls "$G"/hs_err_pid*.log >/dev/null 2>&1 && mv "$G"/hs_err_pid*.log "$OUT/$name/"
     ls -d "$G"/crash-reports/* >/dev/null 2>&1 && cp -r "$G/crash-reports" "$OUT/$name/"
     echo "screenshots: $(ls "$OUT/$name"/shot-*.png 2>/dev/null | wc -l)"
+    # our own pack: keep the source of programs that failed to link (pack code + Iris's wrapper; skip anything with
+    # Sodium's terrain code) outside glsl/, so it lands in the uploaded artifact
+    if [ "${PACK:-}" = mcmetal-rt-pack ]; then
+        for n in $(grep -o 'link of program [0-9]*' "$OUT/$name/mgl.log" 2>/dev/null | awk '{print $4}' | sort -u); do
+            mkdir -p "$OUT/$name/failed"
+            for f in "$OUT/$name/glsl/prog$n".*; do grep -q u_RegionOffset "$f" || cp "$f" "$OUT/$name/failed/"; done
+        done
+    fi
     grep -E "GPU fault|debug:|validation|failed" "$OUT/$name/client.log" 2>/dev/null | head -10 | cut -c1-300
     grep -vE "^\s*$" "$OUT/$name/mgl.log" 2>/dev/null | sort | uniq -c | sort -rn | head -15 | cut -c1-220
     grep -E "joined the game|ERROR|Exception" "$OUT/$name/latest.log" 2>/dev/null | grep -viE "sound|openal" | head -8 | cut -c1-220

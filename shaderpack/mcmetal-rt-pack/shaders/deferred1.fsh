@@ -50,7 +50,7 @@ void main() {
         vec4 nl = texture(colortex1, texcoord);
         vec3 n = octDecode(nl.xy);
         vec3 a = toLinear(albedo.rgb);
-        float sh = 0.0;
+        vec3 sh = vec3(0.0);
         if (dot(sunCol, sunCol) > 1e-6 && (dot(n, lightDir) > 0.0 || mat == MAT_FOLIAGE))
             sh = sunShadow(p, n, lightDir, mat);
         float ao = m.g;

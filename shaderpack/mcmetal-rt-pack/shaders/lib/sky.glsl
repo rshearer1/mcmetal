@@ -55,9 +55,10 @@ vec3 lightTransmittance(vec3 lightDir) {
     return transmittance(opticalDepthTowards(ro, d, 6)) * smoothstep(-0.05, 0.06, lightDir.y);
 }
 
-// full sky (sun + moon lit air, a little airglow at night), no discs
+// full sky (sun + moon lit air, a little airglow at night), no discs. Times pi: our surfaces skip Lambert's 1/pi,
+// so the sky is scaled the same way to keep sky and ground in the right balance.
 vec3 skyColor(vec3 dir, vec3 sunDir) {
     vec3 c = atmosphere(dir, sunDir, SUN_INTENSITY);
     c += atmosphere(dir, -sunDir, MOON_INTENSITY) + vec3(0.0006, 0.0009, 0.0018);
-    return c;
+    return c * PI;
 }
