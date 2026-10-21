@@ -283,6 +283,7 @@ static spvc_bool cross_stage(mgl_xlate_result *r, int stage, const uint32_t *wor
         spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_FLIP_VERTEX_Y, SPVC_TRUE);
         spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_FIXUP_DEPTH_CONVENTION, SPVC_TRUE);
     }
+    spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_MSL_TEXTURE_1D_AS_2D, SPVC_TRUE); /* see glTexImage1D */
     /* GL lets a shader write a vec3 or float into an RGBA target; Metal needs as many components as the format */
     if (stage == MGL_FRAGMENT)
         spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_MSL_PAD_FRAGMENT_OUTPUT_COMPONENTS, SPVC_TRUE);

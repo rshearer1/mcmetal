@@ -252,7 +252,8 @@ static const void *prepare_pixels(enum mgl_format f, int w, int h, int d, GLenum
 int mgl_tex_target_index(GLenum target)
 {
     switch (target) {
-    case GL_TEXTURE_2D: return 0;
+    case GL_TEXTURE_2D:
+    case GL_TEXTURE_1D: return 0; /* 1D textures are Nx1 2D ones (shaders: SPIRV-Cross texture_1D_as_2D) */
     case GL_TEXTURE_3D: return 1;
     case GL_TEXTURE_2D_ARRAY: return 2;
     case GL_TEXTURE_CUBE_MAP: return 3;
@@ -838,4 +839,21 @@ void glBindImageTexture(GLuint unit, GLuint texture, GLint level, GLboolean laye
     mgl->images[unit].layer = layer;
     mgl->images[unit].access = access;
     mgl->images[unit].format = format;
+}
+
+/* 1D textures (Bliss's LPV block data): stored and sampled as Nx1 2D textures */
+void glTexImage1D(GLenum target, GLint level, GLint internal, GLsizei w, GLint border, GLenum format, GLenum type,
+                  const void *pixels)
+{
+    glTexImage2D(target, level, internal, w, 1, border, format, type, pixels);
+}
+
+void glTexSubImage1D(GLenum target, GLint level, GLint x, GLsizei w, GLenum format, GLenum type, const void *pixels)
+{
+    glTexSubImage2D(target, level, x, 0, w, 1, format, type, pixels);
+}
+
+void glTexStorage1D(GLenum target, GLsizei levels, GLenum internal, GLsizei w)
+{
+    glTexStorage2D(target, levels, internal, w, 1);
 }
