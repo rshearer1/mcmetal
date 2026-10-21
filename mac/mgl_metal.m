@@ -3081,15 +3081,48 @@ typedef struct mgl_ctx {
    frame cost sustains keeps every frame on screen equally long. With vsync off, pacing stays off.
    Down a rate as soon as the smoothed cost no longer fits it with 10% headroom; up only after a second of
    costs that fit the faster rate with 25% headroom, so the rate doesn't flip back and forth at a boundary. */
+/* Low Power Mode and heat (MGL_POWER_ADAPT=0 turns this off): with pacing on, cap the paced rate at 60 fps in
+   Low Power Mode or when macOS reports the Mac as seriously hot, and at 30 when critical, so the game backs off
+   evenly instead of the system throttling the GPU under it at random. Changes are logged as they happen. */
+static int power_cap_fps(void)
+{
+    static int adapt = -1, last_cap = -1;
+    if (adapt < 0) {
+        const char *e = getenv("MGL_POWER_ADAPT");
+        adapt = !e || atoi(e) != 0;
+    }
+    if (!adapt)
+        return 0;
+    static unsigned calls;
+    if (calls++ % 60) /* look about once a second */
+        return last_cap > 0 ? last_cap : 0;
+    NSProcessInfo *pi = [NSProcessInfo processInfo];
+    NSProcessInfoThermalState th = pi.thermalState;
+    BOOL low = pi.lowPowerModeEnabled;
+    int cap = th >= NSProcessInfoThermalStateCritical ? 30 : (low || th >= NSProcessInfoThermalStateSerious) ? 60 : 0;
+    if (cap != last_cap) {
+        static const char *names[] = {"nominal", "fair", "serious", "critical"};
+        mgl_log("power: Low Power Mode %s, thermal state %s, frame rate cap %s", low ? "on" : "off",
+                th >= 0 && th <= 3 ? names[th] : "?", cap ? [NSString stringWithFormat:@"%d fps", cap].UTF8String : "none");
+        last_cap = cap;
+    }
+    return cap;
+}
+
 static int choose_paced_fps(mgl_ctx *c)
 {
     static const int rates[] = {120, 60, 40, 30};
     const char *forced = getenv("MGL_TARGET_FPS");
     if (forced && atoi(forced) > 0)
         return atoi(forced);
+    int cap = power_cap_fps();
+    if (cap && c->paced_fps > cap) {
+        c->up_frames = 0;
+        return cap;
+    }
     int fit = 3;
     for (int i = 0; i < 4; i++)
-        if (c->avg_frame_ms * 1.1 <= 1000.0 / rates[i]) {
+        if (rates[i] <= (cap ? cap : 1000) && c->avg_frame_ms * 1.1 <= 1000.0 / rates[i]) {
             fit = i;
             break;
         }
@@ -3107,6 +3140,8 @@ static int choose_paced_fps(mgl_ctx *c)
             next = i;
             break;
         }
+    if (cap && rates[next] > cap)
+        return c->paced_fps;
     if (c->avg_frame_ms * 1.25 <= 1000.0 / rates[next] && ++c->up_frames >= c->paced_fps) {
         c->up_frames = 0;
         return rates[next];
