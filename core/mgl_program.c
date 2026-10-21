@@ -157,7 +157,8 @@ static void apply_job(mgl_program *p, mgl_link_job *j)
         p->linked = 0; /* Iris already saw a successful link; draws with this program are skipped */
         free(p->info_log);
         p->info_log = j->err;
-        mgl_log("Metal compile of program failed:\n%s", p->info_log);
+        mgl_log("Metal compile of program %u%s%s failed (work group %dx%dx%d):\n%s", j->name, p->debug_name[0] ? " " : "",
+                p->debug_name, p->x.local_size[0], p->x.local_size[1], p->x.local_size[2], p->info_log);
     } else {
         free(j->err);
     }
@@ -457,6 +458,8 @@ static void release_link(mgl_program *p)
         mglb_program_release(p->gpu);
     p->gpu = NULL;
     mgl_xlate_free(&p->x);
+    free(p->name_hash);
+    p->name_hash = NULL;
     for (int s = 0; s < 3; s++) {
         free(p->ublock[s]);
         p->ublock[s] = NULL;
@@ -746,6 +749,33 @@ static int parse_name(const char *name, char *base, int *element)
     return strchr(br, '.') == NULL; /* no struct members */
 }
 
+static unsigned name_hash_of(const char *s)
+{
+    unsigned h = 2166136261u; /* FNV-1a */
+    while (*s)
+        h = (h ^ (unsigned char)*s++) * 16777619u;
+    return h;
+}
+
+/* Iris and the packs ask for every uniform's location by name, again on each program reload (Complementary and
+   Rethinking Voxels: 22-26k calls a minute); a table instead of a strcmp over all of a program's uniforms. */
+static void build_name_hash(mgl_program *p)
+{
+    int n = p->x.num_uniforms + p->x.num_textures;
+    unsigned size = 16;
+    while (size < (unsigned)n * 2)
+        size <<= 1;
+    p->name_hash = calloc(size, sizeof *p->name_hash);
+    p->name_hash_mask = size - 1;
+    for (int i = 0; i < n; i++) {
+        const char *nm = i < p->x.num_uniforms ? p->x.uniforms[i].name : p->x.textures[i - p->x.num_uniforms].name;
+        unsigned h = name_hash_of(nm) & p->name_hash_mask;
+        while (p->name_hash[h])
+            h = (h + 1) & p->name_hash_mask;
+        p->name_hash[h] = i + 1;
+    }
+}
+
 GLint glGetUniformLocation(GLuint prog, const GLchar *name)
 {
     mgl_program *p = program_obj(prog);
@@ -753,12 +783,18 @@ GLint glGetUniformLocation(GLuint prog, const GLchar *name)
     int el;
     if (!p || !p->linked || !parse_name(name, base, &el))
         return -1;
-    for (int i = 0; i < p->x.num_uniforms; i++)
-        if (!strcmp(p->x.uniforms[i].name, base) && el < p->x.uniforms[i].array_size)
-            return (i << 8) | el;
-    for (int i = 0; i < p->x.num_textures; i++)
-        if (!strcmp(p->x.textures[i].name, base) && el == 0)
-            return ((p->x.num_uniforms + i) << 8);
+    if (!p->name_hash)
+        build_name_hash(p);
+    /* the first entry with this name wins, as in the uniforms-then-textures order of the old linear search */
+    for (unsigned h = name_hash_of(base) & p->name_hash_mask; p->name_hash[h]; h = (h + 1) & p->name_hash_mask) {
+        int i = p->name_hash[h] - 1;
+        if (i < p->x.num_uniforms) {
+            if (!strcmp(p->x.uniforms[i].name, base) && el < p->x.uniforms[i].array_size)
+                return (i << 8) | el;
+        } else if (!strcmp(p->x.textures[i - p->x.num_uniforms].name, base) && el == 0) {
+            return i << 8;
+        }
+    }
     return -1;
 }
 

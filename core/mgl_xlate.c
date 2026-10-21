@@ -264,6 +264,19 @@ static char *msl_dup(const char *msl, int stage)
     return out;
 }
 
+/* Whether the module declares a 1D image or sampler (OpTypeImage with Dim1D). */
+static int uses_1d_images(const uint32_t *words, size_t nwords)
+{
+    for (size_t i = 5; i < nwords;) {
+        uint32_t len = words[i] >> 16, op = words[i] & 0xffff;
+        if (!len)
+            break;
+        if (op == 25 /* OpTypeImage */ && i + 3 < nwords && words[i + 3] == 0 /* Dim1D */)
+            return 1;
+        i += len;
+    }
+    return 0;
+}
 
 static spvc_bool cross_stage(mgl_xlate_result *r, int stage, const uint32_t *words, size_t nwords, int *next_tex,
                              varying_map *vm)
@@ -290,7 +303,10 @@ static spvc_bool cross_stage(mgl_xlate_result *r, int stage, const uint32_t *wor
         spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_FLIP_VERTEX_Y, SPVC_TRUE);
         spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_FIXUP_DEPTH_CONVENTION, SPVC_TRUE);
     }
-    spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_MSL_TEXTURE_1D_AS_2D, SPVC_TRUE); /* see glTexImage1D */
+    /* see glTexImage1D; only where needed (it changes how SPIRV-Cross writes image code, and is the suspect for the one
+       Photon program Apple's compiler rejects) */
+    if (uses_1d_images(words, nwords))
+        spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_MSL_TEXTURE_1D_AS_2D, SPVC_TRUE);
     /* GL lets a shader write a vec3 or float into an RGBA target; Metal needs as many components as the format */
     if (stage == MGL_FRAGMENT)
         spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_MSL_PAD_FRAGMENT_OUTPUT_COMPONENTS, SPVC_TRUE);

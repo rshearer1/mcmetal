@@ -1098,8 +1098,12 @@ mglb_program *mglb_program_new(const char *msl_vertex, const char *msl_fragment,
                 ps = [dev newComputePipelineStateWithFunction:f error:&e];
             }
             if (!ps) {
+                /* the backend compiler's message is often just "Compilation failed": say which stage failed and
+                   pass on whatever else the error carries */
                 if (err && !*err)
-                    *err = strdup(e.localizedDescription.UTF8String);
+                    *err = strdup([NSString stringWithFormat:@"compute pipeline: %@ (code %ld) %@", e.localizedDescription,
+                                                             (long)e.code, e.userInfo ?: @{}]
+                                      .UTF8String);
                 free(p);
                 return NULL;
             }
