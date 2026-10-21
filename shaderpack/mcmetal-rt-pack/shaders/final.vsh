@@ -17,5 +17,6 @@ void main() {
     float outdoor = luma(sunCol * 0.5 + skyAmb);
     float eyeSky = float(eyeBrightnessSmooth.y) / 240.0;
     float key = mix(0.35, outdoor, eyeSky * eyeSky);   // underground: what torches give
-    exposure = clamp(0.55 / max(key, 1e-4), 0.08, 16.0) * EXPOSURE;
+    // nights stay nights: don't brighten past what a torch-lit scene needs, or every light blows out
+    exposure = 0.55 / clamp(key, 0.15, 100.0) * EXPOSURE;
 }

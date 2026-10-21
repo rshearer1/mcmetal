@@ -5,13 +5,17 @@
     #define USE_RT
 #endif
 
+#define RT_GI // ray-traced global illumination: bounce light, colour bleeding, sky light through openings
+#define RT_GI_DISTANCE 32.0 // [8.0 16.0 32.0 64.0]
 #define RT_AO // ray-traced ambient occlusion (replaces Minecraft's corner shading)
 #define RT_AO_RADIUS 1.5 // [0.75 1.0 1.5 2.0 3.0]
-#define RT_AO_FRAMES 16.0 // [4.0 8.0 16.0 32.0]
+#define RT_AO_FRAMES 24.0 // [4.0 8.0 16.0 24.0 32.0 48.0]
 
 #define COLORED_SHADOWS // sunlight through stained glass (and water) takes its colour
 #define RT_REFLECTIONS // ray-traced reflections on water and glass
 #define RT_REFLECT_DISTANCE 128.0 // [32.0 64.0 128.0 256.0]
+
+#define DEBUG_VIEW 0 // [0 1 2 3 4] 0 off, 1 sun shadow, 2 ambient occlusion, 3 global illumination, 4 normals
 
 #define EXPOSURE 1.0 // [0.25 0.35 0.5 0.7 0.85 1.0 1.2 1.4 1.7 2.0 2.5 3.0 4.0]
 #define SATURATION 1.0 // [0.0 0.5 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.5]
@@ -35,6 +39,8 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 
 // Iris only lists an on/off option in the menu if some #ifdef names it directly (#if defined doesn't count)
 #ifdef RT_AO
+#endif
+#ifdef RT_GI
 #endif
 #ifdef WATER_SHADOWS
 #endif

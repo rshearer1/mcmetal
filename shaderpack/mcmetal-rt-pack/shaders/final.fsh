@@ -14,6 +14,10 @@ layout(location = 0) out vec4 outColor;
 
 void main() {
     vec3 col = texture(colortex0, texcoord).rgb * exposure;
+#if DEBUG_VIEW > 0
+    outColor = vec4(texture(colortex0, texcoord).rgb, 1.0);   // debug views: raw values, no grading
+    return;
+#endif
     col = acesFitted(col);
     col = mix(vec3(luma(col)), col, SATURATION);
     col = clamp((col - 0.18) * CONTRAST + 0.18, 0.0, 1.0);

@@ -16,7 +16,7 @@ const vec4 colortex2ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 #include "/lib/lighting.glsl"
 #include "/lib/shadow.glsl"
 
-uniform sampler2D colortex0, colortex1, colortex2, colortex3, depthtex0;
+uniform sampler2D colortex0, colortex1, colortex2, colortex3, colortex4, depthtex0;
 
 in vec2 texcoord;
 flat in vec3 sunCol, skyAmb, lightDir, sunDir;
@@ -28,6 +28,27 @@ vec3 playerFromDepth(vec2 uv, float depth) {
     vec4 v = gbufferProjectionInverse * vec4(vec3(uv, depth) * 2.0 - 1.0, 1.0);
     return mat3(gbufferModelViewInverse) * (v.xyz / v.w) + gbufferModelViewInverse[3].xyz;
 }
+
+#if defined USE_RT && defined RT_GI
+// The averaged GI is still a little grainy: blur it over a 5x5 neighbourhood (every other pixel), but only across
+// pixels on the same surface (similar normal and distance), so it doesn't bleed over edges.
+vec3 filteredGI(vec3 n, float dist) {
+    vec2 px = 2.0 / vec2(viewWidth, viewHeight);
+    vec3 sum = vec3(0.0);
+    float wsum = 0.0;
+    for (int y = -2; y <= 2; y++)
+        for (int x = -2; x <= 2; x++) {
+            vec2 uv = texcoord + vec2(x, y) * px;
+            vec3 tn = octDecode(texture(colortex1, uv).xy);
+            float td = texture(colortex3, uv).b;
+            float w = pow(max(dot(n, tn), 0.0), 16.0) * exp(-abs(td - dist) / (0.02 * dist + 0.05))
+                    * exp(-0.15 * float(x * x + y * y));
+            sum += texture(colortex4, uv).rgb * w;
+            wsum += w;
+        }
+    return sum / max(wsum, 1e-4);
+}
+#endif
 
 void main() {
     float depth = texture(depthtex0, texcoord).r;
@@ -57,7 +78,22 @@ void main() {
 #if defined USE_RT && defined RT_AO
         ao = texture(colortex3, texcoord).r * (0.6 + 0.4 * m.g);   // keep a little of the corner shading
 #endif
+#if defined USE_RT && defined RT_GI
+        // GI brings the sky light and the bounced light, so the lightmap's sky guess is left out
+        vec3 gi = filteredGI(n, length(p));
+        col = a * (surfaceLight(p, n, nl.zw, ao, mat, lightDir, sunCol, vec3(0.0), sh) + gi) + emission(a, mat);
+#else
         col = a * surfaceLight(p, n, nl.zw, ao, mat, lightDir, sunCol, skyAmb, sh) + emission(a, mat);
+#endif
+#if DEBUG_VIEW == 1
+        col = sh * max(dot(n, lightDir), 0.0);
+#elif DEBUG_VIEW == 2
+        col = vec3(ao);
+#elif DEBUG_VIEW == 3 && defined USE_RT && defined RT_GI
+        col = gi / (gi + 1.0);
+#elif DEBUG_VIEW == 4
+        col = n * 0.5 + 0.5;
+#endif
     }
     outColor = vec4(col, 1.0);
 }
