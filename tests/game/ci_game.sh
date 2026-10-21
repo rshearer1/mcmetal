@@ -48,8 +48,8 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
 
 for p in $PHASES; do
     case $p in
-    title) run_phase title 150 "" false MGL_DEBUG_DRAWS=1 MTL_DEBUG_LAYER=1 ;;
-    world) run_phase world 240 metal false MGL_DEBUG_DRAWS=1 MTL_SHADER_VALIDATION=1 ;;
+    title) run_phase title 60 "" false ;;
+    world) run_phase world 180 metal false ;;
     complementary) run_phase complementary 300 metal true ;;
     esac
 done

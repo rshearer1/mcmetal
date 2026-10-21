@@ -906,8 +906,10 @@ static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_targ
     for (int i = 0; i < d->num_vbufs; i++) {
         MTLVertexBufferLayoutDescriptor *l = vd.layouts[MGL_BUF_VERTEX_BASE + i];
         if (k.layout[i].constant) {
-            l.stepFunction = MTLVertexStepFunctionConstant;
-            l.stepRate = 0;
+            /* one value for every vertex and instance: per-instance with a huge step rate always reads element 0.
+               (MTLVertexStepFunctionConstant hung Apple's paravirtual GPU on the star field, CI run 3/4.) */
+            l.stepFunction = MTLVertexStepFunctionPerInstance;
+            l.stepRate = 0x7FFFFFFF;
             l.stride = 16;
         } else if (k.layout[i].divisor) {
             l.stepFunction = MTLVertexStepFunctionPerInstance;
