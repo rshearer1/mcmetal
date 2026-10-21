@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
-#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi (default: the first three)
+#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off (default: the first three)
 # WORK holds the game install (cacheable), OUT gets screenshots and logs. Needs Java 21 as `java` or $JAVA.
 set -uo pipefail
 SRC=$(cd "$(dirname "$0")/../.." && pwd)
@@ -111,6 +111,7 @@ scene() { # time [weather [stage]]: copy the test datapack into the world; it bu
     printf 'time set %s\nweather %s 100000\n' "$1" "${2:-clear}" > "$f/time.mcfunction"
     echo "function mcm:${3:-scene}" > "$f/build.mcfunction"
     [ "${3:-scene}" = showcase ] && echo 'tp @s ~ ~ ~ -90 0' > "$f/look.mcfunction"
+    [ "${3:-scene}" = room ] && echo 'tp @s ~ ~ ~ -90 12' > "$f/look.mcfunction"
     [ -n "${GAME_LOOK:-}" ] && echo "tp @s ~ ~ ~ $GAME_LOOK" > "$f/look.mcfunction" # GAME_LOOK="yaw pitch"
     return 0
 }
@@ -158,6 +159,11 @@ for p in $PHASES; do
     ours-shadow|ours-ao|ours-gi) scene 1500; v=${p#ours-}; v=$( [ $v = shadow ] && echo 1 || ([ $v = ao ] && echo 2 || echo 3))
         echo "DEBUG_VIEW=$v" > "$G/shaderpacks/mcmetal-rt-pack.txt"; PACK=mcmetal-rt-pack run_phase $p 180 metal true
         rm -f "$G/shaderpacks/mcmetal-rt-pack.txt" ;;  # debug views of the rays
+    ours-room) scene noon clear room; PACK=mcmetal-rt-pack run_phase ours-room 180 metal true ;;  # GI test room
+    ours-room-gi) scene noon clear room; echo "DEBUG_VIEW=3" > "$G/shaderpacks/mcmetal-rt-pack.txt"
+        PACK=mcmetal-rt-pack run_phase ours-room-gi 180 metal true; rm -f "$G/shaderpacks/mcmetal-rt-pack.txt" ;;
+    ours-room-off) scene noon clear room; echo "RT_GI=false" > "$G/shaderpacks/mcmetal-rt-pack.txt"
+        PACK=mcmetal-rt-pack run_phase ours-room-off 180 metal true; rm -f "$G/shaderpacks/mcmetal-rt-pack.txt" ;;  # GI off
     ours-gl) scene 1500; PACK=mcmetal-rt-pack run_phase ours-gl 180 metal true MCMETAL_DISABLE=1 ;; # shadow-map fallback on Apple GL
     esac
 done

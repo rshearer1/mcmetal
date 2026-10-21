@@ -14,9 +14,11 @@ const vec4 colortex2ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 #include "/lib/uniforms.glsl"
 #include "/lib/sky.glsl"
 #include "/lib/lighting.glsl"
-#include "/lib/shadow.glsl"
+#ifndef USE_RT
+    #include "/lib/shadow.glsl"   // the ray-traced shadow comes from deferred.fsh
+#endif
 
-uniform sampler2D colortex0, colortex1, colortex2, colortex3, colortex4, depthtex0;
+uniform sampler2D colortex0, colortex1, colortex2, colortex3, colortex4, colortex5, depthtex0;
 
 in vec2 texcoord;
 flat in vec3 sunCol, skyAmb, lightDir, sunDir;
@@ -72,8 +74,12 @@ void main() {
         vec3 n = octDecode(nl.xy);
         vec3 a = toLinear(albedo.rgb);
         vec3 sh = vec3(0.0);
+#ifdef USE_RT
+        sh = mat == MAT_HAND ? vec3(1.0) : texture(colortex5, texcoord).rgb;   // traced and averaged in deferred.fsh
+#else
         if (dot(sunCol, sunCol) > 1e-6 && (dot(n, lightDir) > 0.0 || mat == MAT_FOLIAGE))
             sh = sunShadow(p, n, lightDir, mat);
+#endif
         float ao = m.g;
 #if defined USE_RT && defined RT_AO
         ao = texture(colortex3, texcoord).r * (0.6 + 0.4 * m.g);   // keep a little of the corner shading
