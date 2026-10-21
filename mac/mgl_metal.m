@@ -1719,7 +1719,7 @@ static id<MTLRenderCommandEncoder> pass_for(const mgl_target *t)
     return begin_pass(t, 0, NULL, 0, 0);
 }
 
-/* MGL_SMART_LOAD=1: a new pass whose first draw is a full-screen triangle or quad that overwrites a colour
+/* MGL_SMART_LOAD (on by default, =0 turns it off): a new pass whose first draw is a full-screen triangle or quad that overwrites a colour
    attachment (no blending, all channels written, no discard, no scissor) doesn't load that attachment's old
    contents from memory first. Shader packs' composite passes are made of these; on Apple GPUs each load reads
    the whole image into tile memory. */
@@ -1730,7 +1730,7 @@ static id<MTLRenderCommandEncoder> pass_for_draw(const mgl_draw *d)
     if (renc && same_target(t, &renc_target))
         return renc;
     if (opt_smart_load == ~0u)
-        opt_smart_load = opt("MGL_SMART_LOAD");
+        opt_smart_load = !getenv("MGL_SMART_LOAD") || opt("MGL_SMART_LOAD"); /* on unless MGL_SMART_LOAD=0 */
     unsigned overwrite = 0;
     if (opt_smart_load && d->instances <= 1 && d->count <= 6 && !d->multi_n && !d->program->discards &&
         (!d->depth_test || !t->depth) &&
