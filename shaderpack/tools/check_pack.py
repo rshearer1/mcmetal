@@ -2,7 +2,7 @@
 """Compile every program of the pack with glslangValidator, the way Iris + mcmetal would see it.
 Resolves /lib includes, adds the Iris macros we use and, for the RT variant, mcmetal's mcm_trace injection
 (copied from core/mgl_program.c). Usage: check_pack.py <pack>/shaders"""
-import pathlib, re, subprocess, sys, tempfile
+import os, pathlib, re, subprocess, sys, tempfile
 
 root = pathlib.Path(sys.argv[1])
 mgl = (pathlib.Path(__file__).resolve().parents[2] / "core/mgl_program.c").read_text()
@@ -46,7 +46,7 @@ for f in sorted(root.glob("*.[vf]sh")):
             # Iris turns compatibility shaders into core ones before mcmetal; our fragment shaders use no compat built-ins
             with open(t.name, "w") as w:
                 w.write(pre)
-            args = ["glslangValidator", "--target-env", "vulkan1.2", "-R", "--auto-map-locations", "--auto-map-bindings", t.name]
+            args = ["glslangValidator", "--target-env", "vulkan1.2", "-R", "--auto-map-locations", "--auto-map-bindings", "-o", os.devnull, t.name]
         else:
             args = ["glslangValidator", t.name]
         r = subprocess.run(args, capture_output=True, text=True)
