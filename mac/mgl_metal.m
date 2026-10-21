@@ -890,9 +890,12 @@ static id<MTLFunction> compile_fn_lib(const char *msl, NSString *what, char **er
         math = m && !strcmp(m, "safe") ? 0 : m && !strcmp(m, "fast") ? 2 : 1;
         mgl_log("shader maths: %s", math == 0 ? "safe" : math == 2 ? "fast" : "relaxed");
     }
-    if (@available(macOS 15.0, *))
+    if (@available(macOS 15.0, *)) {
         o.mathMode = math == 0 ? MTLMathModeSafe : math == 2 ? MTLMathModeFast : MTLMathModeRelaxed;
-    else
+        /* sin/cos/pow etc. stay precise except in fast mode: packs hash with fract(sin(x) * 43758.5) on large x,
+           and the fast sin there gave SEUS PTGI streaky noise across the sky and a stripe down the screen */
+        o.mathFloatingPointFunctions = math == 2 ? MTLMathFloatingPointFunctionsFast : MTLMathFloatingPointFunctionsPrecise;
+    } else
         o.fastMathEnabled = math > 0;
     id<MTLLibrary> lib = [dev newLibraryWithSource:[NSString stringWithUTF8String:msl] options:o error:&e];
     if (!lib) {
