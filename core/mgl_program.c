@@ -247,6 +247,7 @@ GLboolean glIsShader(GLuint name) { return shader_obj(name) != NULL; }
 
 /* Hardware ray tracing for shader packs (step 2). A pack declares the prototype
        float mcm_trace(vec3 origin, vec3 dir, float tmax);   // distance to the first block hit, or -1
+       float mcm_trace_cut(vec3 origin, vec3 dir, float tmax, out uint cut); // same; cut = the hit's alpha cutoff (0 = solid)
    in plain GLSL (so Iris's own parser accepts it) and calls it; origin/dir are in Iris's player space
    (camera-relative world space). We supply the body with a GL_EXT_ray_query against the terrain scene. */
 static void add_ray_tracing(mgl_shader *s)
@@ -268,22 +269,24 @@ static void add_ray_tracing(mgl_shader *s)
                                "layout(std430, binding = 15) readonly buffer McmInstances { McmTris mcm_tris[]; };\n"
                                "uniform sampler2D mcm_atlas;\n";
     static const char body[] =
-        "\nfloat mcm_trace(vec3 origin, vec3 dir, float tmax) {\n"
+        "\nfloat mcm_trace_cut(vec3 origin, vec3 dir, float tmax, out uint cut_out) {\n"
         "  rayQueryEXT q;\n"
         "  rayQueryInitializeEXT(q, mcm_scene, gl_RayFlagsTerminateOnFirstHitEXT, 0x01, origin, 0.001, dir, tmax);\n"
+        "  cut_out = 0u;\n"
         "  while (rayQueryProceedEXT(q)) {\n"
         "    McmTris t = mcm_tris[rayQueryGetIntersectionInstanceIdEXT(q, false)];\n"
         "    uint base = uint(rayQueryGetIntersectionPrimitiveIndexEXT(q, false)) * 4u;\n"
         "    uint cut = t.w[base + 3u];\n"
-        "    if (cut == 0u) { rayQueryConfirmIntersectionEXT(q); continue; }\n"
+        "    if (cut == 0u) { cut_out = 0u; rayQueryConfirmIntersectionEXT(q); continue; }\n"
         "    vec2 b = rayQueryGetIntersectionBarycentricsEXT(q, false);\n"
         "    vec2 uv = (unpackUnorm2x16(t.w[base]) * (1.0 - b.x - b.y) + unpackUnorm2x16(t.w[base + 1u]) * b.x\n"
         "             + unpackUnorm2x16(t.w[base + 2u]) * b.y) * (65535.0 / 32768.0);\n"
-        "    if (textureLod(mcm_atlas, uv, 0.0).a >= (cut == 3u ? 1.0 : 0.1)) rayQueryConfirmIntersectionEXT(q);\n"
+        "    if (textureLod(mcm_atlas, uv, 0.0).a >= (cut == 3u ? 1.0 : 0.1)) { cut_out = cut; rayQueryConfirmIntersectionEXT(q); }\n"
         "  }\n"
         "  return rayQueryGetIntersectionTypeEXT(q, true) != gl_RayQueryCommittedIntersectionNoneEXT\n"
         "      ? rayQueryGetIntersectionTEXT(q, true) : -1.0;\n"
-        "}\n";
+        "}\n"
+        "float mcm_trace(vec3 origin, vec3 dir, float tmax) { uint c; return mcm_trace_cut(origin, dir, tmax, c); }\n";
     size_t pre = (size_t)(v - s->source), rest = strlen(eol + 1);
     char *n = malloc(pre + sizeof head + rest + sizeof body);
     memcpy(n, s->source, pre);

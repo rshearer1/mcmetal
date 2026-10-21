@@ -102,6 +102,7 @@ scene() { # time [weather [stage]]: copy the test datapack into the world; it bu
     local f="$G/saves/metal/datapacks/mcm-scene/data/mcm/function"
     printf 'time set %s\nweather %s 100000\n' "$1" "${2:-clear}" > "$f/time.mcfunction"
     echo "function mcm:${3:-scene}" > "$f/build.mcfunction"
+    [ "${3:-scene}" = showcase ] && echo 'tp @s ~ ~ ~ -90 0' > "$f/look.mcfunction"
 }
 
 act() { # on|off|showcase: Complementary's options. ACT ships off; "on" = 128, the size the inventory was taken at;
