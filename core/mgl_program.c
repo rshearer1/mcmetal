@@ -806,6 +806,8 @@ static void build_name_hash(mgl_program *p)
     while (size < (unsigned)n * 2)
         size <<= 1;
     p->name_hash = calloc(size, sizeof *p->name_hash);
+    if (!p->name_hash)
+        return;
     p->name_hash_mask = size - 1;
     for (int i = 0; i < n; i++) {
         const char *nm = i < p->x.num_uniforms ? p->x.uniforms[i].name : p->x.textures[i - p->x.num_uniforms].name;
@@ -825,6 +827,8 @@ GLint glGetUniformLocation(GLuint prog, const GLchar *name)
         return -1;
     if (!p->name_hash)
         build_name_hash(p);
+    if (!p->name_hash)
+        return -1;
     /* the first entry with this name wins, as in the uniforms-then-textures order of the old linear search */
     for (unsigned h = name_hash_of(base) & p->name_hash_mask; p->name_hash[h]; h = (h + 1) & p->name_hash_mask) {
         int i = p->name_hash[h] - 1;

@@ -68,10 +68,14 @@ jobs:
         run: system_profiler SPDisplaysDataType || true
       - name: Pick game phases
         id: plan
+        env:
+          PHASES: ${{ github.event.inputs.phases }}
+          EVENT: ${{ github.event_name }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
-          phases="${{ github.event.inputs.phases }}"
+          phases="$PHASES"
           [ -n "$phases" ] || phases="title world complementary"
-          if [ "${{ github.event_name }}" = push ] && grep -q '\[no game\]' <<< "${{ github.event.head_commit.message }}"; then phases=""; fi
+          if [ "$EVENT" = push ] && grep -q '\[no game\]' <<< "$COMMIT_MSG"; then phases=""; fi
           echo "phases=$(printf '%s\n' $phases | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().split()))')" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
@@ -117,7 +121,14 @@ jobs:
           path: ~/mcgame
           key: mc-1.21.1-neoforge-21.1.259-sodium-iris-v1
       - name: Real game on mcmetal (screenshots)
-        run: GAME_BENCH="${{ github.event.inputs.bench }}" GAME_BENCH_SETTLE="${{ github.event.inputs.settle || 10 }}" GAME_LONG="${{ github.event.inputs.long }}" GAME_ENV="${{ github.event.inputs.env }}" bash tests/game/ci_game.sh ~/mcgame game-out ${{ matrix.phase }}
+        # inputs reach the script as environment variables, never pasted into the shell text
+        env:
+          GAME_BENCH: ${{ github.event.inputs.bench }}
+          GAME_BENCH_SETTLE: ${{ github.event.inputs.settle || 10 }}
+          GAME_LONG: ${{ github.event.inputs.long }}
+          GAME_ENV: ${{ github.event.inputs.env }}
+          PHASE: ${{ matrix.phase }}
+        run: bash tests/game/ci_game.sh ~/mcgame game-out "$PHASE"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
