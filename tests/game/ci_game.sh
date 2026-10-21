@@ -224,6 +224,7 @@ for p in $PHASES; do
     ours-lights) scene midnight clear showcase; PACK_OPTS="DEBUG_VIEW=3 ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-lights 180 metal true ;;  # GI view: coloured block light + bounce
     ours-pool-night) scene midnight; PACK=mcmetal-rt-pack run_phase ours-pool-night 180 metal true ;;  # torches, soul and redstone lights by the pool
     ours-shafts) scene noon clear room; PACK_OPTS="DEBUG_VIEW=5 ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-shafts 180 metal true ;;  # light shafts only
+    ours-sky) GAME_LOOK="-60 -25" scene 2000; PACK=mcmetal-rt-pack run_phase ours-sky 180 metal true ;;  # clouds
     ours-gl) scene 1500; PACK=mcmetal-rt-pack run_phase ours-gl 180 metal true MCMETAL_DISABLE=1 ;; # shadow-map fallback on Apple GL
     pack-*|packnight-*) third_party "$p" ;; # compatibility sweep: pack-photon, packnight-bsl, pack-complementary+euphoria, ...
     esac
