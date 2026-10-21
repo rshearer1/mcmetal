@@ -38,7 +38,8 @@ static id<MTLComputeCommandEncoder> cenc;
    MGL_BINARY_ARCHIVE=1   keep finished GPU pipelines in MGL_CACHE_DIR/pipelines.metallib across launches
    MGL_ASYNC_PIPELINES=1  build a new pipeline in the background and skip its draws until ready (no hitch,
                           an object may be missing for a frame or two the first time it is seen)
-   MGL_FRAME_PACING=1     wait on completion signals instead of polling, and present at an even rate
+   MGL_FRAME_PACING=0     ON BY DEFAULT (M3: SEUS 47 fps with ~75% judder -> an even 40, plain world even 120);
+                          =0 turns it off. Waits on completion signals instead of polling, and presents at an even rate
                           (120/60/40/30 fps, whichever the last frames' cost sustains; MGL_TARGET_FPS forces one).
                           Only with vsync on. MGL_PRESENT_STATS=1 logs how evenly frames reach the screen. */
 static int opt(const char *name)
@@ -222,7 +223,7 @@ static void read_options(void)
         return;
     opt_archive = opt("MGL_BINARY_ARCHIVE") && getenv("MGL_CACHE_DIR");
     opt_async_pipes = opt("MGL_ASYNC_PIPELINES");
-    opt_pacing = opt("MGL_FRAME_PACING");
+    opt_pacing = getenv("MGL_FRAME_PACING") ? opt("MGL_FRAME_PACING") : 1; /* on unless MGL_FRAME_PACING=0 */
     opt_profile = getenv("MGL_PROFILE") ? atoi(getenv("MGL_PROFILE")) : 0;
     if (opt_archive || opt_async_pipes || opt_pacing)
         mgl_log("options: binary archive %d, async pipelines %d, frame pacing %d", opt_archive, opt_async_pipes, opt_pacing);
@@ -3081,7 +3082,6 @@ typedef struct mgl_ctx {
     uint64_t last_wait_ns, last_gpu_ns;
     int paced_fps;
     uint64_t window_start_ns, stepped_up_ns, no_up_until_ns; /* see choose_paced_fps */
-    double avg_swap_ms;     /* smoothed time between swaps (real frames), for frame interpolation */
     uint64_t grace_until_ns;
     int bad_windows, blocked_fps;
     unsigned up_backoff_s;
@@ -3783,10 +3783,14 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
     prof.skipped_presents += skip;
     if (drawable) {
         watch_drawable(drawable);
-        id<MTLTexture> mid = fg_interpolate(c->avg_swap_ms * 1e-3);
-        if (mid) { /* frame interpolation: the made-up frame now, the real one half a frame after it */
+        /* Frame interpolation: the made-up frame, then the real one half a frame after it. "A frame" is the cost of
+           one (CPU work or GPU time), not the time between swaps: that includes waiting for these presents, so
+           it would grow with every slow frame and hold the game back further each time (measured: 10 fps). */
+        double frame_s = c->avg_frame_ms > 0 ? c->avg_frame_ms * 1e-3 : 1.0 / 60;
+        id<MTLTexture> mid = fg_interpolate(frame_s);
+        if (mid) {
             draw_to_drawable(c, mid, drawable);
-            double half = c->avg_swap_ms * 0.5e-3;
+            double half = frame_s * 0.5 > 1.0 / 120 ? frame_s * 0.5 : 1.0 / 120;
             [current_cb() presentDrawable:drawable afterMinimumDuration:half];
             uint64_t t_d2 = now_ns();
             drawable = [c->layer nextDrawable];
@@ -3805,11 +3809,6 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
             double gms = (double)(gpu - c->last_gpu_ns) * 1e-6, ms = cpu > gms ? cpu : gms;
             if (ms > 0 && ms < 250)
                 c->avg_frame_ms = c->avg_frame_ms ? c->avg_frame_ms * 0.9 + ms * 0.1 : ms;
-        }
-        if (c->last_swap_ns && t > c->last_swap_ns) {
-            double iv = (double)(t - c->last_swap_ns) * 1e-6;
-            if (iv < 250)
-                c->avg_swap_ms = c->avg_swap_ms ? c->avg_swap_ms * 0.9 + iv * 0.1 : iv;
         }
         c->last_swap_ns = t;
         c->last_wait_ns = pace_wait_ns;
