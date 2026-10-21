@@ -50,11 +50,20 @@ void mgl_table_remove(mgl_table *t, GLuint name)
     }
 }
 
+static void set_blend_i(mgl_state *s, int i, GLenum src_rgb, GLenum dst_rgb, GLenum src_a, GLenum dst_a, GLenum eq_rgb,
+                        GLenum eq_a)
+{
+    GLenum *f = s->blend_fn_i[i];
+    f[0] = src_rgb, f[1] = dst_rgb, f[2] = src_a, f[3] = dst_a, f[4] = eq_rgb, f[5] = eq_a;
+}
+
 void mgl_state_init(mgl_state *s)
 {
     s->blend_src_rgb = s->blend_src_a = GL_ONE;
     s->blend_dst_rgb = s->blend_dst_a = GL_ZERO;
     s->blend_eq_rgb = s->blend_eq_a = GL_FUNC_ADD;
+    for (int i = 0; i < 8; i++)
+        set_blend_i(s, i, GL_ONE, GL_ZERO, GL_ONE, GL_ZERO, GL_FUNC_ADD, GL_FUNC_ADD);
     s->depth_func = GL_LESS;
     s->cull_face = GL_BACK;
     s->front_face = GL_CCW;
@@ -134,8 +143,7 @@ GLboolean glIsEnabled(GLenum cap)
 
 void glBlendFunc(GLenum sfactor, GLenum dfactor)
 {
-    mgl->blend_src_rgb = mgl->blend_src_a = sfactor;
-    mgl->blend_dst_rgb = mgl->blend_dst_a = dfactor;
+    glBlendFuncSeparate(sfactor, dfactor, sfactor, dfactor);
 }
 
 void glBlendFuncSeparate(GLenum src_rgb, GLenum dst_rgb, GLenum src_a, GLenum dst_a)
@@ -144,18 +152,48 @@ void glBlendFuncSeparate(GLenum src_rgb, GLenum dst_rgb, GLenum src_a, GLenum ds
     mgl->blend_dst_rgb = dst_rgb;
     mgl->blend_src_a = src_a;
     mgl->blend_dst_a = dst_a;
+    for (int i = 0; i < 8; i++)
+        set_blend_i(mgl, i, src_rgb, dst_rgb, src_a, dst_a, mgl->blend_fn_i[i][4], mgl->blend_fn_i[i][5]);
 }
 
 void glBlendEquation(GLenum mode)
 {
-    mgl->blend_eq_rgb = mgl->blend_eq_a = mode;
+    glBlendEquationSeparate(mode, mode);
 }
 
 void glBlendEquationSeparate(GLenum rgb, GLenum alpha)
 {
     mgl->blend_eq_rgb = rgb;
     mgl->blend_eq_a = alpha;
+    for (int i = 0; i < 8; i++)
+        mgl->blend_fn_i[i][4] = rgb, mgl->blend_fn_i[i][5] = alpha;
 }
+
+/* Per draw buffer blending (GL 4.0 / ARB_draw_buffers_blend). Iris sets it for packs' blend.<program>.<buffer>
+   overrides, and calls the ARB names (Photon). */
+void glBlendFuncSeparatei(GLuint buf, GLenum src_rgb, GLenum dst_rgb, GLenum src_a, GLenum dst_a)
+{
+    if (buf < 8)
+        set_blend_i(mgl, (int)buf, src_rgb, dst_rgb, src_a, dst_a, mgl->blend_fn_i[buf][4], mgl->blend_fn_i[buf][5]);
+}
+
+void glBlendFunci(GLuint buf, GLenum src, GLenum dst) { glBlendFuncSeparatei(buf, src, dst, src, dst); }
+
+void glBlendEquationSeparatei(GLuint buf, GLenum rgb, GLenum alpha)
+{
+    if (buf < 8)
+        mgl->blend_fn_i[buf][4] = rgb, mgl->blend_fn_i[buf][5] = alpha;
+}
+
+void glBlendEquationi(GLuint buf, GLenum mode) { glBlendEquationSeparatei(buf, mode, mode); }
+
+GLAPI void glBlendFuncSeparateiARB(GLuint buf, GLenum src_rgb, GLenum dst_rgb, GLenum src_a, GLenum dst_a)
+{
+    glBlendFuncSeparatei(buf, src_rgb, dst_rgb, src_a, dst_a);
+}
+GLAPI void glBlendFunciARB(GLuint buf, GLenum src, GLenum dst) { glBlendFunci(buf, src, dst); }
+GLAPI void glBlendEquationSeparateiARB(GLuint buf, GLenum rgb, GLenum alpha) { glBlendEquationSeparatei(buf, rgb, alpha); }
+GLAPI void glBlendEquationiARB(GLuint buf, GLenum mode) { glBlendEquationi(buf, mode); }
 
 void glDepthFunc(GLenum func) { mgl->depth_func = func; }
 void glDepthMask(GLboolean flag) { mgl->depth_mask = flag; }

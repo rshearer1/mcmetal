@@ -229,12 +229,13 @@ static int build_draw(mgl_draw *d)
     for (int i = 0; i < MGL_MAX_ATTACHMENTS; i++) {
         mgl_blend *b = &d->blend[i];
         b->enabled = i < 8 ? mgl->blend_i[i] : mgl->blend;
-        b->src_rgb = (int)mgl->blend_src_rgb;
-        b->dst_rgb = (int)mgl->blend_dst_rgb;
-        b->src_a = (int)mgl->blend_src_a;
-        b->dst_a = (int)mgl->blend_dst_a;
-        b->eq_rgb = (int)mgl->blend_eq_rgb;
-        b->eq_a = (int)mgl->blend_eq_a;
+        const GLenum *f = mgl->blend_fn_i[i < 8 ? i : 0];
+        b->src_rgb = (int)f[0];
+        b->dst_rgb = (int)f[1];
+        b->src_a = (int)f[2];
+        b->dst_a = (int)f[3];
+        b->eq_rgb = (int)f[4];
+        b->eq_a = (int)f[5];
         b->color_mask = cm;
     }
     d->depth_test = mgl->depth_test;
@@ -526,6 +527,7 @@ void glDispatchCompute(GLuint gx, GLuint gy, GLuint gz)
 }
 
 void glMemoryBarrier(GLbitfield barriers) { mglb_memory_barrier(); }
+GLAPI void glMemoryBarrierEXT(GLbitfield barriers) { mglb_memory_barrier(); }
 void glMemoryBarrierByRegion(GLbitfield barriers) { mglb_memory_barrier(); }
 void glTextureBarrier(void) { mglb_memory_barrier(); }
 

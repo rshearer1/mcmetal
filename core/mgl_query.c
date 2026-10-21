@@ -10,6 +10,8 @@ static const char *const extensions[] = {
     "GL_ARB_direct_state_access",
     "GL_ARB_multi_draw_indirect",
     "GL_ARB_shader_image_load_store",
+    "GL_EXT_shader_image_load_store", /* Bliss gates its LPV coloured light on MC_GL_EXT_shader_image_load_store */
+    "GL_ARB_draw_buffers_blend",
     "GL_ARB_texture_storage",
     "GL_ARB_sampler_objects",
     "GL_ARB_copy_image",
