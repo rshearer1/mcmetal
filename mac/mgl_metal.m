@@ -3788,6 +3788,8 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
            it would grow with every slow frame and hold the game back further each time (measured: 10 fps). */
         double frame_s = c->avg_frame_ms > 0 ? c->avg_frame_ms * 1e-3 : 1.0 / 60;
         id<MTLTexture> mid = fg_interpolate(frame_s);
+        if (mid && getenv("MCMETAL_FG_NO_PRESENT")) /* test: make the extra frame but don't show it (its GPU cost alone) */
+            mid = nil;
         if (mid) {
             draw_to_drawable(c, mid, drawable);
             double half = frame_s * 0.5 > 1.0 / 120 ? frame_s * 0.5 : 1.0 / 120;
