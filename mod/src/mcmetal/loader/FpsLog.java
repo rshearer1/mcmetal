@@ -3,11 +3,21 @@ package mcmetal.loader;
 import java.lang.reflect.Method;
 
 /**
- * MCMETAL_FPS_LOG=1: prints Minecraft's own frame counter ("[mcmetal] fps 143") every 5 seconds, whichever OpenGL
+ * MCMETAL_FPS_LOG=1: prints Minecraft's own frame counter ("[mcmetal] fps 143") every 5 seconds (MCMETAL_FPS_EVERY=n: every n seconds), whichever OpenGL
  * is in use, so Apple's OpenGL and mcmetal can be compared in the same scene. Reads Minecraft.getInstance().getFps()
  * through the render thread's class loader once the game has started; never touches the game otherwise.
  */
 final class FpsLog {
+    private static final long EVERY_MS = everyMs();
+
+    private static long everyMs() {
+        try {
+            return Math.max(1, Long.parseLong(System.getenv().getOrDefault("MCMETAL_FPS_EVERY", "5"))) * 1000;
+        } catch (NumberFormatException e) {
+            return 5000;
+        }
+    }
+
     private FpsLog() {
     }
 
@@ -35,7 +45,7 @@ final class FpsLog {
                 }
             }
             while (true) {
-                Thread.sleep(5000);
+                Thread.sleep(EVERY_MS);
                 Object mc = getInstance.invoke(null);
                 if (mc != null)
                     MetalBootstrap.log("fps " + getFps.invoke(mc));
