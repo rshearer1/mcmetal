@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
-#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night (default: the first three)
+#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act (default: the first three)
 # WORK holds the game install (cacheable), OUT gets screenshots and logs. Needs Java 21 as `java` or $JAVA.
 set -uo pipefail
 SRC=$(cd "$(dirname "$0")/../.." && pwd)
@@ -63,7 +63,13 @@ scene() { # time: copy the test scene datapack (pool, waterfall, lights) into th
     echo "time set $1" > "$G/saves/metal/datapacks/mcm-scene/data/mcm/function/time.mcfunction"
 }
 
+act() { # on|off: Complementary's Advanced Colour Tracing (ships off; 128 = the size the inventory was taken at)
+    local f="$G/shaderpacks/ComplementaryReimagined_r5.9.3.zip.txt"
+    if [ "$1" = on ]; then echo "COLORED_LIGHTING=128" > "$f"; else rm -f "$f"; fi
+}
+
 for p in $PHASES; do
+    act off
     case $p in
     title) run_phase title 60 "" false ;;
     world) run_phase world 180 metal false
@@ -76,6 +82,7 @@ for p in $PHASES; do
     complementary) run_phase complementary 300 metal true ;;
     water) scene noon; run_phase water 150 metal false ;;                  # Sodium water, glass, waterfall
     water-shaders) scene noon; run_phase water-shaders 240 metal true ;;  # Complementary water + reflections
-    night) scene midnight; run_phase night 240 metal true ;;             # Complementary ACT coloured light
+    night) scene midnight; run_phase night 240 metal true ;;             # Complementary at night, ACT off (as shipped)
+    night-act) scene midnight; act on; run_phase night-act 240 metal true ;;  # ACT coloured light (voxel images from vertex shaders)
     esac
 done
