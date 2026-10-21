@@ -248,9 +248,11 @@ int main(void)
         "in vec4 v_Color;\nin vec2 v_TexCoord;\nin float v_FragDistance;\nflat in uint v_Material;\n"
         "uniform sampler2D u_BlockTex;\nuniform vec4 u_FogColor;\nuniform float u_FogStart;\nuniform float u_FogEnd;\n"
         "out vec4 fragColor;\n"
+        "const float[4] ALPHA_CUTOFF = float[4](0.0, 0.1, 0.1, 1.0);\n"
         "void main() {\n"
         "  float bias = ((v_Material & 1u) != 0u) ? 0.0 : -16.0;\n"
         "  vec4 c = texture(u_BlockTex, v_TexCoord, bias) * v_Color;\n"
+        "  if (c.a < ALPHA_CUTOFF[(v_Material >> 1u) & 3u]) discard;\n"
         "  if (v_FragDistance > u_FogStart) c.rgb = mix(c.rgb, u_FogColor.rgb, smoothstep(u_FogStart, u_FogEnd, v_FragDistance));\n"
         "  fragColor = c;\n"
         "}\n", NULL);
@@ -461,6 +463,48 @@ int main(void)
         char what[160];
         snprintf(what, sizeof what, "game terrain draw replayed: %s (centre pixel %08x)", vname[variant], px[32 * 64 + 32]);
         check(near(px[32 * 64 + 32], rgba(255, 128, 0, 255)), what);
+    }
+
+    /* 9. Sodium's cutout pass: material bits pick an alpha cutoff from a constant array, so a fully transparent
+       texel must be discarded with material 5 (cutoff 0.1) and kept with material 1 (cutoff 0). */
+    for (int variant = 0; variant < 2; variant++) {
+        unsigned char clear_px[16 * 16 * 4];
+        for (int i = 0; i < 16 * 16; i++) {
+            clear_px[4 * i] = clear_px[4 * i + 1] = clear_px[4 * i + 2] = 255;
+            clear_px[4 * i + 3] = 0;
+        }
+        GLuint ctex;
+        glGenTextures(1, &ctex);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, ctex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 16, 16, 0, GL_RGBA, GL_UNSIGNED_BYTE, clear_px);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, white[1]);
+        for (int i = 0; i < 4; i++)
+            tv[4 + i].light[2] = variant == 0 ? 5 : 1;
+        glBindVertexArray(tvao);
+        glBindBuffer(GL_ARRAY_BUFFER, tbuf[0]);
+        glBufferData(GL_ARRAY_BUFFER, sizeof tv, tv, GL_STATIC_DRAW);
+        glUseProgram(terrain);
+        glUniformMatrix4fv(glGetUniformLocation(terrain, "u_ProjectionMatrix"), 1, GL_FALSE, ident);
+        glUniformMatrix4fv(glGetUniformLocation(terrain, "u_ModelViewMatrix"), 1, GL_FALSE, ident);
+        glUniform3f(glGetUniformLocation(terrain, "u_RegionOffset"), 0, 0, 0);
+        glUniform2f(glGetUniformLocation(terrain, "u_TexCoordShrink"), 0, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glClearColor(0, 0, 1, 1);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glDrawElementsBaseVertex(GL_TRIANGLES, 6, GL_UNSIGNED_INT, (void *)16, 4);
+        glFinish();
+        glActiveTexture(GL_TEXTURE0);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glBindVertexArray(vao);
+        read_texture(rb, tex, ssbo, px);
+        char what[160];
+        snprintf(what, sizeof what, "cutout material %d: transparent texel %s (centre pixel %08x)", variant == 0 ? 5 : 1,
+                 variant == 0 ? "discarded" : "kept", px[32 * 64 + 32]);
+        check(variant == 0 ? near(px[32 * 64 + 32], rgba(0, 0, 255, 255)) : near(px[32 * 64 + 32], rgba(255, 128, 0, 0)), what);
     }
 
     /* 5. hardware ray tracing: a shader using mcm_trace must compile on Metal (no scene bound: no hits) */
