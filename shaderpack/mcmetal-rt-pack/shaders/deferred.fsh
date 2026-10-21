@@ -3,6 +3,7 @@
 // The ray leaves in a random direction over the surface (more often near the normal: cosine weighting). If it
 // escapes, it brings sky light; if it hits a block, that block's own light (sun with a shadow ray, sky, torches,
 // glow) times its colour comes back: bounce light and colour bleeding. The hit distance also gives the AO.
+// With mcmetal's light list, the direct light of nearby light blocks is added here too (lib/lights.glsl).
 // Each pixel keeps a running average over the last frames, carried along as the camera moves.
 // Runs at GI_SCALE resolution (shaders.properties scale.deferred): its pixels fill the lower-left part of the buffers.
 /*
@@ -20,6 +21,7 @@ const bool colortex4Clear = false;
     #include "/lib/shadow.glsl"
     #include "/lib/reflect.glsl"
 #endif
+#include "/lib/lights.glsl"
 
 uniform sampler2D colortex1, colortex2, colortex3, colortex4, depthtex0;
 uniform mat4 gbufferPreviousModelView, gbufferPreviousProjection;
@@ -61,6 +63,12 @@ void main() {
     // white-balances indoors); Sky Light scales it like it scales the sky ambient
     if (hit < 0.0) gi = mix(vec3(luma(gi)), gi, SKY_GI_SATURATION) * SKY_LIGHT_STRENGTH;
     gi = min(gi, vec3(16.0));   // one lucky ray into the sun-lit sky must not leave a bright speck
+    #ifdef USE_LIGHTS
+    // coloured block light: one nearby light per pixel and frame, averaged and filtered along with the GI
+    gi += min(coloredBlockLight(p, n, mat, ign(gl_FragCoord.xy + vec2(5.0, 37.0), frameCounter * 11 + 4),
+                                ign(gl_FragCoord.xy + vec2(61.0, 3.0), frameCounter * 13 + 5),
+                                ign(gl_FragCoord.xy + vec2(23.0, 83.0), frameCounter * 17 + 6)), vec3(32.0));
+    #endif
   #else
     hit = mcm_trace(o, d, RT_AO_RADIUS);
   #endif

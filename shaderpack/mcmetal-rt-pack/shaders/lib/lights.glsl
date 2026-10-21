@@ -1,7 +1,7 @@
 // Coloured block light with real rays: mcmetal keeps a list of the light blocks near the camera (block ids 10100-10299
 // from block.properties); each pixel picks one nearby light per frame, weighted by how much it could add, and
-// traces a shadow ray to a random point inside it. Averaged over frames (deferred1.fsh) that is every nearby light,
-// each with its own colour and soft shadow. Fragment shaders only. Needs settings, common, uniforms.
+// traces a shadow ray to a random point inside it. Averaged over frames with the GI (deferred.fsh) that is every
+// nearby light, each with its own colour and soft shadow. Fragment shaders only. Needs settings, common, uniforms.
 
 // the light's colour (linear) and vanilla light level, by block id
 vec3 lightColorOf(int id, out float level) {
@@ -35,7 +35,8 @@ vec3 lightColorOf(int id, out float level) {
 int mcm_lights_near(vec3 p, int slot, out vec3 pos, out int blockId);
 float mcm_trace(vec3 origin, vec3 dir, float tmax);
 
-// unshadowed light from one light block: inverse square, faded out where vanilla's light would end
+// unshadowed light from one light block: about inverse square (softened near the block), faded out where vanilla's
+// light would end; at 1-5 blocks about as bright as vanilla's full block light
 vec3 lightFrom(vec3 p, vec3 n, int mat, vec3 lp, int id, out vec3 dir, out float dist) {
     float level;
     vec3 c = lightColorOf(id, level);
@@ -44,7 +45,7 @@ vec3 lightFrom(vec3 p, vec3 n, int mat, vec3 lp, int id, out vec3 dir, out float
     dir = d / max(dist, 1e-4);
     float ndl = mat == MAT_FOLIAGE ? 0.6 : max(dot(n, dir), 0.0);
     float fade = clamp(1.0 - dist / level, 0.0, 1.0);
-    return c * (level / 15.0) * ndl * fade * fade * 2.4 / (dist * dist + 1.0);
+    return c * (level / 15.0) * ndl * fade * fade * 4.0 / (0.25 * dist * dist + 1.0);
 }
 
 // one sample of all nearby lights: pick a light in proportion to its unshadowed light, trace its shadow, divide by

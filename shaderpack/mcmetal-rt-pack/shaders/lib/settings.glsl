@@ -5,10 +5,6 @@
 #define RT_MODE 1 // [0 1 2] 0 = shadow map only, 1 = hardware ray tracing when mcmetal provides it, 2 = always ray tracing
 #if RT_MODE == 2 || (RT_MODE == 1 && defined MCMETAL_RT)
     #define USE_RT
-    // coloured block light needs mcmetal's list of nearby light blocks (mcm_lights_near)
-    #if defined MCMETAL_LIGHTS && defined COLORED_LIGHT
-        #define USE_LIGHTS
-    #endif
 #endif
 
 #define RT_GI // ray-traced global illumination: bounce light, colour bleeding, sky light through openings
@@ -17,6 +13,10 @@
     #define GI_SCALE 0.5
 #else
     #define GI_SCALE 1.0
+#endif
+#if defined USE_RT && defined RT_GI && defined MCMETAL_LIGHTS && defined COLORED_LIGHT
+    // coloured block light needs mcmetal's list of nearby light blocks (mcm_lights_near); it's traced with the GI
+    #define USE_LIGHTS
 #endif
 #define RT_GI_DISTANCE 32.0 // [8.0 16.0 32.0 64.0]
 #define RT_AO // ray-traced ambient occlusion (replaces Minecraft's corner shading)
@@ -31,7 +31,7 @@
 #define WAVE_HEIGHT 1.0 // [0.0 0.5 1.0 1.5 2.0 3.0]
 #define WAVE_SPEED 1.0 // [0.5 1.0 1.5 2.0]
 
-#define DEBUG_VIEW 0 // [0 1 2 3 4 5] 0 off, 1 sun shadow, 2 ambient occlusion, 3 global illumination, 4 normals, 5 coloured block light
+#define DEBUG_VIEW 0 // [0 1 2 3 4] 0 off, 1 sun shadow, 2 ambient occlusion, 3 global illumination (with coloured block light), 4 normals
 
 #define EXPOSURE 1.0 // [0.25 0.35 0.5 0.7 0.85 1.0 1.2 1.4 1.7 2.0 2.5 3.0 4.0]
 #define AUTO_EXPOSURE 1.0 // [0.0 0.25 0.5 0.75 1.0] how much brightness adapts to what you look at (0 = time of day only)
