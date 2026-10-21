@@ -56,6 +56,20 @@ i = i.replace("        [NSApp setActivationPolicy:NSApplicationActivationPolicyR
               "                                                       reason:@\"mcmetal test run\"] retain];\n", 1)
 open(g + "/cocoa_init.m", "w").write(i)
 PY
+# MCMETAL_RETINA=0: on a Retina screen the game renders at the window's point size instead of 2x
+# and the layer scales it up, about 4x fewer pixels for heavy shader packs.
+grep -q MCMETAL_RETINA $G/cocoa_window.m || python3 - "$G" <<'PY'
+import sys
+g = sys.argv[1]
+w = open(g + "/cocoa_window.m").read()
+w = w.replace("[window->ns.view convertRectToBacking:contentRect]",
+              "(window->ns.scaleFramebuffer ? [window->ns.view convertRectToBacking:contentRect] : contentRect)")
+w = w.replace("    window->ns.scaleFramebuffer = wndconfig->scaleFramebuffer;\n",
+              "    window->ns.scaleFramebuffer = wndconfig->scaleFramebuffer;\n"
+              "    const char* retina = getenv(\"MCMETAL_RETINA\");\n"
+              "    if (retina && !strcmp(retina, \"0\")) window->ns.scaleFramebuffer = GLFW_FALSE;\n", 1)
+open(g + "/cocoa_window.m", "w").write(w)
+PY
 GLFW_SRC=(context.c init.c input.c monitor.c platform.c vulkan.c window.c egl_context.c osmesa_context.c
           null_init.c null_monitor.c null_window.c null_joystick.c cocoa_time.c posix_module.c posix_thread.c
           cocoa_init.m cocoa_joystick.m cocoa_monitor.m cocoa_window.m nsgl_context.m)
