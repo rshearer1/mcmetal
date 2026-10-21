@@ -1,0 +1,146 @@
+// One template for every gbuffers program. Each program file sets a few defines, then includes this:
+//   VSH / FSH       which stage
+//   OPAQUE          writes the G-buffer (albedo, normal + lightmap, material); lit later in deferred
+//   FORWARD         lit right here in HDR (translucent things drawn after deferred), RENDERTARGETS 0
+//   UNLIT           FORWARD without lighting: glowing overlays (spider eyes, enchant glint, beacon beam)
+//   TERRAIN         reads mc_Entity (block ids from block.properties) and separate AO
+//   WATER           water and other translucent blocks: sky reflection on water
+//   STARS_ONLY      gbuffers_skybasic: drop vanilla's sky colour, keep the stars (with MATERIAL MAT_SKY)
+//   NO_TEXTURE      gbuffers_basic and the like: vertex colour only
+//   MATERIAL        material id when TERRAIN doesn't decide it (default MAT_NONE)
+//   TRACE_SHADOW    FORWARD non-terrain programs that still cast a shadow ray (translucent entities, held glass)
+//   KEEP_MATERIAL   FORWARD programs that may run before deferred (clouds): also mark the pixel already lit
+#include "/lib/settings.glsl"
+#include "/lib/common.glsl"
+#include "/lib/uniforms.glsl"
+#if defined FORWARD && !defined UNLIT
+    #include "/lib/sky.glsl"
+    #include "/lib/lighting.glsl"
+#endif
+#ifndef MATERIAL
+    #define MATERIAL MAT_NONE
+#endif
+
+#ifdef VSH
+out vec2 texcoord;
+out vec2 lmcoord;
+out vec4 tint;
+out vec3 normalW;
+out vec3 playerPos;
+flat out int mat;
+#if defined FORWARD && !defined UNLIT
+flat out vec3 sunCol, skyAmb;
+#endif
+#ifdef TERRAIN
+in vec4 mc_Entity;
+#endif
+
+void main() {
+    gl_Position = ftransform();
+    texcoord = (gl_TextureMatrix[0] * gl_MultiTexCoord0).xy;
+    lmcoord = clamp(((gl_TextureMatrix[1] * gl_MultiTexCoord1).xy * 16.0 - 0.5) / 15.0, 0.0, 1.0);
+    tint = gl_Color;
+    vec3 viewPos = (gl_ModelViewMatrix * gl_Vertex).xyz;
+    playerPos = mat3(gbufferModelViewInverse) * viewPos + gbufferModelViewInverse[3].xyz;
+    normalW = mat3(gbufferModelViewInverse) * normalize(gl_NormalMatrix * gl_Normal);
+    mat = MATERIAL;
+#ifdef TERRAIN
+    int id = int(mc_Entity.x + 0.5);
+    if (id == 10001) mat = MAT_FOLIAGE;
+    else if (id == 10003) mat = MAT_EMISSIVE;
+    else if (id == 10004) mat = MAT_GLOW;
+#endif
+#if defined FORWARD && !defined UNLIT
+    lightColors(sunCol, skyAmb);
+#endif
+}
+#endif
+
+#if defined FORWARD && !defined UNLIT && defined WATER_SHADOWS && (defined TERRAIN || defined TRACE_SHADOW)
+    #define FORWARD_SHADOW
+#endif
+
+#ifdef FSH
+#ifdef FORWARD_SHADOW
+    #include "/lib/shadow.glsl"
+#endif
+uniform sampler2D gtexture;
+in vec2 texcoord;
+in vec2 lmcoord;
+in vec4 tint;
+in vec3 normalW;
+in vec3 playerPos;
+flat in int mat;
+#if defined FORWARD && !defined UNLIT
+flat in vec3 sunCol, skyAmb;
+#endif
+
+#if defined OPAQUE
+/* RENDERTARGETS: 0,1,2 */
+layout(location = 0) out vec4 outAlbedo;
+layout(location = 1) out vec4 outNormalLight;
+layout(location = 2) out vec4 outMaterial;
+#elif defined KEEP_MATERIAL
+/* RENDERTARGETS: 0,2 */
+layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outMaterial;
+#else
+/* RENDERTARGETS: 0 */
+layout(location = 0) out vec4 outColor;
+#endif
+
+void main() {
+#ifdef NO_TEXTURE
+    vec4 c = tint;
+#else
+    vec4 c = texture(gtexture, texcoord) * tint;
+#endif
+    float ao = 1.0;
+#ifdef TERRAIN
+    // Iris separateAo: vertex alpha is the corner darkening, the texture alpha is the real alpha
+    ao = tint.a;
+    c.a = texture(gtexture, texcoord).a;
+#endif
+#ifdef STARS_ONLY
+    // gbuffers_skybasic: keep only the stars; the sky colour itself is ours (deferred)
+    if (renderStage != MC_RENDER_STAGE_STARS) discard;
+#endif
+    if (c.a < 0.1) discard;
+    c.rgb = mix(c.rgb, entityColor.rgb, entityColor.a);   // red hurt flash on mobs
+
+    vec3 n = normalize(normalW);
+    if (!gl_FrontFacing) n = -n;
+
+#if defined OPAQUE
+    outAlbedo = vec4(c.rgb, 1.0);
+    outNormalLight = vec4(octEncode(n), lmcoord);
+    outMaterial = vec4(float(mat) / 255.0, ao, 0.0, 1.0);
+#else
+    vec3 albedo = toLinear(c.rgb);
+  #ifdef UNLIT
+    vec3 col = albedo * 2.0;
+  #else
+    vec3 L = lightDirection();
+    #ifdef FORWARD_SHADOW
+    float sh = 0.0;
+    if (dot(n, L) > 0.0 || mat == MAT_FOLIAGE) sh = sunShadow(playerPos, n, L, mat);
+    #else
+    float sh = smoothstep(0.85, 0.97, lmcoord.y);   // particles, rain, clouds: lit where the sky is open
+    #endif
+    vec3 col = albedo * surfaceLight(playerPos, n, lmcoord, ao, mat, L, sunCol, skyAmb, sh) + emission(albedo, mat);
+    #ifdef WATER
+    // sky mirrored in water (ray-traced reflections replace this in step 4)
+    vec3 v = normalize(playerPos);
+    float f = 0.02 + 0.98 * pow(1.0 - clamp(dot(-v, n), 0.0, 1.0), 5.0);
+    vec3 refl = skyColor(reflect(v, n), sunDirection()) * smoothstep(0.3, 0.9, lmcoord.y);
+    col = mix(col, refl, f);
+    c.a = mix(c.a, 1.0, f);
+    #endif
+  #endif
+    outColor = vec4(col, c.a);
+  #ifdef KEEP_MATERIAL
+    outMaterial = vec4(float(MAT_LIT) / 255.0, 1.0, 0.0, 1.0);
+  #endif
+#endif
+}
+#endif
