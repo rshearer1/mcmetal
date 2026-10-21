@@ -6,7 +6,6 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <MetalFX/MetalFX.h>
-#import <objc/message.h>
 #include <ctype.h>
 #include <math.h>
 #include <stdatomic.h>
@@ -3610,14 +3609,7 @@ static id<MTLTexture> fg_interpolate(double frame_s)
         fi.colorTexture = fg.color[fg.cur];
         fi.prevColorTexture = fg.color[fg.cur ^ 1];
         fi.uiTexture = fg.ui;
-        /* "the colour texture has the HUD in it"; named differently across macOS 26 SDKs */
-        for (int i = 0; i < 2; i++) {
-            SEL sel = NSSelectorFromString(i ? @"setIsUITextureComposited:" : @"setUITextureComposited:");
-            if ([fi respondsToSelector:sel]) {
-                ((void (*)(id, SEL, BOOL))objc_msgSend)(fi, sel, YES);
-                break;
-            }
-        }
+        fi.uiTextureComposited = YES; /* the colour texture has the HUD in it */
         fi.depthTexture = fg.depth;
         fi.motionTexture = fg.motion;
         fi.outputTexture = fg.out;
