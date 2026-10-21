@@ -172,19 +172,23 @@ int mgl_write_png(const char *path, const unsigned char *rgba, int w, int h)
 }
 
 /* MGL_SHOT_DIR=dir: save the window every MGL_SHOT_EVERY seconds (default 10) as dir/shot-NNN.png.
-   Called by the backend just before it presents a frame. */
+   MGL_SHOT_EVERY=0: only when the file dir/shoot appears (it is then deleted), so benchmarks aren't
+   interrupted: each shot waits for the GPU. Called by the backend just before it presents a frame. */
 void mgl_shot_tick(void)
 {
     static const char *dir;
     static int init, n;
     static double every, next;
+    static char trigger[1024];
     if (!init) {
         init = 1;
         dir = getenv("MGL_SHOT_DIR");
         const char *e = getenv("MGL_SHOT_EVERY");
         every = e ? atof(e) : 10;
-        if (every <= 0)
+        if (every < 0)
             every = 10;
+        if (dir)
+            snprintf(trigger, sizeof trigger, "%s/shoot", dir);
     }
     if (!dir || !*dir || !mgl->window_color)
         return;
@@ -195,7 +199,13 @@ void mgl_shot_tick(void)
         next = now + 2; /* first one shortly after the first frame */
     if (now < next)
         return;
-    next = now + every;
+    if (every == 0) { /* on demand: look for the trigger file twice a second */
+        next = now + 0.5;
+        if (remove(trigger) != 0)
+            return;
+    } else {
+        next = now + every;
+    }
     int w = mgl->window_w, h = mgl->window_h;
     unsigned char *px = malloc((size_t)w * (size_t)h * 4);
     if (!px)
