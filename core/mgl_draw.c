@@ -527,6 +527,7 @@ void glDispatchCompute(GLuint gx, GLuint gy, GLuint gz)
 }
 
 void glMemoryBarrier(GLbitfield barriers) { mglb_memory_barrier(); }
+GLAPI void glMemoryBarrierEXT(GLbitfield barriers) { mglb_memory_barrier(); }
 void glMemoryBarrierByRegion(GLbitfield barriers) { mglb_memory_barrier(); }
 void glTextureBarrier(void) { mglb_memory_barrier(); }
 

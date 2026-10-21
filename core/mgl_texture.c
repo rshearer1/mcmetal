@@ -839,3 +839,10 @@ void glBindImageTexture(GLuint unit, GLuint texture, GLint level, GLboolean laye
     mgl->images[unit].access = access;
     mgl->images[unit].format = format;
 }
+
+/* EXT_shader_image_load_store names (we advertise it: Bliss turns on its coloured light only when it's there) */
+GLAPI void glBindImageTextureEXT(GLuint unit, GLuint texture, GLint level, GLboolean layered, GLint layer, GLenum access,
+                                 GLint format)
+{
+    glBindImageTexture(unit, texture, level, layered, layer, access, (GLenum)format);
+}
