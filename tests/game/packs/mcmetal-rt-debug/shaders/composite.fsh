@@ -43,7 +43,7 @@ void main() {
         return;
     }
     if (texcoord.y < 0.3 && texcoord.x > 0.6) {           // bottom right: the picture as the rays see it
-        vec4 view = gbufferProjectionInverse * vec4(vec3(texcoord, 1.0) * 2.0 - 1.0, 1.0);
+        vec4 view = gbufferProjectionInverse * vec4(vec3(texcoord, 0.5) * 2.0 - 1.0, 1.0); // a point on the pixel's ray (the far plane can be at infinity)
         vec3 dir = normalize(mat3(gbufferModelViewInverse) * (view.xyz / view.w));
         vec3 nrm; vec4 alb; vec2 lm; int id;
         float t = mcm_trace_hit(vec3(0.0), dir, 256.0, nrm, alb, lm, id);
