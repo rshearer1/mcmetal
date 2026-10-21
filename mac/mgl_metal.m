@@ -471,7 +471,35 @@ struct mglb_program {
     void *vfn, *ffn;
     void *compute;   /* MTLComputePipelineState */
     uint32_t id;
+    char label[48];  /* "GL program N", for error reports */
 };
+
+void mglb_program_label(mglb_program *p, const char *label)
+{
+    if (p)
+        snprintf(p->label, sizeof p->label, "%s", label);
+}
+
+/* MGL_DEBUG_DRAWS=1: finish the GPU after every draw and dispatch, and name the first one that faults.
+   Very slow; for finding which program hangs or crashes the GPU. */
+static void debug_sync(const char *what, const mgl_draw *d, long a, long b)
+{
+    static int on = -1, reported;
+    if (on < 0)
+        on = opt("MGL_DEBUG_DRAWS");
+    if (!on || reported)
+        return;
+    commit();
+    [last_cb waitUntilCompleted];
+    if (last_cb.error) {
+        reported = 1;
+        mgl_log("GPU fault in %s with %s (count/groups %ld, %ld; instances %d; index type 0x%x; multi %d; %d vertex buffers; "
+                "target %dx%d): %s", what, d->program && d->program->label[0] ? d->program->label : "unlabelled program", a, b,
+                d->instances, d->index_type, d->multi_n, d->num_vbufs, d->target.width, d->target.height,
+                last_cb.error.localizedDescription.UTF8String);
+    }
+}
+
 
 static id<MTLFunction> compile_fn(const char *msl, NSString *what, char **err)
 {
@@ -1412,6 +1440,7 @@ void mglb_draw(const mgl_draw *d)
         [e drawPrimitives:pt vertexStart:(NSUInteger)d->first vertexCount:(NSUInteger)d->count
             instanceCount:(NSUInteger)d->instances];
     }
+    debug_sync("draw", d, d->count, d->first);
 }
 
 void mglb_dispatch(const mgl_draw *d, int gx, int gy, int gz)
@@ -1427,6 +1456,7 @@ void mglb_dispatch(const mgl_draw *d, int gx, int gy, int gz)
                              (NSUInteger)(d->local_size[1] > 0 ? d->local_size[1] : 1),
                              (NSUInteger)(d->local_size[2] > 0 ? d->local_size[2] : 1));
     [c dispatchThreadgroups:MTLSizeMake((NSUInteger)gx, (NSUInteger)gy, (NSUInteger)gz) threadsPerThreadgroup:tg];
+    debug_sync("dispatch", d, (long)gx * gy * gz, 0);
 }
 
 /* Geometry-shader emulation (mgl_gs.c). The compute stage gets: 21 attribute descriptors, 22..25 raw vertex
@@ -1531,7 +1561,7 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
     use_buffer(ov);
     use_buffer(oc);
     mglb_buffer_release(ov);
-    mglb_buffer_release(oc);
+    mglb_buffer_release(oc);    debug_sync("geometry-shader draw", d, triangles, max_vertices);
 }
 
 /* ================================================================ ray tracing (step 2) */

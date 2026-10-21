@@ -316,6 +316,19 @@ static int build_draw(mgl_draw *d)
                     d->attrs[loc].offset = 16;
                 }
         }
+    /* Metal reads ints only into int inputs and unsigned only into uint (GL converts freely): make the vertex format
+       follow the shader's signedness. Iris feeds its ivec3 iris_Entity from GL_UNSIGNED_SHORT data, for example. */
+    for (int i = 0; i < p->x.num_attribs; i++) {
+        int loc = p->x.attribs[i].location, k = p->x.attribs[i].is_int;
+        if (!k || loc < 0 || loc >= MGL_MAX_VERTEX_ATTRIBS || !d->attrs[loc].enabled)
+            continue;
+        mgl_vertex_attr *o = &d->attrs[loc];
+        o->integer = 1;
+        o->normalized = 0;
+        static const enum mgl_vtype as_signed[] = {MGLV_INT, MGLV_INT, MGLV_BYTE, MGLV_BYTE, MGLV_SHORT, MGLV_SHORT, MGLV_INT, MGLV_INT};
+        static const enum mgl_vtype as_unsigned[] = {MGLV_UINT, MGLV_UINT, MGLV_UBYTE, MGLV_UBYTE, MGLV_USHORT, MGLV_USHORT, MGLV_UINT, MGLV_UINT};
+        o->type = k == 2 ? as_unsigned[o->type] : as_signed[o->type];
+    }
 
     gather_uniforms(d, p);
     d->uses_scene = p->x.uses_scene;

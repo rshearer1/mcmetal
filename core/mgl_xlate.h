@@ -52,7 +52,7 @@ typedef struct mgl_attrib {
     char name[96];
     int location;
     int vecsize;
-    int is_int;             /* ivec/uvec input: must use glVertexAttribIPointer formats */
+    int is_int;             /* 1 ivec, 2 uvec input: must use integer vertex formats of that signedness */
 } mgl_attrib;
 
 typedef struct mgl_frag_out {

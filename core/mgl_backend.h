@@ -51,6 +51,7 @@ void mglb_texture_copy(mglb_texture *src, int src_level, int sx, int sy, int sz,
 /* msl: per stage MSL source (NULL if absent), entry point "main0". Returns NULL and fills *err on failure. */
 mglb_program *mglb_program_new(const char *msl_vertex, const char *msl_fragment, const char *msl_compute, char **err);
 void mglb_program_release(mglb_program *p);
+void mglb_program_label(mglb_program *p, const char *label); /* shown in GPU error reports */
 
 /* ---- render state for one draw ---- */
 #define MGL_MAX_ATTACHMENTS 8

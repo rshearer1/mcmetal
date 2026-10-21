@@ -778,7 +778,7 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
             snprintf(r->attribs[i].name, sizeof r->attribs[i].name, "%s", attrs[i].name);
             r->attribs[i].location = attrs[i].location;
             r->attribs[i].vecsize = attrs[i].comps;
-            r->attribs[i].is_int = attrs[i].is_int || attrs[i].is_uint;
+            r->attribs[i].is_int = attrs[i].is_uint ? 2 : attrs[i].is_int ? 1 : 0;
         }
     }
 out:

@@ -315,7 +315,7 @@ static spvc_bool cross_stage(mgl_xlate_result *r, int stage, const uint32_t *wor
             a->location = (int)spvc_compiler_get_decoration(comp, list[i].id, SpvDecorationLocation);
             a->vecsize = (int)spvc_type_get_vector_size(t);
             spvc_basetype bt = spvc_type_get_basetype(t);
-            a->is_int = bt == SPVC_BASETYPE_INT32 || bt == SPVC_BASETYPE_UINT32;
+            a->is_int = bt == SPVC_BASETYPE_INT32 ? 1 : bt == SPVC_BASETYPE_UINT32 ? 2 : 0;
         }
     }
     if (stage == MGL_FRAGMENT) {

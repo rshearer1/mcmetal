@@ -24,6 +24,7 @@ typedef struct mgl_link_job {
     int store;                  /* write the cache entry once MSL exists */
     mglb_program *gpu;
     char *err;
+    GLuint name;
     int done;
 } mgl_link_job;
 
@@ -141,6 +142,11 @@ static void apply_job(mgl_program *p, mgl_link_job *j)
         p->x.msl[s] = j->msl[s];
     }
     p->gpu = j->gpu;
+    if (p->gpu) {
+        char label[48];
+        snprintf(label, sizeof label, "GL program %u", j->name);
+        mglb_program_label(p->gpu, label);
+    }
     if (!p->gpu) {
         p->linked = 0; /* Iris already saw a successful link; draws with this program are skipped */
         free(p->info_log);
@@ -546,6 +552,7 @@ void glLinkProgram(GLuint prog)
     j->x = &p->x;
     memcpy(j->key, key, sizeof key);
     j->store = keyed && !cached;
+    j->name = prog;
     for (int s = 0; s < 3; s++)
         if (p->x.default_block_size[s])
             p->ublock[s] = calloc(1, (size_t)p->x.default_block_size[s]);

@@ -47,6 +47,7 @@ mglb_program *mglb_program_new(const char *v, const char *f, const char *c, char
     return calloc(1, sizeof(mglb_program));
 }
 void mglb_program_release(mglb_program *p) { free(p); }
+void mglb_program_label(mglb_program *p, const char *label) {}
 
 void mglb_draw(const mgl_draw *d) { draws += d->multi_n > 0 ? (unsigned long)d->multi_n : 1; }
 void mglb_dispatch(const mgl_draw *d, int gx, int gy, int gz) { dispatches++; }
