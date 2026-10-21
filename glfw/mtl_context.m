@@ -2,7 +2,8 @@
 // mcmetal: drop-in replacement for GLFW 3.4 src/nsgl_context.m.
 // Instead of an NSOpenGLContext, GLFW puts a CAMetalLayer on the content view
 // and hands it to libmcmetal, which is the "OpenGL context".
-// libmcmetal is found via $MCMETAL_LIB (full path to libmcmetal.dylib).
+// libmcmetal is found via $MCMETAL_LIB (full path to libmcmetal.dylib), else next to this libglfw.dylib
+// (how the mcmetal mod ships them: both unpacked into one folder).
 // Based on GLFW 3.4 (zlib licence, Copyright (c) 2009-2019 Camilla Löwy).
 //========================================================================
 
@@ -13,6 +14,8 @@
 #include <dlfcn.h>
 #import <QuartzCore/CAMetalLayer.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
 
 // GLFW's Cocoa code sends -update to context.nsgl.object in several places, so the slot must
 // hold an Objective-C object. This box carries the libmcmetal context pointer.
@@ -80,10 +83,20 @@ GLFWbool _glfwInitNSGL(void)
         return GLFW_TRUE;
 
     const char* path = getenv("MCMETAL_LIB");
+    char beside[4096];
     if (!path)
     {
-        _glfwInputError(GLFW_API_UNAVAILABLE, "mcmetal: MCMETAL_LIB is not set");
-        return GLFW_FALSE;
+        Dl_info info;
+        const char* slash;
+        if (!dladdr((const void*) _glfwInitNSGL, &info) || !info.dli_fname ||
+            !(slash = strrchr(info.dli_fname, '/')) ||
+            (size_t) (slash - info.dli_fname) + sizeof("/libmcmetal.dylib") > sizeof(beside))
+        {
+            _glfwInputError(GLFW_API_UNAVAILABLE, "mcmetal: MCMETAL_LIB is not set and libglfw's own path is unknown");
+            return GLFW_FALSE;
+        }
+        snprintf(beside, sizeof(beside), "%.*s/libmcmetal.dylib", (int) (slash - info.dli_fname), info.dli_fname);
+        path = beside;
     }
 
     mgl_lib = dlopen(path, RTLD_NOW | RTLD_GLOBAL);

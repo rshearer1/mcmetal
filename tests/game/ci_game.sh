@@ -14,6 +14,15 @@ G=$WORK/game
 mkdir -p "$G/config" "$G/saves"
 cp "$SRC/tests/game/options.txt" "$G/options.txt"
 rm -rf "$G/saves/metal" && tar xzf "$SRC/tests/game/world-metal.tgz" -C "$G/saves"
+# The game loads mcmetal the way players will: through the mod jar in mods/, no JVM arguments.
+# GAME_JVM_ARGS=true uses the old -Dorg.lwjgl.*.libname route instead.
+rm -f "$G/mods/mcmetal.jar"
+if [ "${GAME_JVM_ARGS:-}" = true ]; then
+    LIBARGS=(--gl "$SRC/build/libmcmetal.dylib" --glfw "$SRC/build/libglfw.dylib")
+else
+    bash "$SRC/mod/build_mod.sh" "$WORK/mc/libraries" "$G/mods/mcmetal.jar" "$SRC/build" || exit 1
+    LIBARGS=()
+fi
 
 shots_in_world() { # screenshots taken after the first frame that drew terrain (any frame for the title screen)
     awk -v title="$2" '/presented frame/ && (title || !/\(0 terrain/) {on=1} on && /screenshot/ {n++} END {print n+0}' "$1" 2>/dev/null
@@ -35,7 +44,7 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     MGL_LOG="$OUT/$name/mgl.log" MGL_SHOT_DIR="$OUT/$name" MGL_SHOT_EVERY=${MGL_SHOT_EVERY:-10} \
     MGL_CACHE_DIR="$WORK/cache" MGL_DUMP_DIR="$OUT/$name/glsl" env ${GAME_ENV:-} "$@" \
         python3 -I "$SRC/tools/bare_mc.py" launch "$WORK" --java "$JAVA" "${wargs[@]}" \
-        --gl "$SRC/build/libmcmetal.dylib" --glfw "$SRC/build/libglfw.dylib" > "$OUT/$name/launch.out" 2>&1 &
+        ${LIBARGS[@]+"${LIBARGS[@]}"} > "$OUT/$name/launch.out" 2>&1 &
     local t=0
     while [ $t -lt "$secs" ]; do
         sleep 5; t=$((t + 5))
@@ -48,6 +57,7 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     pid=$(cat "$WORK/client.pid" 2>/dev/null); [ -n "$pid" ] && kill "$pid" 2>/dev/null; sleep 5
     [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null
     cp "$WORK/client.log" "$OUT/$name/client.log" 2>/dev/null
+    grep -h '\[mcmetal\]' "$OUT/$name/client.log" 2>/dev/null | grep -v 'presented frame\|screenshot' | head -5
     cp "$G/logs/latest.log" "$OUT/$name/latest.log" 2>/dev/null
     ls "$G"/hs_err_pid*.log >/dev/null 2>&1 && mv "$G"/hs_err_pid*.log "$OUT/$name/"
     ls -d "$G"/crash-reports/* >/dev/null 2>&1 && cp -r "$G/crash-reports" "$OUT/$name/"
