@@ -59,6 +59,7 @@ void mglb_blit(const mgl_target *s, int sa, const int sr[4], const mgl_target *d
                int lin) { blits++; }
 void mglb_memory_barrier(void) {}
 void mglb_rt_update(const mgl_rt_geom *g, int n) {}
+mglb_buffer *mglb_rt_instances(void) { return NULL; }
 
 void mglb_window_size(int *w, int *h) { *w = 1280; *h = 720; }
 uint64_t mglb_fence(void) { return ++fence_counter; }

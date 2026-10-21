@@ -94,6 +94,27 @@ static void rt_debug_tick(void)
                 "triangles, %lu no position attribute, %lu stride < 20, %lu before a ray-tracing shader; %d sections kept",
                 now - last_log, rtd.taken, rtd.not_terrain, rtd.last_skip[0] ? rtd.last_skip : "-", rtd.not_tris,
                 rtd.no_attr, rtd.small_stride, rtd.idle, num_draws_fwd());
+        /* the material byte Sodium packs beside the section index (alpha cutoff in bits 1-2), over the captured
+           vertices: shows whether cutout blocks carry a cutoff here */
+        unsigned long hist[256] = {0}, stride_seen = 0;
+        for (int i = 0; i < num_draws; i++) {
+            const unsigned char *base = mglb_buffer_ptr(draws[i].g.vbuf);
+            if (!base)
+                continue;
+            stride_seen = (unsigned long)draws[i].g.stride;
+            int nv = draws[i].g.count * 2 / 3;
+            for (int v = 0; v < nv; v++) {
+                const uint32_t *w = (const uint32_t *)(base + draws[i].g.vbase +
+                                                       (size_t)(draws[i].g.base_vertex + v) * (size_t)draws[i].g.stride);
+                hist[(w[4] >> 16) & 0xFF]++;
+            }
+        }
+        char line[512];
+        int o = snprintf(line, sizeof line, "rt debug: material bytes (stride %lu):", stride_seen);
+        for (int m = 0; m < 256 && o < (int)sizeof line - 24; m++)
+            if (hist[m])
+                o += snprintf(line + o, sizeof line - (size_t)o, " 0x%02x x%lu", m, hist[m]);
+        mgl_log("%s", line);
         memset(&rtd, 0, sizeof rtd);
         last_log = now;
     }
