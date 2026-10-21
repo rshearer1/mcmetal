@@ -48,7 +48,10 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
         "$shaders" "${PACK:-ComplementaryReimagined_r5.9.3.zip}" > "$G/config/iris.properties"
     mkdir -p "$OUT/$name"
     # PACK_OPTS="A=1 B=false": options for the pack in use (Iris reads shaderpacks/<pack>.txt)
+    # our packs' option files are rewritten every phase, so one phase's options never leak into the next
+    case ${PACK:-} in mcmetal-rt-*) rm -f "$G/shaderpacks/$PACK.txt" ;; esac
     [ -n "${PACK_OPTS:-}" ] && printf '%s\n' $PACK_OPTS > "$G/shaderpacks/${PACK:-ComplementaryReimagined_r5.9.3.zip}.txt"
+    [ -f "$G/shaderpacks/${PACK:-ComplementaryReimagined_r5.9.3.zip}.txt" ] && echo "pack options: $(tr '\n' ' ' < "$G/shaderpacks/${PACK:-ComplementaryReimagined_r5.9.3.zip}.txt")"
     local wargs=(--xmx 3G --size "${GAME_SIZE:-$([ "${GAME_BENCH:-}" = true ] && echo 1920x1200 || echo 1280x720)}")
     [ -n "$world" ] && wargs+=(--world "$world")
     mkdir -p "$OUT/$name/glsl"
@@ -213,15 +216,11 @@ for p in $PHASES; do
     ours-night) scene midnight clear showcase; PACK=mcmetal-rt-pack run_phase ours-night 180 metal true ;;
     ours-rain) scene 3000 rain; PACK=mcmetal-rt-pack run_phase ours-rain 180 metal true ;;
     ours-shadow|ours-ao|ours-gi) scene 1500; v=${p#ours-}; v=$( [ $v = shadow ] && echo 1 || ([ $v = ao ] && echo 2 || echo 3))
-        echo "DEBUG_VIEW=$v" > "$G/shaderpacks/mcmetal-rt-pack.txt"; PACK=mcmetal-rt-pack run_phase $p 180 metal true
-        rm -f "$G/shaderpacks/mcmetal-rt-pack.txt" ;;  # debug views of the rays
+        PACK_OPTS="DEBUG_VIEW=$v ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase $p 180 metal true ;;  # debug views of the rays
     ours-room) scene noon clear room; PACK=mcmetal-rt-pack run_phase ours-room 180 metal true ;;  # GI test room
-    ours-room-gi) scene noon clear room; echo "DEBUG_VIEW=3" > "$G/shaderpacks/mcmetal-rt-pack.txt"
-        PACK=mcmetal-rt-pack run_phase ours-room-gi 180 metal true; rm -f "$G/shaderpacks/mcmetal-rt-pack.txt" ;;
-    ours-room-off) scene noon clear room; echo "RT_GI=false" > "$G/shaderpacks/mcmetal-rt-pack.txt"
-        PACK=mcmetal-rt-pack run_phase ours-room-off 180 metal true; rm -f "$G/shaderpacks/mcmetal-rt-pack.txt" ;;  # GI off
-    ours-room-plain) scene noon clear room; echo "COLORED_SHADOWS=false" > "$G/shaderpacks/mcmetal-rt-pack.txt"
-        PACK=mcmetal-rt-pack run_phase ours-room-plain 180 metal true; rm -f "$G/shaderpacks/mcmetal-rt-pack.txt" ;;  # plain mcm_trace shadows
+    ours-room-gi) scene noon clear room; PACK_OPTS="DEBUG_VIEW=3 ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-room-gi 180 metal true ;;
+    ours-room-off) scene noon clear room; PACK_OPTS="RT_GI=false ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-room-off 180 metal true ;;  # GI off
+    ours-room-plain) scene noon clear room; PACK_OPTS="COLORED_SHADOWS=false ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-room-plain 180 metal true ;;  # plain mcm_trace shadows
     ours-gl) scene 1500; PACK=mcmetal-rt-pack run_phase ours-gl 180 metal true MCMETAL_DISABLE=1 ;; # shadow-map fallback on Apple GL
     pack-*|packnight-*) third_party "$p" ;; # compatibility sweep: pack-photon, packnight-bsl, pack-complementary+euphoria, ...
     esac
