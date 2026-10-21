@@ -551,6 +551,64 @@ int main(int argc, char **argv)
         check(variant != 1 ? near(px[32 * 64 + 32], rgba(0, 0, 255, 255)) : near(px[32 * 64 + 32], rgba(255, 128, 0, 0)), what);
     }
 
+    /* 10. ACT-style voxel volume: vertex shaders imageStore block ids into an r16ui 3D image, a later draw
+       reads them back with texelFetch through a usampler3D bound to the same texture (Complementary's
+       voxel_img / voxel_sampler: coloured light and connected glass both read it this way) */
+    {
+        GLuint vox;
+        glGenTextures(1, &vox);
+        glBindTexture(GL_TEXTURE_3D, vox);
+        glTexImage3D(GL_TEXTURE_3D, 0, GL_R16UI, 8, 8, 8, 0, GL_RED_INTEGER, GL_UNSIGNED_SHORT, NULL);
+        GLuint write = program("#version 430\nlayout(r16ui) uniform writeonly uimage3D voxel_img;\n"
+                               "void main() {\n"
+                               "  imageStore(voxel_img, ivec3(gl_VertexID, 1, 2), uvec4(uint(gl_VertexID) + 100u, 0u, 0u, 0u));\n"
+                               "  gl_Position = vec4(2.0, 2.0, 2.0, 1.0);\n" /* off screen: nothing rasterised */
+                               "}\n",
+                               "#version 430\nout vec4 frag;\nvoid main() { frag = vec4(1.0); }\n", NULL);
+        GLuint read = program("#version 330 core\nlayout(location = 0) in vec2 pos;\n"
+                              "void main() { gl_Position = vec4(pos, 0.0, 1.0); }\n",
+                              "#version 430\nuniform usampler3D voxel_sampler;\nout vec4 frag;\n"
+                              "void main() {\n"
+                              "  uint a = texelFetch(voxel_sampler, ivec3(1, 1, 2), 0).x & 32767u;\n"
+                              "  uint b = texelFetch(voxel_sampler, ivec3(5, 1, 2), 0).x;\n"
+                              "  uint c = texelFetch(voxel_sampler, ivec3(1, 2, 2), 0).x;\n" /* never written: 0 */
+                              "  frag = vec4(float(a) / 255.0, float(b) / 255.0, c == 0u ? 1.0 : 0.0, 1.0);\n"
+                              "}\n", NULL);
+        check(really_linked(write) && really_linked(read), "voxel volume programs link (uimage3D in a vertex shader)");
+        for (int variant = 0; variant < 2; variant++) {
+            unsigned short zero[8 * 8 * 8] = {0};
+            glBindTexture(GL_TEXTURE_3D, vox);
+            glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 0, 8, 8, 8, GL_RED_INTEGER, GL_UNSIGNED_SHORT, zero);
+            GLint filter = variant ? GL_LINEAR : GL_NEAREST; /* linear on an integer texture: GL ignores it for texelFetch */
+            glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, filter);
+            glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, filter);
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+            glDisable(GL_DEPTH_TEST);
+            glBindImageTexture(0, vox, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_R16UI);
+            glUseProgram(write);
+            glUniform1i(glGetUniformLocation(write, "voxel_img"), 0);
+            glBindVertexArray(vao);
+            glDrawArrays(GL_POINTS, 0, 8);
+            glMemoryBarrier(GL_ALL_BARRIER_BITS);
+            glClearColor(0, 0, 0, 1);
+            glClear(GL_COLOR_BUFFER_BIT);
+            glUseProgram(read);
+            glActiveTexture(GL_TEXTURE3);
+            glBindTexture(GL_TEXTURE_3D, vox);
+            glUniform1i(glGetUniformLocation(read, "voxel_sampler"), 3);
+            glBindBuffer(GL_ARRAY_BUFFER, vbo);
+            glBufferData(GL_ARRAY_BUFFER, sizeof quad, quad, GL_STATIC_DRAW);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+            glActiveTexture(GL_TEXTURE0);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            read_texture(rb, tex, ssbo, px);
+            char what[160];
+            snprintf(what, sizeof what, "voxel volume written by vertex shader, read by texelFetch (%s filter): pixel %08x",
+                     variant ? "linear" : "nearest", px[32 * 64 + 32]);
+            check(near(px[32 * 64 + 32], rgba(101, 105, 255, 255)), what);
+        }
+    }
+
     /* 5. hardware ray tracing: a shader using mcm_trace must compile on Metal (no scene bound: no hits) */
     GLuint rt = program(NULL, NULL,
                         "#version 430\nlayout(local_size_x = 1) in;\n"
