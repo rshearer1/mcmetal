@@ -259,8 +259,13 @@ static id<MTLCommandBuffer> current_cb(void)
     return cb;
 }
 
+static void gs_flush(void);
+static int gs_recording; /* mglb_draw_gs is opening its compute encoder: keep the pending draws pending */
+
 static void end_encoders(void)
 {
+    if (!gs_recording)
+        gs_flush();
     if (renc) { [renc endEncoding]; renc = nil; }
     if (benc) { [benc endEncoding]; benc = nil; }
     if (cenc) { [cenc endEncoding]; cenc = nil; }
@@ -268,6 +273,7 @@ static void end_encoders(void)
 
 static void commit(void)
 {
+    gs_flush();
     end_encoders();
     pt_cur = NULL;
     if (cb) {
@@ -279,6 +285,7 @@ static void commit(void)
 
 static id<MTLBlitCommandEncoder> blit_encoder(void)
 {
+    gs_flush();
     if (benc)
         return benc;
     end_encoders();
@@ -299,6 +306,8 @@ static id<MTLBlitCommandEncoder> blit_encoder(void)
 
 static id<MTLComputeCommandEncoder> compute_encoder(void)
 {
+    if (!gs_recording)
+        gs_flush();
     if (cenc)
         return cenc;
     end_encoders();
@@ -524,6 +533,7 @@ void mglb_texture_release(mglb_texture *t)
 {
     if (!t)
         return;
+    gs_flush(); /* a pending geometry-shader draw may still bind it */
     if (renc) {
         /* the open render pass may still reference it; Metal retains it for the command buffer */
     }
@@ -1776,6 +1786,7 @@ static id<MTLRenderCommandEncoder> begin_pass(const mgl_target *t, unsigned clea
 
 static id<MTLRenderCommandEncoder> pass_for(const mgl_target *t)
 {
+    gs_flush();
     if (renc && same_target(t, &renc_target))
         return renc;
     return begin_pass(t, 0, NULL, 0, 0);
@@ -1789,6 +1800,7 @@ static id<MTLRenderCommandEncoder> pass_for(const mgl_target *t)
 static unsigned opt_smart_load = ~0u;
 static id<MTLRenderCommandEncoder> pass_for_draw(const mgl_draw *d)
 {
+    gs_flush();
     const mgl_target *t = &d->target;
     if (renc && same_target(t, &renc_target))
         return renc;
@@ -2268,6 +2280,16 @@ void mglb_dispatch(const mgl_draw *d, int gx, int gy, int gz)
     debug_sync("dispatch", d, (long)gx * gy * gz, 0);
 }
 
+/* Geometry-shader draws are batched (MGL_GS_BATCH=0 turns it off). Each one's compute job is encoded at once,
+   but its draw waits in gs_pending until something else needs the GPU. A run of them (SEUS's voxel shadow pass:
+   ~190 per frame) then shares one compute encoder and one render pass. Without this, each draw split the target
+   into its own pass, and each pass loaded and stored the whole 4096x4096 shadow map: 60-67% of SEUS's GPU time
+   on an M3. */
+typedef void (^gs_play)(id<MTLRenderCommandEncoder> e);
+static NSMutableArray<gs_play> *gs_pending;
+static mgl_target gs_target;
+static int gs_batch = -1;
+
 /* Geometry-shader emulation (mgl_gs.c). The compute stage gets: 21 attribute descriptors, 22..25 raw vertex
    buffers, 26 index buffer, 27 emitted vertex records, 28 per-primitive vertex counts. The passthrough vertex
    stage reads 27/28 and turns each strip into a triangle list. */
@@ -2306,7 +2328,13 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
     id<MTLBuffer> ovb = OBJ(id<MTLBuffer>, ov->mtl), ocb = OBJ(id<MTLBuffer>, oc->mtl);
 
     /* 1. vertex + geometry stages as one compute job, one thread per input triangle */
+    if (gs_batch < 0)
+        gs_batch = !getenv("MGL_GS_BATCH") || atoi(getenv("MGL_GS_BATCH")) != 0;
+    if (!gs_batch || !same_target(&d->target, &gs_target) || gs_pending.count >= 2048)
+        gs_flush();
+    gs_recording = 1;
     id<MTLComputeCommandEncoder> c = compute_encoder();
+    gs_recording = 0;
     [c setComputePipelineState:OBJ(id<MTLComputePipelineState>, d->program->compute)];
     bind_stage_resources(nil, c, d, 2);
     if (d->uses_scene)
@@ -2326,24 +2354,42 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
     [c dispatchThreadgroups:MTLSizeMake(((NSUInteger)triangles + lx - 1) / lx, 1, 1)
       threadsPerThreadgroup:MTLSizeMake(lx, 1, 1)];
 
-    /* 2. draw the emitted strips: no vertex fetch, records come from buffers 27/28 */
-    mgl_draw p = *d;
-    memset(p.attrs, 0, sizeof p.attrs);
-    p.num_vbufs = 0;
-    id<MTLRenderPipelineState> ps = get_pipeline(&p, &p.target);
-    if (ps) {
-        id<MTLRenderCommandEncoder> e = pass_for(&p.target);
+    /* 2. draw the emitted strips: no vertex fetch, records come from buffers 27/28. Kept for gs_flush, with its
+       own copy of the default-block uniforms (the GL side reuses that memory for the next draw). */
+    mgl_draw *p = malloc(sizeof *p);
+    *p = *d;
+    memset(p->attrs, 0, sizeof p->attrs);
+    p->num_vbufs = 0;
+    id<MTLRenderPipelineState> ps = get_pipeline(p, &p->target);
+    if (!ps) {
+        free(p);
+        mglb_buffer_release(ov);
+        mglb_buffer_release(oc);
+        return;
+    }
+    NSData *u0 = p->uniforms[0] ? [NSData dataWithBytes:p->uniforms[0] length:(NSUInteger)p->uniform_size[0]] : nil;
+    NSData *u1 = p->uniforms[1] ? [NSData dataWithBytes:p->uniforms[1] length:(NSUInteger)p->uniform_size[1]] : nil;
+    p->uniforms[0] = u0.bytes;
+    p->uniforms[1] = u1.bytes;
+    for (int i = 0; i < 12; i++) /* busy from now, so a glBufferSubData before the flush can't write in place */
+        use_buffer(p->ubo[i]);
+    for (int i = 0; i < MGL_MAX_SSBOS; i++)
+        use_buffer(p->ssbo[i]);
+    id<MTLDepthStencilState> ds = get_depth_state(p->depth_test && p->target.depth,
+                                                  p->depth_test && p->depth_write && p->target.depth, p->depth_func);
+    NSUInteger vertices = (NSUInteger)triangles * (NSUInteger)(max_vertices - 2) * 3;
+    gs_play play = ^(id<MTLRenderCommandEncoder> e) {
+        (void)u0; (void)u1;
         [e setRenderPipelineState:ps];
-        [e setDepthStencilState:get_depth_state(p.depth_test && p.target.depth,
-                                                p.depth_test && p.depth_write && p.target.depth, p.depth_func)];
-        [e setViewport:(MTLViewport){p.viewport[0], p.viewport[1], p.viewport[2], p.viewport[3], 0, 1}];
-        MTLScissorRect sr = {0, 0, (NSUInteger)p.target.width, (NSUInteger)p.target.height};
+        [e setDepthStencilState:ds];
+        [e setViewport:(MTLViewport){p->viewport[0], p->viewport[1], p->viewport[2], p->viewport[3], 0, 1}];
+        MTLScissorRect sr = {0, 0, (NSUInteger)p->target.width, (NSUInteger)p->target.height};
         int visible = 1;
-        if (p.scissor_enabled) {
-            int x0 = p.scissor[0] < 0 ? 0 : p.scissor[0], y0 = p.scissor[1] < 0 ? 0 : p.scissor[1];
-            int x1 = p.scissor[0] + p.scissor[2], y1 = p.scissor[1] + p.scissor[3];
-            if (x1 > p.target.width) x1 = p.target.width;
-            if (y1 > p.target.height) y1 = p.target.height;
+        if (p->scissor_enabled) {
+            int x0 = p->scissor[0] < 0 ? 0 : p->scissor[0], y0 = p->scissor[1] < 0 ? 0 : p->scissor[1];
+            int x1 = p->scissor[0] + p->scissor[2], y1 = p->scissor[1] + p->scissor[3];
+            if (x1 > p->target.width) x1 = p->target.width;
+            if (y1 > p->target.height) y1 = p->target.height;
             if (x1 <= x0 || y1 <= y0)
                 visible = 0;
             else
@@ -2351,26 +2397,50 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
         }
         if (visible) {
             [e setScissorRect:sr];
-            [e setCullMode:!p.cull ? MTLCullModeNone : p.cull_face == GL_FRONT ? MTLCullModeFront : MTLCullModeBack];
-            [e setFrontFacingWinding:p.front_face == GL_CW ? MTLWindingCounterClockwise : MTLWindingClockwise];
-            if (p.polygon_offset_enabled)
-                [e setDepthBias:p.polygon_offset_units slopeScale:p.polygon_offset_factor clamp:0];
+            [e setCullMode:!p->cull ? MTLCullModeNone : p->cull_face == GL_FRONT ? MTLCullModeFront : MTLCullModeBack];
+            [e setFrontFacingWinding:p->front_face == GL_CW ? MTLWindingCounterClockwise : MTLWindingClockwise];
+            if (p->polygon_offset_enabled)
+                [e setDepthBias:p->polygon_offset_units slopeScale:p->polygon_offset_factor clamp:0];
             else
                 [e setDepthBias:0 slopeScale:0 clamp:0];
-            bind_stage_resources(e, nil, &p, 0);
-            bind_stage_resources(e, nil, &p, 1);
-            if (p.uses_scene)
+            bind_stage_resources(e, nil, p, 0);
+            bind_stage_resources(e, nil, p, 1);
+            if (p->uses_scene)
                 bind_scene(e, nil);
             [e setVertexBuffer:ovb offset:0 atIndex:MGL_BUF_INTERNAL_BASE + 6];
             [e setVertexBuffer:ocb offset:0 atIndex:MGL_BUF_INTERNAL_BASE + 7];
-            [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0
-                  vertexCount:(NSUInteger)triangles * (NSUInteger)(max_vertices - 2) * 3];
+            [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:vertices];
         }
-    }
+        free(p);
+    };
     use_buffer(ov);
     use_buffer(oc);
     mglb_buffer_release(ov);
-    mglb_buffer_release(oc);    debug_sync("geometry-shader draw", d, triangles, max_vertices);
+    mglb_buffer_release(oc);
+    if (!gs_pending)
+        gs_pending = [NSMutableArray new];
+    gs_target = d->target;
+    [gs_pending addObject:play];
+    if (!gs_batch)
+        gs_flush();
+    debug_sync("geometry-shader draw", d, triangles, max_vertices);
+}
+
+/* Draw the pending geometry-shader draws in one render pass on their target. Called before anything else uses
+   the GPU (any encoder, a commit, a barrier, a texture release), so GL's order is kept for everything that
+   could see their results. */
+static void gs_flush(void)
+{
+    static int flushing;
+    if (!gs_pending.count || flushing)
+        return;
+    flushing = 1;
+    NSArray<gs_play> *list = gs_pending;
+    gs_pending = [NSMutableArray new];
+    id<MTLRenderCommandEncoder> e = pass_for(&gs_target);
+    for (gs_play f in list)
+        f(e);
+    flushing = 0;
 }
 
 /* ================================================================ ray tracing (step 2) */
@@ -2618,6 +2688,7 @@ static void bind_scene(id<MTLRenderCommandEncoder> e, id<MTLComputeCommandEncode
 
 void mglb_memory_barrier(void)
 {
+    gs_flush();
     /* In a render pass, end it: Metal orders work between encoders on the same resources, and in-pass render
        barriers are restricted on Apple GPUs. The next draw reopens the pass with Load. */
     if (renc)
