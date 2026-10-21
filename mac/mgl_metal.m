@@ -7,6 +7,7 @@
 #import <QuartzCore/CAMetalLayer.h>
 #import <MetalFX/MetalFX.h>
 #include <ctype.h>
+#include <math.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
@@ -38,7 +39,8 @@ static id<MTLComputeCommandEncoder> cenc;
    MGL_ASYNC_PIPELINES=1  build a new pipeline in the background and skip its draws until ready (no hitch,
                           an object may be missing for a frame or two the first time it is seen)
    MGL_FRAME_PACING=1     wait on completion signals instead of polling, and present at an even rate
-                          (120/60/40/30 fps, whichever the last frames sustain; MGL_TARGET_FPS forces one) */
+                          (120/60/40/30 fps, whichever the last frames' cost sustains; MGL_TARGET_FPS forces one).
+                          Only with vsync on. MGL_PRESENT_STATS=1 logs how evenly frames reach the screen. */
 static int opt(const char *name)
 {
     const char *e = getenv(name);
@@ -55,6 +57,12 @@ static struct {
     uint64_t wait_ns, start_ns, frames;
 } prof;
 static _Atomic uint64_t prof_gpu_ns;
+/* Frame pacing's own cost measures (always kept, unlike prof): time the game thread spent waiting (for the GPU or
+   a drawable) and GPU busy time summed over finished command buffers. A frame's real cost is the larger of its CPU
+   time minus waits and its GPU time; the time between swaps can't be used once pacing holds frames back, because
+   then it is the paced interval itself and the rate would ratchet down to 30. */
+static uint64_t pace_wait_ns;
+static _Atomic uint64_t pace_gpu_ns;
 static mgl_target prof_last_target;
 
 /* MGL_PROFILE=2 also times every render, compute and blit pass on the GPU (Metal timestamp counters at pass
@@ -251,8 +259,12 @@ static id<MTLCommandBuffer> current_cb(void)
               pthread_cond_broadcast(&fence_cond);
               pthread_mutex_unlock(&fence_lock);
           }
-          if (opt_profile > 0 && done.GPUEndTime > done.GPUStartTime)
-              atomic_fetch_add(&prof_gpu_ns, (uint64_t)((done.GPUEndTime - done.GPUStartTime) * 1e9));
+          if (done.GPUEndTime > done.GPUStartTime) {
+              uint64_t gpu = (uint64_t)((done.GPUEndTime - done.GPUStartTime) * 1e9);
+              atomic_fetch_add(&pace_gpu_ns, gpu);
+              if (opt_profile > 0)
+                  atomic_fetch_add(&prof_gpu_ns, gpu);
+          }
           if (done.error)
               mgl_log("GPU error in command buffer %llu: %s", serial, done.error.localizedDescription.UTF8String);
         }];
@@ -3007,6 +3019,7 @@ int mglb_fence_wait(uint64_t id, uint64_t timeout_ns)
     uint64_t start = now_ns();
     int r = wait_serial(id, timeout_ns, start);
     prof.wait_ns += now_ns() - start;
+    pace_wait_ns += now_ns() - start;
     return r;
 }
 
@@ -3045,6 +3058,7 @@ void mglb_finish(void)
     uint64_t t = now_ns();
     [last_cb waitUntilCompleted];
     prof.wait_ns += now_ns() - t;
+    pace_wait_ns += now_ns() - t;
     prof.finishes++;
 }
 
@@ -3056,24 +3070,105 @@ typedef struct mgl_ctx {
     uint64_t frames;
     int vsync;
     uint64_t last_swap_ns;
-    double avg_frame_ms;    /* smoothed CPU frame time, for choosing the paced rate */
+    double avg_frame_ms;    /* smoothed frame cost (max of CPU work and GPU time), for choosing the paced rate */
+    uint64_t last_wait_ns, last_gpu_ns;
     int paced_fps;
+    int up_frames;          /* frames in a row the cost has fitted the next faster rate */
 } mgl_ctx;
 
 /* Even frame delivery: on a 120 Hz ProMotion screen a game that makes 80 fps would show frames for 8 and
    17 ms in turn (judder). Presenting with a minimum duration at the highest of 120/60/40/30 that the recent
-   frame time sustains keeps every frame on screen equally long. With vsync off, pacing stays off. */
+   frame cost sustains keeps every frame on screen equally long. With vsync off, pacing stays off.
+   Down a rate as soon as the smoothed cost no longer fits it with 10% headroom; up only after a second of
+   costs that fit the faster rate with 25% headroom, so the rate doesn't flip back and forth at a boundary. */
 static int choose_paced_fps(mgl_ctx *c)
 {
     static const int rates[] = {120, 60, 40, 30};
     const char *forced = getenv("MGL_TARGET_FPS");
     if (forced && atoi(forced) > 0)
         return atoi(forced);
-    double ms = c->avg_frame_ms * 1.1; /* 10% headroom so a single slow frame doesn't break the rhythm */
+    int fit = 3;
     for (int i = 0; i < 4; i++)
-        if (ms <= 1000.0 / rates[i])
-            return rates[i];
-    return 30;
+        if (c->avg_frame_ms * 1.1 <= 1000.0 / rates[i]) {
+            fit = i;
+            break;
+        }
+    if (!c->paced_fps || rates[fit] < c->paced_fps) {
+        c->up_frames = 0;
+        return rates[fit];
+    }
+    if (rates[fit] == c->paced_fps) {
+        c->up_frames = 0;
+        return c->paced_fps;
+    }
+    int next = 0; /* the next faster rate than the current one */
+    for (int i = 3; i >= 0; i--)
+        if (rates[i] > c->paced_fps) {
+            next = i;
+            break;
+        }
+    if (c->avg_frame_ms * 1.25 <= 1000.0 / rates[next] && ++c->up_frames >= c->paced_fps) {
+        c->up_frames = 0;
+        return rates[next];
+    }
+    if (c->avg_frame_ms * 1.25 > 1000.0 / rates[next])
+        c->up_frames = 0;
+    return c->paced_fps;
+}
+
+/* MGL_PRESENT_STATS=1 (or MGL_PROFILE): once a second, log how evenly frames reached the screen, from the
+   drawables' presentedTime: shown fps, mean and spread of the time each frame stayed on screen, the worst one,
+   and judder = share of frames whose time on screen differs from the previous frame's by more than 2 ms. */
+static pthread_mutex_t pstat_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct {
+    double last, sum, sum2, worst, prev_iv;
+    unsigned long n, judder, dropped;
+} pstat;
+
+static void present_stat(double when)
+{
+    pthread_mutex_lock(&pstat_lock);
+    if (when <= 0)
+        pstat.dropped++;
+    else {
+        if (pstat.last > 0) {
+            double iv = (when - pstat.last) * 1000.0;
+            if (iv > 0 && iv < 250) {
+                pstat.n++;
+                pstat.sum += iv;
+                pstat.sum2 += iv * iv;
+                if (iv > pstat.worst)
+                    pstat.worst = iv;
+                if (pstat.prev_iv > 0 && fabs(iv - pstat.prev_iv) > 2.0)
+                    pstat.judder++;
+                pstat.prev_iv = iv;
+            }
+        }
+        pstat.last = when;
+    }
+    pthread_mutex_unlock(&pstat_lock);
+}
+
+static void present_stats_report(void)
+{
+    static uint64_t start;
+    uint64_t t = now_ns();
+    if (!start)
+        start = t;
+    if (t - start < 1000000000ull)
+        return;
+    start = t;
+    pthread_mutex_lock(&pstat_lock);
+    if (pstat.n) {
+        double mean = pstat.sum / pstat.n, var = pstat.sum2 / pstat.n - mean * mean;
+        mgl_log("present stats: %.1f shown fps, on screen %.2f ms avg, %.2f ms spread, %.2f ms worst, %.1f%% judder, %lu dropped",
+                1000.0 / mean, mean, var > 0 ? sqrt(var) : 0.0, pstat.worst, 100.0 * pstat.judder / pstat.n, pstat.dropped);
+    }
+    double last = pstat.last, prev_iv = pstat.prev_iv;
+    memset(&pstat, 0, sizeof pstat);
+    pstat.last = last;
+    pstat.prev_iv = prev_iv;
+    pthread_mutex_unlock(&pstat_lock);
 }
 
 static mgl_ctx *current;
@@ -3270,15 +3365,20 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
     uint64_t t_draw = now_ns();
     id<CAMetalDrawable> drawable = skip ? nil : [c->layer nextDrawable];
     prof.wait_ns += now_ns() - t_draw;
+    pace_wait_ns += now_ns() - t_draw;
     prof.skipped_presents += skip;
     if (drawable) {
         [current_cb() addCompletedHandler:^(id<MTLCommandBuffer> done) {
           (void)done;
           atomic_fetch_add(&presents_waiting, 1);
         }];
+        static int stats = -1;
+        if (stats < 0)
+            stats = opt_profile > 0 || opt("MGL_PRESENT_STATS");
         [drawable addPresentedHandler:^(id<MTLDrawable> d) {
-          (void)d;
           atomic_fetch_sub(&presents_waiting, 1);
+          if (stats)
+              present_stat(d.presentedTime);
         }];
         id<MTLTexture> src = OBJ(id<MTLTexture>, mgl->window_color->mtl);
         if (upscale_on()) {
@@ -3303,13 +3403,16 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
             [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
         }
         [e endEncoding];
-        uint64_t t = now_ns();
+        uint64_t t = now_ns(), gpu = atomic_load(&pace_gpu_ns);
         if (c->last_swap_ns) {
-            double ms = (double)(t - c->last_swap_ns) * 1e-6;
-            if (ms < 250)
+            double cpu = (double)(t - c->last_swap_ns - (pace_wait_ns - c->last_wait_ns)) * 1e-6;
+            double gms = (double)(gpu - c->last_gpu_ns) * 1e-6, ms = cpu > gms ? cpu : gms;
+            if (ms > 0 && ms < 250)
                 c->avg_frame_ms = c->avg_frame_ms ? c->avg_frame_ms * 0.9 + ms * 0.1 : ms;
         }
         c->last_swap_ns = t;
+        c->last_wait_ns = pace_wait_ns;
+        c->last_gpu_ns = gpu;
         if (opt_pacing > 0 && c->vsync && c->avg_frame_ms > 0) {
             int fps = choose_paced_fps(c);
             if (fps != c->paced_fps) {
@@ -3331,6 +3434,8 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
                 frame_probes ? [NSString stringWithFormat:@", %lu probed draws", frame_probes].UTF8String : "");
     if (opt_profile > 0)
         profile_frame(frame_draws);
+    if (opt_profile > 0 || opt("MGL_PRESENT_STATS"))
+        present_stats_report();
     frame_draws = frame_sections = frame_dispatches = frame_probes = 0;
     /* keep at most ~2 frames in flight */
     if (cb_serial > 3)
