@@ -60,8 +60,10 @@ void main() {
         }
         // a beam in shade (sun through a roof hole or a gap in the trees) stands out the way it does in real dusty
         // air: the less of the view ray is lit, the more each lit step counts. Open air (all lit) stays clear
+        // (dust that only shows in a beam: 0.05 per block where the view ray is all in shade)
         float shade = 1.0 - lit / float(LIGHT_SHAFTS_STEPS);
-        scatter = sunCol * phase * density * stepLen * lit * (1.0 + 8.0 * shade) * 4.0 * PI;   // x 4pi: our lights skip the 1/pi of diffuse
+        float beam = 0.05 * LIGHT_SHAFTS_STRENGTH * shade;
+        scatter = sunCol * phase * (density + beam) * stepLen * lit * 4.0 * PI;   // x 4pi: our lights skip the 1/pi of diffuse
         if (any(isnan(scatter)) || any(isinf(scatter))) scatter = vec3(0.0);
     }
 #endif

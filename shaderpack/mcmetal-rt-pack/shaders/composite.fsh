@@ -40,6 +40,9 @@ void main() {
 #if defined USE_RT && defined LIGHT_SHAFTS
     if (isEyeInWater == 0) col += texture(colortex8, texcoord * LIGHT_SHAFTS_SCALE).rgb;   // deferred3.fsh
 #endif
+#if DEBUG_VIEW == 5 && defined USE_RT && defined LIGHT_SHAFTS
+    { vec3 ls = texture(colortex8, texcoord * LIGHT_SHAFTS_SCALE).rgb * 4.0; col = ls / (ls + 1.0); }
+#endif
     col *= 1.0 - max(blindness, darknessFactor) * smoothstep(2.0, 12.0, dist);
     outColor = vec4(col, 1.0);
 }
