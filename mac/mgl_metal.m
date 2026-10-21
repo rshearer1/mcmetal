@@ -672,6 +672,7 @@ static void clear_source(size_t bytes, const unsigned char *texel, size_t bpt)
     int same_bytes = 1;
     for (size_t i = 1; i < bpt; i++)
         same_bytes &= texel[i] == texel[0];
+    end_encoders(); /* earlier clears in this command buffer read clear_src: refill it in a later encoder */
     id<MTLBlitCommandEncoder> e = blit_encoder();
     size_t n = clear_src.length;
     if (same_bytes) {
