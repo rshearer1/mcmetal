@@ -219,6 +219,161 @@ int main(void)
     read_texture(rb, tex, ssbo, px);
     check(near(px[32 * 64 + 32], rgba(255, 0, 0, 255)), "depth test keeps the nearest surface");
 
+    /* 6. a Sodium-style terrain quad: packed integer vertex data (uvec2 position in 20-bit thirds, ushort
+       texcoords, ubyte light/material/draw id) in a 20-byte vertex, a lightmap read in the vertex stage, a flat
+       uint varying, indexed UINT draw with a base vertex and index offset, back-face culling, depth LEQUAL.
+       This is the shape of the first world draw that hangs the GPU in the game test. */
+    GLuint terrain = program(
+        "#version 330 core\n"
+        "in uvec2 a_Position;\nin vec4 a_Color;\nin uvec2 a_TexCoord;\nin uvec4 a_LightAndData;\n"
+        "uniform mat4 u_ProjectionMatrix;\nuniform mat4 u_ModelViewMatrix;\nuniform vec3 u_RegionOffset;\n"
+        "uniform vec2 u_TexCoordShrink;\nuniform int u_FogShape;\nuniform sampler2D u_LightTex;\n"
+        "out vec4 v_Color;\nout vec2 v_TexCoord;\nout float v_FragDistance;\nflat out uint v_Material;\n"
+        "uvec3 deint(uvec2 d) { uvec3 hi = (uvec3(d.x) >> uvec3(0u, 10u, 20u)) & 0x3FFu;\n"
+        "  uvec3 lo = (uvec3(d.y) >> uvec3(0u, 10u, 20u)) & 0x3FFu; return (hi << 10u) | lo; }\n"
+        "float dist(int shape, vec3 p) { switch (shape) { case 0: return length(p);\n"
+        "  case 1: return max(length(p.xz), abs(p.y)); default: return length(p); } }\n"
+        "void main() {\n"
+        "  vec3 pos = vec3(deint(a_Position)) * (32.0 / 1048576.0) - 8.0;\n"
+        "  uvec3 rel = uvec3(a_LightAndData[3]) >> uvec3(5u, 0u, 2u) & uvec3(7u, 3u, 7u);\n"
+        "  pos += u_RegionOffset + vec3(rel) * 16.0;\n"
+        "  v_FragDistance = dist(u_FogShape, pos);\n"
+        "  gl_Position = u_ProjectionMatrix * u_ModelViewMatrix * vec4(pos, 1.0);\n"
+        "  v_Color = a_Color * texture(u_LightTex, vec2(a_LightAndData.xy) / vec2(256.0));\n"
+        "  vec2 bias = mix(vec2(-1.0), vec2(1.0), bvec2(a_TexCoord >> 15u));\n"
+        "  v_TexCoord = bias * u_TexCoordShrink + vec2(a_TexCoord & 32767u) / 32768.0;\n"
+        "  v_Material = a_LightAndData[2];\n"
+        "}\n",
+        "#version 330 core\n"
+        "in vec4 v_Color;\nin vec2 v_TexCoord;\nin float v_FragDistance;\nflat in uint v_Material;\n"
+        "uniform sampler2D u_BlockTex;\nuniform vec4 u_FogColor;\nuniform float u_FogStart;\nuniform float u_FogEnd;\n"
+        "out vec4 fragColor;\n"
+        "void main() {\n"
+        "  float bias = ((v_Material & 1u) != 0u) ? 0.0 : -16.0;\n"
+        "  vec4 c = texture(u_BlockTex, v_TexCoord, bias) * v_Color;\n"
+        "  if (v_FragDistance > u_FogStart) c.rgb = mix(c.rgb, u_FogColor.rgb, smoothstep(u_FogStart, u_FogEnd, v_FragDistance));\n"
+        "  fragColor = c;\n"
+        "}\n", NULL);
+    check(really_linked(terrain), "Sodium-style terrain program links");
+    /* 4 junk vertices, then the quad; positions decode to clip-space corners at z 0.5 (identity matrices) */
+    struct { unsigned pos[2]; unsigned char color[4]; unsigned short uv[2]; unsigned char light[4]; } tv[8];
+    memset(tv, 0xEE, sizeof tv);
+    static const float corner[4][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
+    for (int i = 0; i < 4; i++) {
+        unsigned c[3] = {(unsigned)((corner[i][0] + 8) * 32768), (unsigned)((corner[i][1] + 8) * 32768), (unsigned)(8.5 * 32768)};
+        tv[4 + i].pos[0] = (c[0] >> 10) | (c[1] >> 10) << 10 | (c[2] >> 10) << 20;
+        tv[4 + i].pos[1] = (c[0] & 1023) | (c[1] & 1023) << 10 | (c[2] & 1023) << 20;
+        tv[4 + i].color[0] = 255; tv[4 + i].color[1] = 128; tv[4 + i].color[2] = 0; tv[4 + i].color[3] = 255;
+        tv[4 + i].uv[0] = tv[4 + i].uv[1] = 0x4000; /* 0.5, bias bit clear */
+        tv[4 + i].light[0] = tv[4 + i].light[1] = 8; tv[4 + i].light[2] = 1; tv[4 + i].light[3] = 0;
+    }
+    unsigned tidx[10] = {7, 7, 7, 7, 0, 1, 2, 0, 2, 3}; /* drawn from byte offset 16 with base vertex 4 */
+    GLuint tvao, tbuf[2], white[2];
+    glGenVertexArrays(1, &tvao);
+    glBindVertexArray(tvao);
+    glGenBuffers(2, tbuf);
+    glBindBuffer(GL_ARRAY_BUFFER, tbuf[0]);
+    glBufferData(GL_ARRAY_BUFFER, sizeof tv, tv, GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, tbuf[1]);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof tidx, tidx, GL_STATIC_DRAW);
+    GLint la[4];
+    const char *an[4] = {"a_Position", "a_Color", "a_TexCoord", "a_LightAndData"};
+    for (int i = 0; i < 4; i++) {
+        la[i] = glGetAttribLocation(terrain, an[i]);
+        if (la[i] >= 0) glEnableVertexAttribArray((GLuint)la[i]);
+    }
+    check(la[0] >= 0 && la[1] >= 0 && la[2] >= 0 && la[3] >= 0, "terrain attribute locations found");
+    if (la[0] >= 0) glVertexAttribIPointer((GLuint)la[0], 2, GL_UNSIGNED_INT, 20, (void *)0);
+    if (la[1] >= 0) glVertexAttribPointer((GLuint)la[1], 4, GL_UNSIGNED_BYTE, GL_TRUE, 20, (void *)8);
+    if (la[2] >= 0) glVertexAttribIPointer((GLuint)la[2], 2, GL_UNSIGNED_SHORT, 20, (void *)12);
+    if (la[3] >= 0) glVertexAttribIPointer((GLuint)la[3], 4, GL_UNSIGNED_BYTE, 20, (void *)16);
+    unsigned char wt[16 * 16 * 4];
+    memset(wt, 255, sizeof wt);
+    glGenTextures(2, white);
+    for (int i = 0; i < 2; i++) {
+        glActiveTexture(GL_TEXTURE0 + (GLenum)i);
+        glBindTexture(GL_TEXTURE_2D, white[i]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 16, 16, 0, GL_RGBA, GL_UNSIGNED_BYTE, wt);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
+    static const float ident[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    glUseProgram(terrain);
+    glUniformMatrix4fv(glGetUniformLocation(terrain, "u_ProjectionMatrix"), 1, GL_FALSE, ident);
+    glUniformMatrix4fv(glGetUniformLocation(terrain, "u_ModelViewMatrix"), 1, GL_FALSE, ident);
+    glUniform3f(glGetUniformLocation(terrain, "u_RegionOffset"), 0, 0, 0);
+    glUniform2f(glGetUniformLocation(terrain, "u_TexCoordShrink"), 0, 0);
+    glUniform1i(glGetUniformLocation(terrain, "u_FogShape"), 1);
+    glUniform1i(glGetUniformLocation(terrain, "u_BlockTex"), 0);
+    glUniform1i(glGetUniformLocation(terrain, "u_LightTex"), 1);
+    glUniform4f(glGetUniformLocation(terrain, "u_FogColor"), 0, 0, 1, 1);
+    glUniform1f(glGetUniformLocation(terrain, "u_FogStart"), 100);
+    glUniform1f(glGetUniformLocation(terrain, "u_FogEnd"), 200);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glClearColor(0, 0, 1, 1);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glEnable(GL_CULL_FACE);
+    glDrawElementsBaseVertex(GL_TRIANGLES, 6, GL_UNSIGNED_INT, (void *)16, 4);
+    glFinish();
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_DEPTH_TEST);
+    glActiveTexture(GL_TEXTURE0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindVertexArray(vao);
+    read_texture(rb, tex, ssbo, px);
+    printf("      terrain centre pixel %08x (want ff0080ff)\n", px[32 * 64 + 32]);
+    check(near(px[32 * 64 + 32], rgba(255, 128, 0, 255)) && near(px[2 * 64 + 2], rgba(255, 128, 0, 255)),
+          "Sodium-style terrain quad draws with the right colour");
+
+    /* 7. a cloud-style draw: float3 position + normalized ubyte4 colour (16-byte vertex), USHORT indices,
+       depth test + write, discard in the fragment stage (Sodium's cloud renderer, the first draw that hung) */
+    GLuint cloud = program("#version 150\nin vec3 Position;\nin vec4 Color;\nuniform mat4 ModelViewMat;\nuniform mat4 ProjMat;\n"
+                           "out float vertexDistance;\nout vec4 vertexColor;\n"
+                           "void main() { gl_Position = ProjMat * ModelViewMat * vec4(Position, 1.0);\n"
+                           "  vertexDistance = length((ModelViewMat * vec4(Position.x, 0.0, Position.z, 1.0)).xyz);\n"
+                           "  vertexColor = Color; }\n",
+                           "#version 150\nuniform vec4 ColorModulator;\nin vec4 vertexColor;\nin float vertexDistance;\n"
+                           "out vec4 fragColor;\n"
+                           "void main() { vec4 c = vertexColor * ColorModulator; if (c.a < 0.1) discard;\n"
+                           "  fragColor = vec4(c.rgb, clamp(c.a * (vertexDistance < 100.0 ? 1.0 : 0.0), 0.0, 1.0)); }\n", NULL);
+    check(really_linked(cloud), "cloud-style program links");
+    struct { float p[3]; unsigned char c[4]; } cv[4];
+    for (int i = 0; i < 4; i++) {
+        cv[i].p[0] = corner[i][0]; cv[i].p[1] = corner[i][1]; cv[i].p[2] = 0.25f;
+        cv[i].c[0] = 0; cv[i].c[1] = 255; cv[i].c[2] = 0; cv[i].c[3] = 255;
+    }
+    unsigned short cidx[6] = {0, 1, 2, 0, 2, 3};
+    GLuint cvao, cbuf[2];
+    glGenVertexArrays(1, &cvao);
+    glBindVertexArray(cvao);
+    glGenBuffers(2, cbuf);
+    glBindBuffer(GL_ARRAY_BUFFER, cbuf[0]);
+    glBufferData(GL_ARRAY_BUFFER, sizeof cv, cv, GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cbuf[1]);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof cidx, cidx, GL_STATIC_DRAW);
+    GLint pl = glGetAttribLocation(cloud, "Position"), col = glGetAttribLocation(cloud, "Color");
+    check(pl >= 0 && col >= 0, "cloud attribute locations found");
+    if (pl >= 0) { glEnableVertexAttribArray((GLuint)pl); glVertexAttribPointer((GLuint)pl, 3, GL_FLOAT, GL_FALSE, 16, (void *)0); }
+    if (col >= 0) { glEnableVertexAttribArray((GLuint)col); glVertexAttribPointer((GLuint)col, 4, GL_UNSIGNED_BYTE, GL_TRUE, 16, (void *)12); }
+    glUseProgram(cloud);
+    glUniformMatrix4fv(glGetUniformLocation(cloud, "ModelViewMat"), 1, GL_FALSE, ident);
+    glUniformMatrix4fv(glGetUniformLocation(cloud, "ProjMat"), 1, GL_FALSE, ident);
+    glUniform4f(glGetUniformLocation(cloud, "ColorModulator"), 1, 1, 1, 1);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, (void *)0);
+    glFinish();
+    glDisable(GL_DEPTH_TEST);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindVertexArray(vao);
+    read_texture(rb, tex, ssbo, px);
+    printf("      cloud centre pixel %08x (want ff00ff00)\n", px[32 * 64 + 32]);
+    check(near(px[32 * 64 + 32], rgba(0, 255, 0, 255)), "cloud-style quad draws with the right colour");
+
     /* 5. hardware ray tracing: a shader using mcm_trace must compile on Metal (no scene bound: no hits) */
     GLuint rt = program(NULL, NULL,
                         "#version 430\nlayout(local_size_x = 1) in;\n"
