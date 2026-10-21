@@ -154,8 +154,11 @@ void main() {
     float skyOpen = smoothstep(0.3, 0.9, lmcoord.y);
       #ifdef WATER_RT_REFLECT
     // looking down at water reflects only 2-5%: not worth a ray, the sky stands in (the biggest share of water pixels)
-    vec3 refl = f < 0.05 ? skyColor(reflect(v, n), sunDirection()) * skyOpen
-                         : traceReflection(playerPos + n * 0.02, reflect(v, n), L, sunCol, skyAmb, sunDirection(), skyOpen);
+    // (faded in between 4% and 6%, so there's no visible line where the rays start)
+    vec3 refl = skyColor(reflect(v, n), sunDirection()) * skyOpen;
+    if (f > 0.04)
+        refl = mix(refl, traceReflection(playerPos + n * 0.02, reflect(v, n), L, sunCol, skyAmb, sunDirection(), skyOpen),
+                   smoothstep(0.04, 0.06, f));
       #else
     vec3 refl = skyColor(reflect(v, n), sunDirection()) * skyOpen;
       #endif
