@@ -1,6 +1,7 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
-#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain (default: the first three)
+#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain
+#   pack-NAME packnight-NAME (third-party packs, see PACKS below) (default: the first three)
 # WORK holds the game install (cacheable), OUT gets screenshots and logs. Needs Java 21 as `java` or $JAVA.
 set -uo pipefail
 SRC=$(cd "$(dirname "$0")/../.." && pwd)
@@ -118,6 +119,40 @@ act() { # on|off|showcase: Complementary's options. ACT ships off; "on" = 128, t
     esac
 }
 
+# Third-party shader packs for the compatibility sweep, fetched from Modrinth at run time and deleted after the
+# phase: their source must never be committed or uploaded (the glsl/ dumps are left out of the CI artifacts).
+#   name|file in shaderpacks/|url|sha1
+PACKS="photon|photon_v1.4.zip|https://cdn.modrinth.com/data/lLqFfGNs/versions/BnGklH5y/photon_v1.4.zip|96c7730f5891a42e39bbf1f0f5a98fa99628a7fe
+bsl|BSL_v10.1.8.zip|https://cdn.modrinth.com/data/Q1vvjJYV/versions/Y68yiql9/BSL_v10.1.8.zip|e89818c8827d0131c102fb480c3c3446624db0df
+bliss|Bliss_v2.1.2.zip|https://cdn.modrinth.com/data/ZvMtQlho/versions/kC2Y8q1P/Bliss_v2.1.2_%28Chocapic13_Shaders_edit%29.zip|ded6c8a98305f8aff90ef781e7585b33b8452cfd
+makeup|MakeUp-UltraFast-9.6.zip|https://cdn.modrinth.com/data/izsIPI7a/versions/t4YRxQug/MakeUp-UltraFast-9.6.zip|e2a930f1ffb7ca6a56cf466c13c9e36193425a38
+solas|Solas-V3.8.zip|https://cdn.modrinth.com/data/EpQFjzrQ/versions/XE9yh7pS/Solas%20Shader%20V3.8.zip|e2a5ded8e3061fa1bbf12e828a9992044c88fa62
+rv|rethinking-voxels_r0.1-beta9.zip|https://cdn.modrinth.com/data/kmwfVOoi/versions/cpD4esk9/rethinking-voxels_r0.1-beta9.zip|9689915ec1a7215eb6060be2a08eaf3a09ebdbab
+unbound|ComplementaryUnbound_r5.9.3.zip|https://cdn.modrinth.com/data/R6NEzAwj/versions/B1kyfoUZ/ComplementaryUnbound_r5.9.3.zip|2ee08300e1d6f039e63eae8484dddf57b3aaaf67
+complementary|ComplementaryReimagined_r5.9.3.zip|-|-"
+# Euphoria Patches is a mod: it writes a patched copy of Complementary into shaderpacks/ when the game starts
+EUPHORIA="https://cdn.modrinth.com/data/4H6sumDB/versions/QMsRXtSJ/EuphoriaPatcher-1.10.5-r5.9.3-neoforge.jar|2b3f92878d6867fa0199937da25ba882b9db7902"
+EUPHORIA_PACK="ComplementaryReimagined_r5.9.3 + EuphoriaPatches_1.10.5"
+
+third_party() { # pack-NAME / packnight-NAME [mesa]: one third-party pack in the pool scene, at noon or midnight
+    local p=$1 name=${1#*-} file url sha
+    IFS='|' read -r _ file url sha <<< "$(grep "^${name%%+*}|" <<< "$PACKS")"
+    [ -n "$file" ] || { echo "unknown pack $name"; return; }
+    if [ "$url" != - ] && ! python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import bare_mc; bare_mc.fetch(*sys.argv[2:])' \
+        "$SRC/tools" "$url" "$G/shaderpacks/$file" "$sha"; then echo "could not download $file"; return; fi
+    case $name in *+euphoria) # pack-complementary+euphoria
+        IFS='|' read -r url sha <<< "$EUPHORIA"
+        python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import bare_mc; bare_mc.fetch(*sys.argv[2:])' \
+            "$SRC/tools" "$url" "$G/mods/euphoria-patcher.jar" "$sha" || return
+        file=$EUPHORIA_PACK ;;
+    esac
+    case $p in packnight-*) scene midnight ;; *) scene noon ;; esac
+    PACK=$file run_phase "$p" 240 metal true
+    rm -f "$G/mods/euphoria-patcher.jar"
+    [ "$url" != - ] && rm -rf "$G/shaderpacks/$file"
+    rm -rf "$G/shaderpacks/$EUPHORIA_PACK"*
+}
+
 for p in $PHASES; do
     act off
     case $p in
@@ -141,5 +176,6 @@ for p in $PHASES; do
     rt-debug) scene 1500; PACK=mcmetal-rt-debug run_phase rt-debug 180 metal true ;; # rays drawn as hit (green) / miss (red)
     showcase-plain) scene midnight clear showcase; act plain; run_phase showcase-plain 240 metal true MCMETAL_KEEP_MAC_FLAG=1 ;; # like-for-like with Apple GL, no error screen
     showcase-rain) scene 13800 rain showcase; act showcase; run_phase showcase-rain 240 metal true ;;  # + improved rain, puddles
+    pack-*|packnight-*) third_party "$p" ;; # compatibility sweep: pack-photon, packnight-bsl, pack-complementary+euphoria, ...
     esac
 done
