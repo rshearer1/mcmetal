@@ -62,7 +62,8 @@ void main() {
         // air: the less of the view ray is lit, the more each lit step counts. Open air (all lit) stays clear
         // (dust that only shows in a beam: 0.05 per block where the view ray is all in shade)
         float shade = 1.0 - lit / float(LIGHT_SHAFTS_STEPS);
-        float beam = 0.05 * LIGHT_SHAFTS_STRENGTH * shade;
+        // (cubed: a view ray that starts in open sunlight and then enters a room shouldn't haze the whole room)
+        float beam = 0.05 * LIGHT_SHAFTS_STRENGTH * shade * shade * shade;
         scatter = sunCol * phase * (density + beam) * stepLen * lit * 4.0 * PI;   // x 4pi: our lights skip the 1/pi of diffuse
         if (any(isnan(scatter)) || any(isinf(scatter))) scatter = vec3(0.0);
     }
