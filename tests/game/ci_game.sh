@@ -1,7 +1,8 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
 #   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain
-#   pack-NAME packnight-NAME (third-party packs, see PACKS below) (default: the first three)
+#   pack-NAME packnight-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
+#   (default: the first three)
 # WORK holds the game install (cacheable), OUT gets screenshots and logs. Needs Java 21 as `java` or $JAVA.
 set -uo pipefail
 SRC=$(cd "$(dirname "$0")/../.." && pwd)
@@ -162,7 +163,8 @@ complementary|COLORED_LIGHTING=128"
 
 third_party() { # pack-NAME / packnight-NAME: one third-party pack in the pool scene, at noon (pack settings as
                 # shipped) or midnight (coloured block light on)
-    local p=$1 name=${1#*-} file url sha
+    local p=$1 name=${1#*-} file url sha extra=
+    case $name in *@*) extra=${name#*@}; name=${name%%@*} ;; esac # pack-bliss@OPT=value,OPT2=value: extra options
     IFS='|' read -r _ file url sha <<< "$(grep "^${name%%+*}|" <<< "$PACKS")"
     [ -n "$file" ] || { echo "unknown pack $name"; return; }
     if [ "$url" != - ] && ! python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import bare_mc; bare_mc.fetch(*sys.argv[2:])' \
@@ -180,6 +182,7 @@ third_party() { # pack-NAME / packnight-NAME: one third-party pack in the pool s
         grep "^${name%%+*}|" <<< "$PACK_LIGHT" | cut -d'|' -f2 > "$opts"; [ -s "$opts" ] || rm -f "$opts" ;;
     *) scene noon ;;
     esac
+    [ -n "$extra" ] && tr ',' '\n' <<< "$extra" >> "$opts"
     PACK=$file run_phase "$p" 240 metal true
     rm -f "$opts"
     rm -f "$G/mods/euphoria-patcher.jar"
