@@ -8,6 +8,7 @@ const float PI = 3.14159265359;
 #define MAT_GLOW     3   // fully glowing blocks (lava, glowstone, froglights)
 #define MAT_HAND     4
 #define MAT_ENTITY   5
+#define MAT_WATER    6
 #define MAT_SKY      7   // stars and the moon, drawn into the sky
 #define MAT_LIT      8   // already lit (clouds etc.): deferred keeps the colour as it is
 

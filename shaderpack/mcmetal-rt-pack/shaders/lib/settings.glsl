@@ -16,6 +16,9 @@
 #define RT_REFLECTIONS // ray-traced reflections on water and glass
 #define RT_REFLECT_DISTANCE 128.0 // [32.0 64.0 128.0 256.0]
 
+#define WAVE_HEIGHT 1.0 // [0.0 0.5 1.0 1.5 2.0 3.0]
+#define WAVE_SPEED 1.0 // [0.5 1.0 1.5 2.0]
+
 #define DEBUG_VIEW 0 // [0 1 2 3 4] 0 off, 1 sun shadow, 2 ambient occlusion, 3 global illumination, 4 normals
 
 #define EXPOSURE 1.0 // [0.25 0.35 0.5 0.7 0.85 1.0 1.2 1.4 1.7 2.0 2.5 3.0 4.0]

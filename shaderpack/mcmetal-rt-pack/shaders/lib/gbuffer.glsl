@@ -49,6 +49,7 @@ void main() {
     if (id == 10001) mat = MAT_FOLIAGE;
     else if (id == 10003) mat = MAT_EMISSIVE;
     else if (id == 10004) mat = MAT_GLOW;
+    else if (id == 10002) mat = MAT_WATER;
 #endif
 #if defined FORWARD && !defined UNLIT
     lightColors(sunCol, skyAmb);
@@ -133,6 +134,20 @@ void main() {
     #endif
     vec3 col = albedo * surfaceLight(playerPos, n, lmcoord, ao, mat, L, sunCol, skyAmb, sh) + emission(albedo, mat);
     #ifdef WATER
+    if (mat == MAT_WATER && n.y > 0.9) {
+        // small moving waves: a few travelling sine waves in world space, their slopes tilt the normal
+        vec2 w = playerPos.xz + cameraPosition.xz;
+        float tm = frameTimeCounter * WAVE_SPEED;
+        vec2 slope = vec2(0.0);
+        const vec2 dirs[4] = vec2[4](vec2(0.8, 0.6), vec2(-0.5, 0.86), vec2(0.97, -0.26), vec2(-0.2, -0.98));
+        const float lens[4] = float[4](3.1, 1.7, 0.93, 0.51);
+        for (int i = 0; i < 4; i++) {
+            float k = 6.2832 / lens[i], ph = dot(dirs[i], w) * k + tm * sqrt(9.8 * k);
+            slope += dirs[i] * (cos(ph) * k * lens[i] * 0.012);   // amplitude grows with wavelength
+        }
+        n = normalize(vec3(-slope.x, 1.0, -slope.y) * vec3(WAVE_HEIGHT, 1.0, WAVE_HEIGHT));
+        c.a = 0.55;    // clearer than vanilla water: you see the bottom
+    }
     // reflections: a hardware ray finds what the surface mirrors (on or off screen); otherwise just the sky
     vec3 v = normalize(playerPos);
     float f = 0.02 + 0.98 * pow(1.0 - clamp(dot(-v, n), 0.0, 1.0), 5.0);
