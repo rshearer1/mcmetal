@@ -14,6 +14,9 @@ const vec4 colortex2ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 #include "/lib/uniforms.glsl"
 #include "/lib/sky.glsl"
 #include "/lib/lighting.glsl"
+#ifdef CLOUDS
+    #include "/lib/clouds.glsl"
+#endif
 #if !defined USE_RT || (defined RAIN_PUDDLES && defined RT_REFLECTIONS)
     // (the ray-traced shadow comes from deferred1.fsh; with RT this is only for what puddles reflect)
     #include "/lib/shadow.glsl"
@@ -74,6 +77,9 @@ void main() {
         float cosSun = dot(dir, sunDir), edge = smoothstep(0.99955, 0.99975, cosSun);
         col += lightTransmittance(sunDir) * edge * (60.0 * (0.6 + 0.4 * smoothstep(0.99955, 0.99995, cosSun)));
         if (mat == MAT_SKY) col += toLinear(albedo.rgb) * 0.4 * (1.0 - 0.9 * rainStrength);
+  #ifdef CLOUDS
+        col = drawClouds(col, dir, lightDir, sunCol, skyAmb);
+  #endif
     } else if (mat == MAT_LIT) {
         col = albedo.rgb;
     } else {
