@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
-#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off
+#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off ours-lights ours-pool-night
 #   pack-NAME packnight-NAME (third-party packs, see PACKS below) (default: the first three)
 # WORK holds the game install (cacheable), OUT gets screenshots and logs. Needs Java 21 as `java` or $JAVA.
 set -uo pipefail
@@ -221,6 +221,8 @@ for p in $PHASES; do
     ours-room-gi) scene noon clear room; PACK_OPTS="DEBUG_VIEW=3 ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-room-gi 180 metal true ;;
     ours-room-off) scene noon clear room; PACK_OPTS="RT_GI=false ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-room-off 180 metal true ;;  # GI off
     ours-room-plain) scene noon clear room; PACK_OPTS="COLORED_SHADOWS=false ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-room-plain 180 metal true ;;  # plain mcm_trace shadows
+    ours-lights) scene midnight clear showcase; PACK_OPTS="DEBUG_VIEW=5 ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-lights 180 metal true ;;  # coloured block light only
+    ours-pool-night) scene midnight; PACK=mcmetal-rt-pack run_phase ours-pool-night 180 metal true ;;  # torches, soul and redstone lights by the pool
     ours-gl) scene 1500; PACK=mcmetal-rt-pack run_phase ours-gl 180 metal true MCMETAL_DISABLE=1 ;; # shadow-map fallback on Apple GL
     pack-*|packnight-*) third_party "$p" ;; # compatibility sweep: pack-photon, packnight-bsl, pack-complementary+euphoria, ...
     esac
