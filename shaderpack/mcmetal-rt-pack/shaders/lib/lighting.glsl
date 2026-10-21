@@ -33,7 +33,7 @@ vec3 surfaceLight(vec3 p, vec3 n, vec2 lm, float ao, int mat, vec3 L, vec3 sunCo
     // block light (torches etc.); the held light is a sphere around the player
     float held = float(max(heldBlockLightValue, heldBlockLightValue2));
     float bl = max(lm.x, clamp((held - length(p)) / 15.0, 0.0, 1.0));
-    vec3 blk = blockLightColor() * (1.6 * bl * bl * bl + 0.05 * bl) * BLOCK_LIGHT_STRENGTH * ao;
+    vec3 blk = blockLightColor() * (1.2 * bl * bl * bl + 0.05 * bl) * BLOCK_LIGHT_STRENGTH * ao;
     vec3 floorLight = vec3(0.0015, 0.0017, 0.002) * ao + vec3(0.25) * nightVision;
     return direct + sky + blk + floorLight;
 }
