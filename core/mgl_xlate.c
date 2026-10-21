@@ -217,6 +217,47 @@ static void match_varyings(spvc_compiler comp, spvc_resources res, int stage, va
     }
 }
 
+/* SPIRV-Cross pads narrow fragment outputs (vec3, float) to float4 but writes only out.x.xyz, leaving alpha 0:
+   with blending that made SEUS PTGI's passes transparent. GL's missing components read as (0, 0, 0, 1), so
+   every padded output starts as that before the shader's own write. */
+static char *msl_dup(const char *msl, int stage)
+{
+    const char *init = stage == MGL_FRAGMENT ? strstr(msl, "main0_out out = {};\n") : NULL;
+    if (!init)
+        return strdup(msl);
+    char names[16][128];
+    int n = 0;
+    for (const char *p = strstr(msl, "    out."); p && n < 16; p = strstr(p + 8, "    out.")) {
+        const char *q = p + 8, *e = q;
+        while (isalnum((unsigned char)*e) || *e == '_')
+            e++;
+        if (strncmp(e, ".x = ", 5) && strncmp(e, ".xy = ", 6) && strncmp(e, ".xyz = ", 7))
+            continue;
+        if (e - q >= 128)
+            continue;
+        int dup = 0;
+        for (int k = 0; k < n; k++)
+            dup |= strlen(names[k]) == (size_t)(e - q) && !strncmp(names[k], q, (size_t)(e - q));
+        if (!dup) {
+            memcpy(names[n], q, (size_t)(e - q));
+            names[n++][e - q] = 0;
+        }
+    }
+    if (!n)
+        return strdup(msl);
+    size_t at = (size_t)(init - msl) + strlen("main0_out out = {};\n"), extra = 0;
+    for (int k = 0; k < n; k++)
+        extra += strlen(names[k]) + 48;
+    char *out = malloc(strlen(msl) + extra + 1), *o = out;
+    memcpy(o, msl, at);
+    o += at;
+    for (int k = 0; k < n; k++)
+        o += sprintf(o, "    out.%s = float4(0.0, 0.0, 0.0, 1.0);\n", names[k]);
+    strcpy(o, msl + at);
+    return out;
+}
+
+
 static spvc_bool cross_stage(mgl_xlate_result *r, int stage, const uint32_t *words, size_t nwords, int *next_tex,
                              varying_map *vm)
 {
@@ -242,6 +283,10 @@ static spvc_bool cross_stage(mgl_xlate_result *r, int stage, const uint32_t *wor
         spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_FLIP_VERTEX_Y, SPVC_TRUE);
         spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_FIXUP_DEPTH_CONVENTION, SPVC_TRUE);
     }
+    spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_MSL_TEXTURE_1D_AS_2D, SPVC_TRUE); /* see glTexImage1D */
+    /* GL lets a shader write a vec3 or float into an RGBA target; Metal needs as many components as the format */
+    if (stage == MGL_FRAGMENT)
+        spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_MSL_PAD_FRAGMENT_OUTPUT_COMPONENTS, SPVC_TRUE);
     spvc_compiler_install_compiler_options(comp, opts);
     /* Only resources the shader really uses: GLSL code often declares far more samplers than it reads,
        and Metal has 16 sampler slots per stage. */
@@ -256,9 +301,14 @@ static spvc_bool cross_stage(mgl_xlate_result *r, int stage, const uint32_t *wor
         spvc_msl_resource_binding b;
         spvc_msl_resource_binding_init(&b);
         b.stage = spv_model[stage];
-        b.desc_set = spvc_compiler_get_decoration(comp, list[i].id, SpvDecorationDescriptorSet);
+        /* GL numbers uniform and storage blocks separately; in SPIR-V they would share set 0, and SPIRV-Cross then
+           aliases a uniform block with the storage block of the same binding (Rethinking Voxels: the default
+           block read through an SSBO pointer). Uniform blocks get their own set, the default block another. */
+        int dflt = is_default_block(comp, &list[i]);
+        spvc_compiler_set_decoration(comp, list[i].id, SpvDecorationDescriptorSet, dflt ? 5 : 4);
+        b.desc_set = dflt ? 5 : 4;
         b.binding = spvc_compiler_get_decoration(comp, list[i].id, SpvDecorationBinding);
-        if (is_default_block(comp, &list[i])) {
+        if (dflt) {
             b.msl_buffer = MGL_BUF_DEFAULT_UNIFORMS;
             reflect_default_block(r, comp, stage, &list[i]);
         } else {
@@ -396,7 +446,7 @@ static spvc_bool cross_stage(mgl_xlate_result *r, int stage, const uint32_t *wor
         xlog(r, "%s: SPIRV-Cross: %s", stage_name[stage], spvc_context_get_last_error_string(ctx));
         goto done;
     }
-    r->msl[stage] = strdup(msl);
+    r->msl[stage] = msl_dup(msl, stage);
     ok = SPVC_TRUE;
 done:
     spvc_context_destroy(ctx);
@@ -742,7 +792,7 @@ int mgl_xlate_emit(void *pending[MGL_NUM_STAGES], char *msl[MGL_NUM_STAGES], cha
             continue;
         const char *out = NULL;
         if (ok && spvc_compiler_compile(ps->comp, &out) == SPVC_SUCCESS) {
-            msl[s] = strdup(out);
+            msl[s] = msl_dup(out, ps->stage);
         } else if (ok) {
             ok = 0;
             mgl_xlate_result tmp = {0};
