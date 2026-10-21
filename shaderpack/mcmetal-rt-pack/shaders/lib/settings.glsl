@@ -2,6 +2,7 @@
 
 #define COLORED_LIGHT // torches, lanterns, glowstone... each light their own colour, with ray-traced shadows (needs mcmetal's light list)
 #define COLORED_LIGHT_STRENGTH 1.0 // [0.5 0.7 0.85 1.0 1.2 1.5 2.0]
+#define LIGHT_SLOTS 4 // [2 4 6 8] how many of the nearest light blocks each pixel considers (more = slower)
 #define RT_MODE 1 // [0 1 2] 0 = shadow map only, 1 = hardware ray tracing when mcmetal provides it, 2 = always ray tracing
 #if RT_MODE == 2 || (RT_MODE == 1 && defined MCMETAL_RT)
     #define USE_RT

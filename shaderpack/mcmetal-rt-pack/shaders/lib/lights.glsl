@@ -51,10 +51,10 @@ vec3 lightFrom(vec3 p, vec3 n, int mat, vec3 lp, int id, out vec3 dir, out float
 // one sample of all nearby lights: pick a light in proportion to its unshadowed light, trace its shadow, divide by
 // the pick chance. u1, u2, u3 are random numbers in [0,1).
 vec3 coloredBlockLight(vec3 p, vec3 n, int mat, float u1, float u2, float u3) {
-    vec3 lp[8]; int ids[8]; float w[8];
+    vec3 lp[LIGHT_SLOTS]; int ids[LIGHT_SLOTS]; float w[LIGHT_SLOTS];
     float total = 0.0;
     int count = 0;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < LIGHT_SLOTS; i++) {
         vec3 pos; int id;
         if (mcm_lights_near(p, i, pos, id) < 0) break;
         vec3 dir; float dist;

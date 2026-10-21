@@ -81,7 +81,9 @@ void main() {
     if (hit < 0.0) gi = mix(vec3(luma(gi)), gi, SKY_GI_SATURATION) * SKY_LIGHT_STRENGTH;
     gi = min(gi, vec3(16.0));   // one lucky ray into the sun-lit sky must not leave a bright speck
     #ifdef USE_LIGHTS
-    // coloured block light: one nearby light per pixel and frame, averaged and filtered along with the GI
+    // coloured block light: one nearby light per pixel and frame, averaged and filtered along with the GI. Where
+    // Minecraft's own block light is zero no light block is in reach: skip the light list (most of a daytime view)
+    if (texture(colortex1, texcoord).z > 0.05)
     gi += min(coloredBlockLight(p, n, mat, ign(gl_FragCoord.xy + vec2(5.0, 37.0), frameCounter * 11 + 4),
                                 ign(gl_FragCoord.xy + vec2(61.0, 3.0), frameCounter * 13 + 5),
                                 ign(gl_FragCoord.xy + vec2(23.0, 83.0), frameCounter * 17 + 6)), vec3(32.0));
