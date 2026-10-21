@@ -1897,7 +1897,8 @@ static const char *builtin_msl =
     "  float2 p = float2((vid << 1) & 2, vid & 2); return float4(p.x * 2 - 1, 1 - p.y * 2, v.x, 1); }\n"
 "fragment CO clear_fs(constant float4 &c [[buffer(0)]]) { CO o; o.c0 = o.c1 = o.c2 = o.c3 = o.c4 = o.c5 = o.c6 = o.c7 = c; return o; }\n"
     /* ray tracing: Sodium/Iris terrain vertices -> region-local float3 triangle list (see mgl_rt.c for the layout) */
-    "struct RtInfo { uint vbase, stride, ioff, itype, count; int base_vertex; int ent_off; uint translucent; };\n"
+    "struct RtInfo { uint vbase, stride, ioff, itype, count; int base_vertex; int ent_off; uint translucent;\n"
+    "  int lmin, lmax; uint lcap; };\n"
     /* per triangle, 12 words, for mcm_trace (core/mgl_program.c reads the same layout):
          0-2 packed texture coordinates (Sodium's 15-bit u/v)   3 alpha cutoff index (0 = solid) | 0x100 translucent
          4-6 vertex colours RGBA8   7 face normal (octahedral snorm16x2)   8-10 light (block, sky bytes)
@@ -1906,7 +1907,7 @@ static const char *builtin_msl =
        textures are opaque, so this only costs time). */
     "kernel void rt_decode(device const uchar *vb [[buffer(0)]], device const uchar *ib [[buffer(1)]],\n"
     "    device packed_float3 *out [[buffer(2)]], constant RtInfo &n [[buffer(3)]], device uint *tri [[buffer(4)]],\n"
-    "    uint t [[thread_position_in_grid]]) {\n"
+    "    device atomic_uint *lc [[buffer(5)]], uint t [[thread_position_in_grid]]) {\n"
     "  if (t * 3 >= n.count) return;\n"
     "  float3 p[3]; uint r[12];\n"
     "  for (uint k = 0; k < 3; k++) {\n"
@@ -1927,7 +1928,51 @@ static const char *builtin_msl =
     "  float3 nn = length(c) > 0.0 ? c / (abs(c.x) + abs(c.y) + abs(c.z)) : float3(0, 1, 0);\n"
     "  float2 o = nn.z >= 0.0 ? nn.xy : (1.0 - abs(nn.yx)) * select(float2(-1.0), float2(1.0), nn.xy >= 0.0);\n"
     "  r[7] = pack_float_to_snorm2x16(o);\n"
-    "  for (uint k = 0; k < 12; k++) tri[t * 12 + k] = r[k]; }\n";
+    "  for (uint k = 0; k < 12; k++) tri[t * 12 + k] = r[k];\n"
+    /* light candidates (MCMETAL_LIGHT_IDS): the block this face belongs to, a little inside it from the centroid
+       (front faces wind counter-clockwise, so the face normal points out of the block) */
+    "  int id = int(r[11]) - 1;\n"
+    "  if (n.lcap > 0u && id >= n.lmin && id <= n.lmax) {\n"
+    "    uint k = atomic_fetch_add_explicit(&lc[0], 1u, memory_order_relaxed);\n"
+    "    if (k < n.lcap) {\n"
+    "      float3 in = (p[0] + p[1] + p[2]) / 3.0 - (length(c) > 0.0 ? normalize(c) : float3(0)) * 0.01;\n"
+    "      device uint *e = (device uint *)(lc + 4 + k * 4);\n"
+    "      e[0] = as_type<uint>(in.x); e[1] = as_type<uint>(in.y); e[2] = as_type<uint>(in.z); e[3] = uint(id); } } }\n"
+    /* per section, per frame: light candidates -> one light per block (hash on the block position) */
+    "struct RtLightSec { int3 off; float3 region; uint cap; };\n"
+    "kernel void rt_lights(device const uint *lc [[buffer(0)]], constant RtLightSec &s [[buffer(1)]],\n"
+    "    device atomic_uint *hash [[buffer(2)]], device atomic_uint *lights [[buffer(3)]], uint t [[thread_position_in_grid]]) {\n"
+    "  if (t >= min(lc[0], s.cap)) return;\n"
+    "  device const uint *e = lc + 4 + t * 4;\n"
+    "  float3 in = float3(as_type<float>(e[0]), as_type<float>(e[1]), as_type<float>(e[2]));\n"
+    "  int3 b = int3(floor(in)) + s.off + 512;\n"
+    "  if (any(b < 0) || any(b > 1023)) return;\n"
+    "  uint key = uint(b.x) | uint(b.y) << 10 | uint(b.z) << 20 | 0x40000000u;\n"
+    "  uint h = (key * 2654435761u) >> 19;\n"
+    "  for (int probe = 0; probe < 64; ) {\n"
+    "    uint expected = 0u;\n"
+    "    if (atomic_compare_exchange_weak_explicit(&hash[h], &expected, key, memory_order_relaxed, memory_order_relaxed)) {\n"
+    "      uint i = atomic_fetch_add_explicit(&lights[0], 1u, memory_order_relaxed);\n"
+    "      if (i < 2048u) {\n"
+    "        device float4 *l = (device float4 *)(lights + 4) + i;\n"
+    "        *l = float4(floor(in) + 0.5 + s.region, float(e[3])); }\n"
+    "      return; }\n"
+    "    if (expected == key) return;\n"
+    "    if (expected != 0u) { h = (h + 1u) & 8191u; probe++; } }\n"
+    "}\n"
+    /* per light: add it to every 4-block cell of the 16^3 grid (centred on the camera) it can reach within 16 blocks */
+    "kernel void rt_light_grid(device atomic_uint *lights [[buffer(0)]], uint t [[thread_position_in_grid]]) {\n"
+    "  if (t >= min(atomic_load_explicit(&lights[0], memory_order_relaxed), 2048u)) return;\n"
+    "  float3 p = ((device const float4 *)(lights + 4))[t].xyz;\n"
+    "  device atomic_uint *cells = lights + 4 + 2048 * 4;\n"
+    "  int3 c0 = max(int3(floor((p - 16.0 + 32.0) / 4.0)), 0), c1 = min(int3(floor((p + 16.0 + 32.0) / 4.0)), 15);\n"
+    "  for (int z = c0.z; z <= c1.z; z++) for (int y = c0.y; y <= c1.y; y++) for (int x = c0.x; x <= c1.x; x++) {\n"
+    "    float3 lo = float3(x, y, z) * 4.0 - 32.0, q = clamp(p, lo, lo + 4.0);\n"
+    "    if (distance(p, q) > 16.0) continue;\n"
+    "    device atomic_uint *cell = cells + ((z * 16 + y) * 16 + x) * 17;\n"
+    "    uint k = atomic_fetch_add_explicit(cell, 1u, memory_order_relaxed);\n"
+    "    if (k < 16u) atomic_store_explicit(cell + 1 + k, t, memory_order_relaxed); }\n"
+    "}\n";
 
 static id<MTLLibrary> builtins;
 
@@ -2501,11 +2546,14 @@ static void gs_flush(void)
 @property(nonatomic, strong) id<MTLAccelerationStructure> as;
 @property(nonatomic) uint64_t last_frame;
 @property(nonatomic) mglb_buffer *tris; /* per-triangle texture coordinates + alpha cutoff (rt_decode) */
+@property(nonatomic) mglb_buffer *lights; /* light candidates: count, then (position, id) per face */
+@property(nonatomic) uint32_t lcap;
 @end
 @implementation RtSection
 - (void)dealloc
 {
     mglb_buffer_release(_tris);
+    mglb_buffer_release(_lights);
 }
 @end
 static mglb_buffer *rt_inst;                    /* GPU address of each scene instance's triangle data */
@@ -2520,7 +2568,8 @@ typedef struct rt_key {
     int32_t stride, itype, count, base_vertex;
     uint32_t gen;
     int32_t ent_off;
-    uint32_t translucent, pad;
+    uint32_t translucent;
+    int32_t lmin, lmax;
 } rt_key;
 
 static NSMutableDictionary<NSData *, RtSection *> *rt_sections;
@@ -2561,7 +2610,7 @@ static id<MTLAccelerationStructure> build_as(MTLAccelerationStructureDescriptor 
     return as;
 }
 
-static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer **tris_out)
+static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer **tris_out, RtSection **sec_out)
 {
     rt_key k;
     memset(&k, 0, sizeof k);
@@ -2576,11 +2625,14 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer
     k.gen = g->gen;
     k.ent_off = g->ent_off;
     k.translucent = (uint32_t)g->translucent;
-    NSData *key = [NSData dataWithBytes:&k length:sizeof k];
+    k.lmin = mgl_rt_light_ids[0];
+    k.lmax = mgl_rt_light_ids[1];
+    NSData *key = [[NSData alloc] initWithBytes:&k length:sizeof k];
     RtSection *s = rt_sections[key];
     if (s) {
         s.last_frame = rt_frame;
         *tris_out = s.tris;
+        *sec_out = s;
         return s.as;
     }
     id<MTLComputePipelineState> ps = rt_decode_pipeline();
@@ -2595,9 +2647,17 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer
         mglb_buffer_release(tri);
         return nil;
     }
-    struct { uint32_t vbase, stride, ioff, itype, count; int32_t base_vertex, ent_off; uint32_t translucent; } info = {
+    uint32_t lcap = mgl_rt_light_ids[0] >= 0 && g->ent_off >= 0 ? (uint32_t)(tris < 1024 ? tris : 1024) : 0;
+    mglb_buffer *lights = lcap ? mglb_buffer_new(16 + (size_t)lcap * 16) : NULL;
+    if (!lights)
+        lcap = 0;
+    else
+        *(uint32_t *)lights->ptr = 0; /* candidate count */
+    struct { uint32_t vbase, stride, ioff, itype, count; int32_t base_vertex, ent_off; uint32_t translucent;
+             int32_t lmin, lmax; uint32_t lcap; } info = {
         (uint32_t)g->vbase, (uint32_t)g->stride, (uint32_t)g->ioff, g->itype == GL_UNSIGNED_SHORT ? 2u : 4u,
-        (uint32_t)(tris * 3), g->base_vertex, g->ent_off, g->translucent ? 1u : 0u};
+        (uint32_t)(tris * 3), g->base_vertex, g->ent_off, g->translucent ? 1u : 0u,
+        mgl_rt_light_ids[0], mgl_rt_light_ids[1], lcap};
     id<MTLComputeCommandEncoder> c = compute_encoder();
     [c setComputePipelineState:ps];
     [c setBuffer:OBJ(id<MTLBuffer>, g->vbuf->mtl) offset:0 atIndex:0];
@@ -2605,7 +2665,9 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer
     [c setBuffer:OBJ(id<MTLBuffer>, pos->mtl) offset:0 atIndex:2];
     [c setBytes:&info length:sizeof info atIndex:3];
     [c setBuffer:OBJ(id<MTLBuffer>, tri->mtl) offset:0 atIndex:4];
+    [c setBuffer:OBJ(id<MTLBuffer>, (lights ? lights : tri)->mtl) offset:0 atIndex:5];
     use_buffer(tri);
+    use_buffer(lights);
     [c dispatchThreads:MTLSizeMake((NSUInteger)tris, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
     use_buffer(g->vbuf);
     use_buffer(g->ibuf);
@@ -2623,6 +2685,7 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer
     mglb_buffer_release(pos);
     if (!as) {
         mglb_buffer_release(tri);
+        mglb_buffer_release(lights);
         return nil;
     }
     if (!rt_sections)
@@ -2630,13 +2693,99 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer
     s = [RtSection new];
     s.as = as;
     s.tris = tri;
+    s.lights = lights;
+    s.lcap = lcap;
     s.last_frame = rt_frame;
     rt_sections[key] = s;
     *tris_out = tri;
+    *sec_out = s;
     return as;
 }
 
+/* The light list for mcm_lights_near (layout in core/mgl_program.c): every section's light candidates, one light
+   per block, then a grid of the lights each 4-block cell can reach. Rebuilt each frame, on the GPU. */
+#define RT_LIGHTS_BYTES (16 + 2048 * 16 + 16 * 16 * 16 * 17 * 4)
+static mglb_buffer *rt_lights_buf;
+
+mglb_buffer *mglb_rt_lights(void)
+{
+    if (!rt_lights_buf && (rt_lights_buf = mglb_buffer_new(RT_LIGHTS_BYTES)))
+        memset(rt_lights_buf->ptr, 0, RT_LIGHTS_BYTES); /* no lights yet */
+    return rt_lights_buf;
+}
+
+static id<MTLComputePipelineState> builtin_compute(NSString *name)
+{
+    static NSMutableDictionary<NSString *, id<MTLComputePipelineState>> *cache;
+    if (!cache)
+        cache = [NSMutableDictionary dictionary];
+    id<MTLComputePipelineState> ps = cache[name];
+    if (!ps) {
+        NSError *e = nil;
+        id<MTLFunction> f = builtin(name);
+        ps = f ? [dev newComputePipelineStateWithFunction:f error:&e] : nil;
+        if (!ps) {
+            mgl_log("%s pipeline: %s", name.UTF8String, e ? e.localizedDescription.UTF8String : "no function");
+            return nil;
+        }
+        cache[name] = ps;
+    }
+    return ps;
+}
+
+static void rt_build_lights(const mgl_rt_geom *g, RtSection *__strong *secs, const int *sec_geom, int count)
+{
+    if (mgl_rt_light_ids[0] < 0)
+        return;
+    id<MTLComputePipelineState> pl = builtin_compute(@"rt_lights"), pg = builtin_compute(@"rt_light_grid");
+    mglb_buffer *lb = mglb_buffer_new(RT_LIGHTS_BYTES), *hash = mglb_buffer_new(8192 * 4);
+    if (!pl || !pg || !lb || !hash) {
+        mglb_buffer_release(lb);
+        mglb_buffer_release(hash);
+        return;
+    }
+    id<MTLBlitCommandEncoder> b = blit_encoder();
+    [b fillBuffer:OBJ(id<MTLBuffer>, lb->mtl) range:NSMakeRange(0, RT_LIGHTS_BYTES) value:0];
+    [b fillBuffer:OBJ(id<MTLBuffer>, hash->mtl) range:NSMakeRange(0, 8192 * 4) value:0];
+    id<MTLComputeCommandEncoder> c = compute_encoder();
+    [c setComputePipelineState:pl];
+    [c setBuffer:OBJ(id<MTLBuffer>, hash->mtl) offset:0 atIndex:2];
+    [c setBuffer:OBJ(id<MTLBuffer>, lb->mtl) offset:0 atIndex:3];
+    const float *r0 = count ? g[sec_geom[0]].region : NULL;
+    for (int i = 0; i < count; i++) {
+        RtSection *s = secs[i];
+        if (!s.lights)
+            continue;
+        const float *r = g[sec_geom[i]].region;
+        /* sections sit on the block grid, so their offsets from the first one are whole blocks */
+        struct { int32_t off[4]; float region[4]; uint32_t cap, pad[3]; } info = {
+            {(int32_t)lroundf(r[0] - r0[0]), (int32_t)lroundf(r[1] - r0[1]), (int32_t)lroundf(r[2] - r0[2]), 0},
+            {r[0], r[1], r[2], 0}, s.lcap, {0, 0, 0}};
+        [c setBuffer:OBJ(id<MTLBuffer>, s.lights->mtl) offset:0 atIndex:0];
+        [c setBytes:&info length:sizeof info atIndex:1];
+        [c dispatchThreads:MTLSizeMake(s.lcap, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+        use_buffer(s.lights);
+    }
+    [c memoryBarrierWithScope:MTLBarrierScopeBuffers];
+    [c setComputePipelineState:pg];
+    [c setBuffer:OBJ(id<MTLBuffer>, lb->mtl) offset:0 atIndex:0];
+    [c dispatchThreads:MTLSizeMake(2048, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+    use_buffer(lb);
+    use_buffer(hash);
+    mglb_buffer_release(hash);
+    mglb_buffer_release(rt_lights_buf); /* the pool keeps it until the GPU is done with it */
+    rt_lights_buf = lb;
+}
+
+static void rt_update(const mgl_rt_geom *g, int n);
 void mglb_rt_update(const mgl_rt_geom *g, int n)
+{
+    @autoreleasepool { /* the game's render thread has no pool of its own: descriptors and keys would pile up */
+        rt_update(g, n);
+    }
+}
+
+static void rt_update(const mgl_rt_geom *g, int n)
 {
     if (!dev.supportsRaytracing) {
         static int said;
@@ -2656,11 +2805,16 @@ void mglb_rt_update(const mgl_rt_geom *g, int n)
     free(rt_tris_c);
     rt_tris_c = (__unsafe_unretained id<MTLResource> *)calloc((size_t)(n ? n : 1), sizeof(id));
     int count = 0;
+    RtSection *__strong *secs = (RtSection *__strong *)calloc((size_t)(n ? n : 1), sizeof(RtSection *));
+    int *sec_geom = calloc((size_t)(n ? n : 1), sizeof(int));
     for (int i = 0; i < n; i++) {
         mglb_buffer *tris = NULL;
-        id<MTLAccelerationStructure> as = section_as(&g[i], &tris);
+        RtSection *sec = nil;
+        id<MTLAccelerationStructure> as = section_as(&g[i], &tris, &sec);
         if (!as)
             continue;
+        secs[count] = sec;
+        sec_geom[count] = i;
         addr[count] = OBJ(id<MTLBuffer>, tris->mtl).gpuAddress;
         rt_tris_c[count] = OBJ(id<MTLBuffer>, tris->mtl);
         MTLAccelerationStructureUserIDInstanceDescriptor *d = &descs[count];
@@ -2686,6 +2840,11 @@ void mglb_rt_update(const mgl_rt_geom *g, int n)
           [old addObject:k];
     }];
     [rt_sections removeObjectsForKeys:old];
+    rt_build_lights(g, secs, sec_geom, count);
+    for (int i = 0; i < count; i++)
+        secs[i] = nil;
+    free(secs);
+    free(sec_geom);
     if (!count) {
         mglb_buffer_release(table);
         rt_tris_n = 0;

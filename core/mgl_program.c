@@ -253,6 +253,9 @@ GLboolean glIsShader(GLuint name) { return shader_obj(name) != NULL; }
                                               // (block, sky; 0..1), Iris block id (-1 unless the terrain pass reads mc_Entity)
        float mcm_trace_tinted(vec3 origin, vec3 dir, float tmax, out vec3 transmit); // as mcm_trace; on a miss,
                                               // transmit = colour filter of the glass/water/ice on the way (1 = clear)
+       int mcm_lights_near(vec3 p, int slot, out vec3 pos, out int blockId); // the slot-th nearest light block within
+                                              // 16 blocks of p (ids from "#define MCMETAL_LIGHT_IDS lo hi", default
+                                              // 10100 10299): index or -1; pos = block centre. MCMETAL_LIGHTS is defined.
    in plain GLSL (so Iris's own parser accepts it) and calls it; origin/dir are in Iris's player space
    (camera-relative world space). We supply the body with a GL_EXT_ray_query against the terrain scene. */
 static void add_ray_tracing(mgl_shader *s)
@@ -272,7 +275,12 @@ static void add_ray_tracing(mgl_shader *s)
                                "layout(set = 7, binding = 0) uniform accelerationStructureEXT mcm_scene; // own set: no clash with SSBO 0\n"
                                "layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer McmTris { uint w[]; };\n"
                                "layout(std430, binding = 15) readonly buffer McmInstances { McmTris mcm_tris[]; };\n"
-                               "uniform sampler2D mcm_atlas;\n";
+                               "uniform sampler2D mcm_atlas;\n"
+                               "#define MCMETAL_LIGHTS 1\n"
+                               /* light list (mglb_rt_update): count, lights (camera-relative block centre, id),
+                                  then a 16^3 grid of 4-block cells, each a count and up to 16 light indices */
+                               "layout(std430, binding = 14) readonly buffer McmLights { uint mcm_lcount; uint mcm_lpad[3];\n"
+                               "  vec4 mcm_light[2048]; uint mcm_lcell[]; };\n";
     /* McmTris: 12 words per triangle, written by rt_decode (mac/mgl_metal.m): 0-2 uv, 3 cutoff | 0x100 translucent,
        4-6 colour, 7 octahedral normal, 8-10 light, 11 Iris block id + 1. Candidates (every triangle is non-opaque)
        pass Sodium's alpha test against the block atlas before they count. */
@@ -347,7 +355,39 @@ static void add_ray_tracing(mgl_shader *s)
         "    transmit *= mix(vec3(1.0), tex.rgb * mcm_colour(t, b, w).rgb, tex.a);\n"
         "  }\n"
         "  return -1.0;\n"
+        "}\n"
+        /* the slot-th nearest light block (id in the pack's MCMETAL_LIGHT_IDS range) within 16 blocks of p:
+           returns its index and sets pos (block centre, player space) and blockId, or -1 */
+        "int mcm_lights_near(vec3 p, int slot, out vec3 pos, out int blockId) {\n"
+        "  pos = vec3(0.0); blockId = -1;\n"
+        "  ivec3 c = ivec3(floor((p + 32.0) / 4.0));\n"
+        "  if (any(lessThan(c, ivec3(0))) || any(greaterThanEqual(c, ivec3(16)))) return -1;\n"
+        "  uint base = uint((c.z * 16 + c.y) * 16 + c.x) * 17u, n = min(mcm_lcell[base], 16u);\n"
+        "  float last = -1.0; uint li = 0xFFFFFFFFu;\n"
+        "  for (int s = 0; s <= slot; s++) {\n"
+        "    float best = 1e30; uint bi = 0xFFFFFFFFu;\n"
+        "    for (uint k = 0u; k < n; k++) {\n"
+        "      uint j = mcm_lcell[base + 1u + k];\n"
+        "      float d = distance(p, mcm_light[j].xyz);\n"
+        "      if (d > 16.0 || d < last || (d == last && j <= li)) continue;\n"
+        "      if (d < best || (d == best && j < bi)) { best = d; bi = j; }\n"
+        "    }\n"
+        "    if (bi == 0xFFFFFFFFu) return -1;\n"
+        "    last = best; li = bi;\n"
+        "  }\n"
+        "  pos = mcm_light[li].xyz; blockId = int(mcm_light[li].w);\n"
+        "  return int(li);\n"
         "}\n";
+    /* MCMETAL_LIGHT_IDS lo hi: which block ids mcm_lights_near lists (the last program to say wins) */
+    const char *li = strstr(s->source, "#define MCMETAL_LIGHT_IDS");
+    int lo = 10100, hi = 10299; /* default for packs that call mcm_lights_near without saying */
+    if ((li && sscanf(li + 25, "%d %d", &lo, &hi) == 2 && lo <= hi) ||
+        (!li && mgl_rt_light_ids[0] < 0 && strstr(s->source, "mcm_lights_near"))) {
+        if (lo != mgl_rt_light_ids[0] || hi != mgl_rt_light_ids[1])
+            mgl_log("ray tracing: light list collects block ids %d-%d", lo, hi);
+        mgl_rt_light_ids[0] = lo;
+        mgl_rt_light_ids[1] = hi;
+    }
     size_t pre = (size_t)(v - s->source), rest = strlen(eol + 1);
     char *n = malloc(pre + sizeof head + rest + sizeof body);
     memcpy(n, s->source, pre);
