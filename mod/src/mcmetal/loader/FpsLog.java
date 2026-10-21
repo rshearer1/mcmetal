@@ -44,14 +44,31 @@ final class FpsLog {
                     }
                 }
             }
+            boolean f3 = System.getenv("MCMETAL_F3") != null;
             while (true) {
                 Thread.sleep(EVERY_MS);
                 Object mc = getInstance.invoke(null);
-                if (mc != null)
-                    MetalBootstrap.log("fps " + getFps.invoke(mc));
+                if (mc == null)
+                    continue;
+                if (f3 && mc.getClass().getField("level").get(mc) != null)
+                    f3 = !openDebugScreen(mc);
+                MetalBootstrap.log("fps " + getFps.invoke(mc));
             }
         } catch (Throwable t) {
             MetalBootstrap.log("fps log stopped: " + t);
         }
+    }
+
+    /** MCMETAL_F3=1 (benchmarks): open the F3 debug screen once a world is loaded, as if the player pressed F3. */
+    private static boolean openDebugScreen(Object mc) {
+        try {
+            Object gui = mc.getClass().getField("gui").get(mc);
+            Object overlay = gui.getClass().getMethod("getDebugOverlay").invoke(gui);
+            overlay.getClass().getMethod("toggleOverlay").invoke(overlay);
+            MetalBootstrap.log("opened the F3 debug screen");
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            MetalBootstrap.log("could not open the F3 debug screen: " + e);
+        }
+        return true;
     }
 }
