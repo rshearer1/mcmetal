@@ -896,6 +896,33 @@ static uint16_t small_enum(int e) { return (uint16_t)e; } /* every blend enum fi
 
 /* MGL_PROBE_PROGRAMS=3,24: draw these GL programs solid magenta with no depth test, culling or blending, so a
    screenshot shows where their geometry really lands (debugging invisible draws). */
+static int program_listed(const mgl_draw *d, const char *var, int *n, unsigned *ids)
+{
+    if (*n < 0) {
+        *n = 0;
+        const char *e = getenv(var);
+        while (e && *e && *n < 32) {
+            ids[(*n)++] = (unsigned)strtoul(e, (char **)&e, 10);
+            while (*e == ',' || *e == ' ')
+                e++;
+        }
+    }
+    unsigned gl = 0;
+    if (*n && d->program && sscanf(d->program->label, "GL program %u", &gl) == 1)
+        for (int i = 0; i < *n; i++)
+            if (ids[i] == gl)
+                return 1;
+    return 0;
+}
+
+/* MGL_LOG_PROGRAMS=18: log these programs' draws like probes (vertices, uniforms, textures) without repainting */
+static int log_program(const mgl_draw *d)
+{
+    static int n = -1;
+    static unsigned ids[32];
+    return program_listed(d, "MGL_LOG_PROGRAMS", &n, ids);
+}
+
 static int probe_program(const mgl_draw *d)
 {
     static int n = -1;
@@ -978,6 +1005,25 @@ static void log_probe_draw(const mgl_draw *d)
         for (int j = 0; j < vb->stride && j < 48; j++)
             n += snprintf(hex + n, sizeof hex - (size_t)n, "%02x", p[j]);
         mgl_log("probe:   vertex %ld: %s", idx, hex);
+    }
+    for (int st = 0; st < 2; st++)
+        for (int i = 0; i < d->num_textures[st] && i < MGL_MAX_TEXTURES; i++) {
+            const mgl_bound_texture *bt = &d->textures[st][i];
+            if (!bt->dim)
+                continue;
+            mgl_log("probe:   %s texture %d: %p %dx%d levels %d format %d; min 0x%x mag 0x%x wrap 0x%x/0x%x lod %g..%g bias %g%s",
+                    st ? "fragment" : "vertex", i, (void *)bt->tex, bt->tex ? bt->tex->d.width : 0, bt->tex ? bt->tex->d.height : 0,
+                    bt->tex ? bt->tex->d.levels : 0, bt->tex ? (int)bt->tex->d.format : -1, bt->sampler.min_filter,
+                    bt->sampler.mag_filter, bt->sampler.wrap_s, bt->sampler.wrap_t, bt->sampler.min_lod, bt->sampler.max_lod,
+                    bt->sampler.lod_bias, bt->swizzle[0] | bt->swizzle[3] ? " swizzled" : "");
+        }
+    if (d->uniforms[1] && d->uniform_size[1] > 0) {
+        const unsigned char *u = d->uniforms[1];
+        char hex[1100];
+        int n = 0;
+        for (int j = 0; j < d->uniform_size[1] && j < 512; j++)
+            n += snprintf(hex + n, sizeof hex - (size_t)n, "%02x", u[j]);
+        mgl_log("probe:   fragment uniforms %d bytes: %s", d->uniform_size[1], hex);
     }
     if (d->uniforms[0]) {
         const unsigned char *u = d->uniforms[0];
@@ -1697,7 +1743,7 @@ void mglb_draw(const mgl_draw *d)
                 d->target.is_default ? " (window)" : "", d->target.width, d->target.height, (void *)d->target.depth,
                 d->depth_test, d->depth_write, d->depth_func, d->cull, d->blend[0].enabled, d->blend[0].color_mask,
                 d->primitive, d->count, d->multi_n);
-    if (probe)
+    if (probe || log_program(d))
         log_probe_draw(d);
     frame_sections += d->multi_n > 0 ? d->multi_n : 0;
     if (d->multi_n > 0) {

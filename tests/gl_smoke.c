@@ -467,7 +467,10 @@ int main(void)
 
     /* 9. Sodium's cutout pass: material bits pick an alpha cutoff from a constant array, so a fully transparent
        texel must be discarded with material 5 (cutoff 0.1) and kept with material 1 (cutoff 0). */
-    for (int variant = 0; variant < 2; variant++) {
+    for (int variant = 0; variant < 4; variant++) {
+        /* 0: material 5 (mips, cutoff 0.1)  1: material 1 (cutoff 0)  2: material 2 (no mips: bias -16, cutoff 0.1)
+           3: material 2 on a mipmapped texture with a mipmap filter, like the block atlas */
+        static const int mat[4] = {5, 1, 2, 2};
         unsigned char clear_px[16 * 16 * 4];
         for (int i = 0; i < 16 * 16; i++) {
             clear_px[4 * i] = clear_px[4 * i + 1] = clear_px[4 * i + 2] = 255;
@@ -478,12 +481,16 @@ int main(void)
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, ctex);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 16, 16, 0, GL_RGBA, GL_UNSIGNED_BYTE, clear_px);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, variant == 3 ? GL_NEAREST_MIPMAP_LINEAR : GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        if (variant == 3) {
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 4);
+            glGenerateMipmap(GL_TEXTURE_2D);
+        }
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, white[1]);
         for (int i = 0; i < 4; i++)
-            tv[4 + i].light[2] = variant == 0 ? 5 : 1;
+            tv[4 + i].light[2] = (unsigned char)mat[variant];
         glBindVertexArray(tvao);
         glBindBuffer(GL_ARRAY_BUFFER, tbuf[0]);
         glBufferData(GL_ARRAY_BUFFER, sizeof tv, tv, GL_STATIC_DRAW);
@@ -502,9 +509,9 @@ int main(void)
         glBindVertexArray(vao);
         read_texture(rb, tex, ssbo, px);
         char what[160];
-        snprintf(what, sizeof what, "cutout material %d: transparent texel %s (centre pixel %08x)", variant == 0 ? 5 : 1,
-                 variant == 0 ? "discarded" : "kept", px[32 * 64 + 32]);
-        check(variant == 0 ? near(px[32 * 64 + 32], rgba(0, 0, 255, 255)) : near(px[32 * 64 + 32], rgba(255, 128, 0, 0)), what);
+        snprintf(what, sizeof what, "cutout material %d%s: transparent texel %s (centre pixel %08x)", mat[variant],
+                 variant == 3 ? ", mipmapped texture" : "", variant == 1 ? "kept" : "discarded", px[32 * 64 + 32]);
+        check(variant != 1 ? near(px[32 * 64 + 32], rgba(0, 0, 255, 255)) : near(px[32 * 64 + 32], rgba(255, 128, 0, 0)), what);
     }
 
     /* 5. hardware ray tracing: a shader using mcm_trace must compile on Metal (no scene bound: no hits) */
