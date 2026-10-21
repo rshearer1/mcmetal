@@ -164,6 +164,8 @@ for p in $PHASES; do
         PACK=mcmetal-rt-pack run_phase ours-room-gi 180 metal true; rm -f "$G/shaderpacks/mcmetal-rt-pack.txt" ;;
     ours-room-off) scene noon clear room; echo "RT_GI=false" > "$G/shaderpacks/mcmetal-rt-pack.txt"
         PACK=mcmetal-rt-pack run_phase ours-room-off 180 metal true; rm -f "$G/shaderpacks/mcmetal-rt-pack.txt" ;;  # GI off
+    ours-room-plain) scene noon clear room; echo "COLORED_SHADOWS=false" > "$G/shaderpacks/mcmetal-rt-pack.txt"
+        PACK=mcmetal-rt-pack run_phase ours-room-plain 180 metal true; rm -f "$G/shaderpacks/mcmetal-rt-pack.txt" ;;  # plain mcm_trace shadows
     ours-gl) scene 1500; PACK=mcmetal-rt-pack run_phase ours-gl 180 metal true MCMETAL_DISABLE=1 ;; # shadow-map fallback on Apple GL
     esac
 done
