@@ -13,6 +13,12 @@ python3 -I "$SRC/tools/bare_mc.py" setup "$WORK" --java "$JAVA" > "$OUT/setup.lo
 G=$WORK/game
 mkdir -p "$G/config" "$G/saves"
 cp "$SRC/tests/game/options.txt" "$G/options.txt"
+# GAME_BENCH=true: frame-rate runs. No vsync or frame cap, 12 chunks, Minecraft's fps logged every 5 s by the mod
+# (also on Apple's OpenGL: GAME_ENV=MCMETAL_DISABLE=1), full phase length, window GAME_SIZE (default 1920x1200)
+if [ "${GAME_BENCH:-}" = true ]; then
+    sed -i.bak 's/^enableVsync:.*/enableVsync:false/; s/^maxFps:.*/maxFps:260/; s/^renderDistance:.*/renderDistance:12/' "$G/options.txt"
+    export MCMETAL_FPS_LOG=1 GAME_LONG=true
+fi
 rm -rf "$G/saves/metal" && tar xzf "$SRC/tests/game/world-metal.tgz" -C "$G/saves"
 # The game loads mcmetal the way players will: through the mod jar in mods/, no JVM arguments.
 # GAME_JVM_ARGS=true uses the old -Dorg.lwjgl.*.libname route instead.
@@ -37,7 +43,7 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     printf 'enableShaders=%s\nshaderPack=ComplementaryReimagined_r5.9.3.zip\ncolorSpace=SRGB\ndisableUpdateMessage=true\n' \
         "$shaders" > "$G/config/iris.properties"
     mkdir -p "$OUT/$name"
-    local wargs=(--xmx 3G)
+    local wargs=(--xmx 3G --size "${GAME_SIZE:-$([ "${GAME_BENCH:-}" = true ] && echo 1920x1200 || echo 1280x720)}")
     [ -n "$world" ] && wargs+=(--world "$world")
     mkdir -p "$OUT/$name/glsl"
     echo "=== phase $name: ${secs}s, world=${world:-none}, shaders=$shaders"
@@ -61,7 +67,10 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     # fall back to Apple's OpenGL, so report it and clear it for the next phase
     [ -e "$G/mcmetal/starting" ] && { echo "WARNING: start marker not cleared (mcmetal never drew a full screen)"; rm -f "$G/mcmetal/starting"; }
     grep -q 'last launch on Metal did not' "$OUT/$name/client.log" 2>/dev/null && echo "WARNING: this phase ran on Apple's OpenGL (fallback)"
-    grep -h '\[mcmetal\]' "$OUT/$name/client.log" 2>/dev/null | grep -v 'presented frame\|screenshot' | head -5
+    grep -h '\[mcmetal\]' "$OUT/$name/client.log" 2>/dev/null | grep -v 'presented frame\|screenshot\|\] fps ' | head -5
+    # fps: Minecraft's counter every 5 s (bench mode); the summary skips the first minute of loading
+    local fps; fps=$(grep -ho '\] fps [0-9]*' "$OUT/$name/client.log" 2>/dev/null | awk '{print $3}')
+    [ -n "$fps" ] && echo "fps $name: $(echo "$fps" | tail -n +13 | sort -n | awk '{a[NR]=$1; s+=$1} END {if (NR) printf "median %d, mean %.0f, low %d, high %d over %d samples", a[int((NR+1)/2)], s/NR, a[1], a[NR], NR}')" | tee -a "$OUT/fps.txt"
     cp "$G/logs/latest.log" "$OUT/$name/latest.log" 2>/dev/null
     ls "$G"/hs_err_pid*.log >/dev/null 2>&1 && mv "$G"/hs_err_pid*.log "$OUT/$name/"
     ls -d "$G"/crash-reports/* >/dev/null 2>&1 && cp -r "$G/crash-reports" "$OUT/$name/"
