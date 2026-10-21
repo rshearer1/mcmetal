@@ -22,6 +22,7 @@
 #define DEBUG_VIEW 0 // [0 1 2 3 4] 0 off, 1 sun shadow, 2 ambient occlusion, 3 global illumination, 4 normals
 
 #define EXPOSURE 1.0 // [0.25 0.35 0.5 0.7 0.85 1.0 1.2 1.4 1.7 2.0 2.5 3.0 4.0]
+#define AUTO_EXPOSURE 1.0 // [0.0 0.25 0.5 0.75 1.0] how much brightness adapts to what you look at (0 = time of day only)
 #define SATURATION 1.0 // [0.0 0.5 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.5]
 #define CONTRAST 1.0 // [0.8 0.9 1.0 1.1 1.2]
 #define SUN_STRENGTH 1.0 // [0.5 0.7 0.85 1.0 1.2 1.5 2.0]

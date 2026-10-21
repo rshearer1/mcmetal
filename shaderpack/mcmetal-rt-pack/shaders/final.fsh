@@ -5,14 +5,14 @@
 #include "/lib/uniforms.glsl"
 #include "/lib/aces.glsl"
 
-uniform sampler2D colortex0;
+uniform sampler2D colortex0, colortex6;
 
 in vec2 texcoord;
-flat in float exposure;
 
 layout(location = 0) out vec4 outColor;
 
 void main() {
+    float exposure = texelFetch(colortex6, ivec2(0), 0).r * EXPOSURE;   // from composite1
     vec3 col = texture(colortex0, texcoord).rgb * exposure;
 #if DEBUG_VIEW > 0
     outColor = vec4(texture(colortex0, texcoord).rgb, 1.0);   // debug views: raw values, no grading
