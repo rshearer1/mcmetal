@@ -39,7 +39,9 @@ void main() {
         // Henyey-Greenstein phase: most light scatters a little off the sun's direction (bright towards the sun)
         float g = 0.65, mu = dot(dir, lightDir);
         float phase = 0.3 / (4.0 * PI) + 0.7 * (1.0 - g * g) / (4.0 * PI * pow(1.0 + g * g - 2.0 * g * mu, 1.5));
-        float density = 0.002 * LIGHT_SHAFTS_STRENGTH * (1.0 + 3.0 * rainStrength);
+        // thicker indoors (dusty air, and the eye adapts to the dark), so shafts through a roof hole show
+        float indoors = 1.0 - float(eyeBrightnessSmooth.y) / 240.0;
+        float density = 0.002 * LIGHT_SHAFTS_STRENGTH * (1.0 + 3.0 * rainStrength + 5.0 * indoors);
         float stepLen = dist / float(LIGHT_SHAFTS_STEPS);
         float jitter = ign(gl_FragCoord.xy, frameCounter);
         float lit = 0.0;
