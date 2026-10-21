@@ -1,6 +1,7 @@
-# Showcase stage for what mcmetal unlocks on a Mac (Complementary's coloured light and the effects built on it).
-# The camera looks down +x over a reflective floor: a stained-glass wall with lights behind it at the far end,
-# a pool in the middle, every light colour along the left, a nether portal, beacon and candles on the right.
+# Showcase stage for what mcmetal unlocks on a Mac: Complementary's coloured light (ACT) and the effects built on
+# it. White floor and walls so the light colours show. The camera looks down +x at: a row of candles, three
+# lights shut in red / lime / blue stained glass (ACT tints light passing through glass), a pool for reflections,
+# and six bays at the back each lit by one coloured light block. Portal on the right, red beacon on the left.
 difficulty peaceful
 weather clear 100000
 gamerule doDaylightCycle false
@@ -9,55 +10,44 @@ gamerule doMobSpawning false
 gamerule randomTickSpeed 0
 gamerule announceAdvancements false
 function mcm:time
-fill ~-2 ~ ~-11 ~26 ~12 ~11 air
-fill ~-2 ~-1 ~-11 ~26 ~-3 ~11 polished_deepslate
-fill ~2 ~-1 ~-2 ~6 ~-1 ~2 polished_diorite
-fill ~9 ~-1 ~-3 ~15 ~-1 ~3 water
-fill ~9 ~-2 ~-3 ~15 ~-2 ~3 prismarine_bricks
-# far wall: connected stained glass in eight colours, light sources behind each pair of panels
-fill ~23 ~ ~-9 ~24 ~6 ~9 black_concrete
-fill ~22 ~ ~-8 ~22 ~4 ~-7 red_stained_glass
-fill ~22 ~ ~-6 ~22 ~4 ~-5 orange_stained_glass
-fill ~22 ~ ~-4 ~22 ~4 ~-3 yellow_stained_glass
-fill ~22 ~ ~-2 ~22 ~4 ~-1 lime_stained_glass
-fill ~22 ~ ~0 ~22 ~4 ~1 cyan_stained_glass
-fill ~22 ~ ~2 ~22 ~4 ~3 blue_stained_glass
-fill ~22 ~ ~4 ~22 ~4 ~5 purple_stained_glass
-fill ~22 ~ ~6 ~22 ~4 ~7 magenta_stained_glass
-fill ~23 ~2 ~-8 ~23 ~2 ~7 sea_lantern
-fill ~21 ~5 ~-9 ~23 ~5 ~9 black_concrete
-# left: every light colour on a deepslate shelf
-fill ~6 ~ ~-7 ~21 ~ ~-7 polished_blackstone
-setblock ~6 ~1 ~-7 torch
-setblock ~7 ~1 ~-7 soul_torch
-setblock ~8 ~1 ~-7 redstone_torch
-setblock ~9 ~1 ~-7 lantern
-setblock ~10 ~1 ~-7 soul_lantern
-setblock ~11 ~1 ~-7 campfire
-setblock ~12 ~1 ~-7 soul_campfire
-setblock ~13 ~1 ~-7 ochre_froglight
-setblock ~14 ~1 ~-7 verdant_froglight
-setblock ~15 ~1 ~-7 pearlescent_froglight
-setblock ~16 ~1 ~-7 crying_obsidian
-setblock ~17 ~1 ~-7 amethyst_cluster
-setblock ~18 ~1 ~-7 jack_o_lantern[facing=south]
-setblock ~19 ~1 ~-7 magma_block
-setblock ~20 ~1 ~-7 shroomlight
-setblock ~21 ~1 ~-7 end_rod
-setblock ~19 ~2 ~-7 redstone_lamp[lit=true]
-setblock ~19 ~3 ~-7 redstone_block
-# right: nether portal (purple light, portal edge effect), beacon beam, coloured candles
-fill ~16 ~ ~7 ~19 ~4 ~7 obsidian
-fill ~17 ~1 ~7 ~18 ~3 ~7 nether_portal[axis=x]
-fill ~9 ~-1 ~6 ~11 ~-1 ~8 iron_block
-setblock ~10 ~ ~7 beacon
-setblock ~10 ~1 ~7 light_blue_stained_glass
-setblock ~6 ~ ~6 red_candle[candles=4,lit=true]
-setblock ~7 ~ ~6 lime_candle[candles=4,lit=true]
-setblock ~8 ~ ~6 blue_candle[candles=4,lit=true]
-setblock ~13 ~ ~6 glow_lichen[down=true]
-setblock ~14 ~ ~6 sea_pickle[pickles=4,waterlogged=false]
-setblock ~12 ~-1 ~0 sea_pickle[pickles=4,waterlogged=true]
-# a two-block plinth for a view over the whole stage
-fill ~ ~ ~ ~ ~1 ~ polished_deepslate
-tp @s ~ ~2 ~ facing ~22 ~0 ~0
+fill ~-2 ~ ~-13 ~22 ~12 ~13 air
+fill ~-2 ~-1 ~-13 ~22 ~-3 ~13 white_concrete
+# candles at the camera's feet
+setblock ~6 ~ ~-2 red_candle[candles=4,lit=true]
+setblock ~6 ~ ~-1 orange_candle[candles=4,lit=true]
+setblock ~6 ~ ~0 lime_candle[candles=4,lit=true]
+setblock ~6 ~ ~1 cyan_candle[candles=4,lit=true]
+setblock ~6 ~ ~2 purple_candle[candles=4,lit=true]
+# three white lights, each shut in one colour of stained glass
+fill ~9 ~ ~-5 ~11 ~2 ~-3 red_stained_glass
+setblock ~10 ~1 ~-4 sea_lantern
+fill ~9 ~ ~-1 ~11 ~2 ~1 lime_stained_glass
+setblock ~10 ~1 ~0 sea_lantern
+fill ~9 ~ ~3 ~11 ~2 ~5 blue_stained_glass
+setblock ~10 ~1 ~4 sea_lantern
+# pool: reflections of everything behind it
+fill ~13 ~-1 ~-11 ~14 ~-1 ~11 water
+# six bays, each lit by one coloured light block
+fill ~16 ~ ~-12 ~19 ~3 ~12 white_concrete
+fill ~16 ~ ~-11 ~18 ~3 ~-9 air
+fill ~16 ~ ~-7 ~18 ~3 ~-5 air
+fill ~16 ~ ~-3 ~18 ~3 ~-1 air
+fill ~16 ~ ~1 ~18 ~3 ~3 air
+fill ~16 ~ ~5 ~18 ~3 ~7 air
+fill ~16 ~ ~9 ~18 ~3 ~11 air
+fill ~18 ~ ~-11 ~18 ~1 ~-9 crying_obsidian
+fill ~18 ~ ~-7 ~18 ~1 ~-5 verdant_froglight
+fill ~18 ~ ~-3 ~18 ~1 ~-1 ochre_froglight
+fill ~18 ~ ~1 ~18 ~1 ~3 pearlescent_froglight
+fill ~18 ~ ~5 ~18 ~1 ~7 sea_lantern
+fill ~18 ~ ~9 ~18 ~1 ~11 shroomlight
+fill ~16 ~4 ~-12 ~19 ~4 ~12 white_concrete
+# right: lit nether portal facing the camera; left: beacon with a red beam
+fill ~10 ~ ~7 ~10 ~4 ~10 obsidian
+fill ~10 ~1 ~8 ~10 ~3 ~9 nether_portal[axis=z]
+fill ~9 ~-1 ~-10 ~11 ~-1 ~-8 iron_block
+setblock ~10 ~ ~-9 beacon
+setblock ~10 ~1 ~-9 red_stained_glass
+# a three-block plinth for a view over the whole stage
+fill ~ ~ ~ ~ ~2 ~ polished_deepslate
+tp @s ~ ~3 ~ facing ~19 ~0 ~0
