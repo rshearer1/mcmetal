@@ -35,6 +35,8 @@ static int have_terrain_mv;
 static float *ent_tris;      /* this frame's entity triangles, camera-relative, 9 floats each */
 static int ent_n, ent_cap;
 static int ent_near_skipped; /* debug: triangles left out as the held item */
+static char ent_debug[2048]; /* debug: this frame's entity draws */
+static int ent_debug_draws;
 
 static double now_s(void)
 {
@@ -179,6 +181,18 @@ static void record_entity(const mgl_program *p, const mgl_draw *d)
     if (far2 < 1.0f) {
         ent_near_skipped += tris;
         return;
+    }
+    if (rt_debug() && ent_debug_draws < 16) { /* which draws these are: size and where (camera-relative box) */
+        float lo[3] = {o[0], o[1], o[2]}, hi[3] = {o[0], o[1], o[2]};
+        for (int k = 1; k < tris * 3; k++)
+            for (int r = 0; r < 3; r++) {
+                lo[r] = o[k * 3 + r] < lo[r] ? o[k * 3 + r] : lo[r];
+                hi[r] = o[k * 3 + r] > hi[r] ? o[k * 3 + r] : hi[r];
+            }
+        snprintf(ent_debug + strlen(ent_debug), sizeof ent_debug - strlen(ent_debug),
+                 " [%d tris, %d verts/stride %d, box %.1f,%.1f,%.1f..%.1f,%.1f,%.1f]", tris, d->count, vb->stride,
+                 lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
+        ent_debug_draws++;
     }
     ent_n += tris;
 }
@@ -390,13 +404,16 @@ void mgl_rt_end_frame(void)
     if (rt_debug() && ent_n) {
         static double last;
         if (now_s() - last > 1.0) {
-            mgl_log("rt debug: %d entity triangles this frame (%d left out next to the eye)", ent_n, ent_near_skipped);
+            mgl_log("rt debug: %d entity triangles this frame (%d left out next to the eye);%s", ent_n,
+                    ent_near_skipped, ent_debug);
             last = now_s();
         }
     }
     mglb_rt_dynamic(ent_tris, ent_n);
     ent_n = 0;
     ent_near_skipped = 0;
+    ent_debug[0] = 0;
+    ent_debug_draws = 0;
     mglb_rt_update(list, num_draws);
 }
 
