@@ -52,6 +52,7 @@ static unsigned long frame_draws, frame_sections, frame_dispatches, frame_probes
 static int opt_profile = -1;
 static struct {
     unsigned long draws, passes, reopened, dontcare, blits, computes, cbs, finishes, skipped_presents;
+    unsigned long gs_draws, gs_tris, gs_bytes; /* geometry-shader draws, their input triangles and record bytes */
     uint64_t wait_ns, start_ns, frames;
 } prof;
 static _Atomic uint64_t prof_gpu_ns;
@@ -2437,6 +2438,9 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
         desc[i][3] = (int32_t)a->type | (a->size << 4) | (a->normalized ? 1 << 8 : 0);
     }
     size_t out_bytes = (size_t)triangles * (size_t)max_vertices * (size_t)record_floats * 4;
+    prof.gs_draws++;
+    prof.gs_tris += (unsigned long)triangles;
+    prof.gs_bytes += out_bytes;
     transient_t ov = transient(out_bytes), oc = transient((size_t)triangles * 4);
     if (!ov.buf || !oc.buf)
         return;
@@ -3239,6 +3243,9 @@ static void profile_frame(unsigned long draws)
             f * 1000.0 / ((double)(t - prof.start_ns) * 1e-6), ms, (double)prof.wait_ns * 1e-6 / f,
             (double)atomic_load(&prof_gpu_ns) * 1e-6 / f, prof.draws / f, prof.passes / f, prof.reopened / f, prof.dontcare / f,
             prof.blits / f, prof.computes / f, prof.cbs / f, prof.finishes / f, 100.0 * prof.skipped_presents / f);
+    if (prof.gs_draws)
+        mgl_log("profile: geometry shaders %.0f draws, %.0fk input triangles, %.1f MB of records per frame", prof.gs_draws / f,
+                prof.gs_tris / f * 1e-3, prof.gs_bytes / f / 1048576.0);
     if (pt_ok > 0)
         pt_report(f);
     memset(&prof, 0, sizeof prof);
