@@ -31,6 +31,7 @@ typedef struct mgl_link_job {
 static pthread_mutex_t job_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t job_ready = PTHREAD_COND_INITIALIZER, job_done = PTHREAD_COND_INITIALIZER;
 static mgl_link_job *queue_head, *queue_tail;
+static int jobs_running; /* taken off the queue, not done yet */
 
 /* MGL_MSL_DUMP=dir: write every program's MSL there (<key>.<stage>.metal), e.g. for an offline `xcrun metal` check */
 static void dump_msl(const mgl_link_job *j)
@@ -85,13 +86,27 @@ static void *worker(void *arg)
         queue_head = j->next;
         if (!queue_head)
             queue_tail = NULL;
+        jobs_running++;
         pthread_mutex_unlock(&job_lock);
         run_job(j);
         pthread_mutex_lock(&job_lock);
+        jobs_running--;
         j->done = 1;
         pthread_cond_broadcast(&job_done);
     }
     return NULL;
+}
+
+/* at exit: let queued and running compiles finish. exit() otherwise tears down glslang's and Metal's globals
+   under a worker that is still using them (gl_smoke crashed with exit code 139 after its last check; a game
+   quit while a shader pack compiles can too). The binary archive's exit save calls it too, so pipelines these
+   jobs add are saved. */
+void mgl_program_drain(void)
+{
+    pthread_mutex_lock(&job_lock);
+    while (queue_head || jobs_running)
+        pthread_cond_wait(&job_done, &job_lock);
+    pthread_mutex_unlock(&job_lock);
 }
 
 static int async_link(void)
@@ -101,13 +116,18 @@ static int async_link(void)
         const char *e = getenv("MGL_ASYNC_LINK");
         long n = sysconf(_SC_NPROCESSORS_ONLN) - 1; /* leave the render thread its core */
         workers = e && *e == '0' ? 0 : n < 1 ? 1 : n > 15 ? 15 : (int)n;
-        for (int i = 0; i < workers; i++) {
+        /* without a way to drain them at exit, link on the caller's thread */
+        int want = workers > 0 && atexit(mgl_program_drain) == 0 ? workers : 0;
+        workers = 0;
+        for (int i = 0; i < want; i++) {
             pthread_t t;
             pthread_attr_t a;
             pthread_attr_init(&a);
             pthread_attr_setstacksize(&a, 16u << 20); /* glslang/SPIRV-Cross recurse deeply on big shaders */
-            if (pthread_create(&t, &a, worker, NULL) == 0)
+            if (pthread_create(&t, &a, worker, NULL) == 0) {
                 pthread_detach(t);
+                workers++; /* only threads that exist take jobs */
+            }
             pthread_attr_destroy(&a);
         }
         if (workers)
