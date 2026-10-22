@@ -77,7 +77,7 @@ vec3 coloredBlockLight(vec3 p, vec3 n, int mat, float u1, float u2, float u3) {
     vec3 l = lightFrom(p, n, mat, target, ids[pick], dir, dist);
     vec3 o = mat == MAT_FOLIAGE ? p + dir * 0.06 : p + n * 0.02 + dir * 0.01;
     // stop short of the light block itself (a full block's faces are 0.5 from its centre, corners up to 0.87)
-#ifdef COLORED_SHADOWS
+#ifdef COLORED_LIGHT_GLASS
     // torch light through stained glass (and water) takes its colour too
     vec3 transmit = vec3(1.0);
     if (dist > 0.9 && mcm_trace_tinted(o, dir, dist - 0.9, transmit) > 0.0) return vec3(0.0);

@@ -63,6 +63,22 @@ void main() {
     vec3 p = mat3(gbufferModelViewInverse) * (v.xyz / v.w) + gbufferModelViewInverse[3].xyz;
     float dist = length(p);
 
+    // where was this point last frame?
+    vec3 prevPlayer = p + cameraPosition - previousCameraPosition;
+    vec4 pc = gbufferPreviousProjection * (gbufferPreviousModelView * vec4(prevPlayer, 1.0));
+    vec2 puv = pc.xy / pc.w * 0.5 + 0.5;
+    vec4 h = texture(colortex3, puv * GI_SCALE);
+    bool valid = all(greaterThan(puv, vec2(0.0))) && all(lessThan(puv, vec2(1.0)))
+              && abs(h.b - length(prevPlayer)) < 0.05 * dist + 0.1;
+#if defined USE_RT && defined GI_CHECKERBOARD
+    // half the pixels each frame trace a new ray; the other half keep their running average (where it's still valid)
+    if (valid && ((int(gl_FragCoord.x) + int(gl_FragCoord.y) + frameCounter) & 1) == 1) {
+        outAO = vec4(h.r, h.g, dist, 1.0);
+        outGI = vec4(texture(colortex4, puv * GI_SCALE).rgb, 1.0);
+        return;
+    }
+#endif
+
     float ao = 1.0;
     vec3 gi = vec3(0.0);
 #if defined USE_RT && (defined RT_AO || defined RT_GI)
@@ -94,13 +110,6 @@ void main() {
     ao = hit < 0.0 ? 1.0 : smoothstep(0.0, RT_AO_RADIUS, hit);
 #endif
 
-    // where was this point last frame?
-    vec3 prevPlayer = p + cameraPosition - previousCameraPosition;
-    vec4 pc = gbufferPreviousProjection * (gbufferPreviousModelView * vec4(prevPlayer, 1.0));
-    vec2 puv = pc.xy / pc.w * 0.5 + 0.5;
-    vec4 h = texture(colortex3, puv * GI_SCALE);
-    bool valid = all(greaterThan(puv, vec2(0.0))) && all(lessThan(puv, vec2(1.0)))
-              && abs(h.b - length(prevPlayer)) < 0.05 * dist + 0.1;
     float frames = valid ? min(h.g + 1.0, RT_AO_FRAMES) : 1.0;
     float w = 1.0 / frames;
     outAO = vec4(mix(valid ? h.r : ao, ao, w), frames, dist, 1.0);

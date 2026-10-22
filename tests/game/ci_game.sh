@@ -382,7 +382,7 @@ for p in $PHASES; do
                           || o="LIGHT_SLOTS=8 LIGHT_SHAFTS_STEPS=12 RT_REFLECT_DISTANCE=256.0 RT_GI_DISTANCE=64.0 RT_AO_FRAMES=32.0"
         scene noon clear room; PACK_OPTS="$o ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase $p 180 metal true ;;
     ours-glass) GAME_LOOK="-90 8" scene 6000 clear glass; PACK=mcmetal-rt-pack run_phase ours-glass 180 metal true ;;  # refraction
-    ours-glass-night) GAME_LOOK="-90 30" scene 18000 clear glass; PACK=mcmetal-rt-pack run_phase ours-glass-night 180 metal true ;;  # torch light through stained glass
+    ours-glass-night) GAME_LOOK="-90 35" scene 18000 clear glass; PACK=mcmetal-rt-pack run_phase ours-glass-night 180 metal true ;;  # torch light through stained glass
     ours-glass-off) GAME_LOOK="-90 8" scene 6000 clear glass; PACK_OPTS="GLASS_REFRACTION=false ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-glass-off 180 metal true ;;
     ours-caustics) GAME_LOOK="-90 45" scene 6000 clear pool; PACK=mcmetal-rt-pack run_phase ours-caustics 180 metal true ;;  # deep pool from above
     ours-caustics-mask) GAME_LOOK="-90 45" scene 6000 clear pool; PACK_OPTS="DEBUG_VIEW=7 ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-caustics-mask 180 metal true ;;
