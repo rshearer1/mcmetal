@@ -122,8 +122,9 @@ jobs:
           # the exact same files already passed the game phases in an earlier push (typically a branch merged into
           # main as it was): build and check, but don't play them again. "[full game]" in the message plays anyway.
           if [ "$EVENT" = push ] && [ -n "$phases" ] && [ -n "$TREE" ] && ! grep -q '\[full game\]' <<< "$COMMIT_MSG"; then
-            tested=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/mac.yml/runs?event=push&status=success&per_page=100" \
-              --jq '.workflow_runs[] | select(.id != '"$GITHUB_RUN_ID"') | select(.head_commit.message | contains("[no game]") | not) | .head_commit.tree_id' || true)
+            tested=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/mac.yml/runs?event=push&per_page=100" \
+              --jq '.workflow_runs[] | select(.conclusion == "success" and .id != '"$GITHUB_RUN_ID"') | select(.head_commit.message | contains("[no game]") | not) | .head_commit.tree_id' || true)
+            # (filtered here, not with &status=success: that filter lagged a run that had passed 7 min earlier)
             if grep -qxF "$TREE" <<< "$tested"; then echo "tree $TREE already passed the game phases"; phases=""; fi
           fi
           echo "phases=$(printf '%s\n' $phases | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().split()))')" >> "$GITHUB_OUTPUT"
