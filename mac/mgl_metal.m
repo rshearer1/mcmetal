@@ -2696,6 +2696,8 @@ static void gs_flush(void)
 @property(nonatomic) mglb_buffer *tris; /* per-triangle texture coordinates + alpha cutoff (rt_decode) */
 @property(nonatomic) mglb_buffer *lights; /* light candidates: count, then (position, id) per face */
 @property(nonatomic) uint32_t lcap;
+@property(nonatomic) float cx, cy, cz; /* section centre from its region origin (16-block cell in the region) */
+@property(nonatomic) BOOL placed;     /* cx..cz known (the vertex buffer was readable) */
 @end
 @implementation RtSection
 - (void)dealloc
@@ -2843,6 +2845,14 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer
     s.tris = tri;
     s.lights = lights;
     s.lcap = lcap;
+    const unsigned char *vp = mglb_buffer_ptr(g->vbuf);
+    if (vp) { /* Sodium's section index sits in the top byte of word 4 of every vertex */
+        uint32_t sec = ((const uint32_t *)(vp + g->vbase + (size_t)g->base_vertex * (size_t)g->stride))[4] >> 24;
+        s.cx = 16.0f * (float)((sec >> 5) & 7) + 8.0f;
+        s.cy = 16.0f * (float)(sec & 3) + 8.0f;
+        s.cz = 16.0f * (float)((sec >> 2) & 7) + 8.0f;
+        s.placed = YES;
+    }
     s.last_frame = rt_frame;
     rt_sections[key] = s;
     *tris_out = tri;
@@ -2978,6 +2988,12 @@ static void rt_update(const mgl_rt_geom *g, int n)
         id<MTLAccelerationStructure> as = section_as(&g[i], &tris, &sec);
         if (!as)
             continue;
+        if (mgl_rt_radius > 0 && sec.placed) { /* MCMETAL_RT_RADIUS: only sections rays can reach (14 = half a diagonal) */
+            float x = g[i].region[0] + sec.cx, y = g[i].region[1] + sec.cy, z = g[i].region[2] + sec.cz;
+            float r = mgl_rt_radius + 14.0f;
+            if (x * x + y * y + z * z > r * r)
+                continue;
+        }
         secs[count] = sec;
         sec_geom[count] = i;
         addr[count] = OBJ(id<MTLBuffer>, tris->mtl).gpuAddress;

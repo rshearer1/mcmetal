@@ -167,6 +167,7 @@ static void rt_debug_tick(void)
 
 mglb_texture *mgl_rt_atlas;
 int mgl_rt_light_ids[2] = {-1, -1};
+float mgl_rt_radius;
 
 void mgl_rt_record(mgl_program *p, const mgl_draw *d)
 {

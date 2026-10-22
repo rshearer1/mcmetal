@@ -389,6 +389,14 @@ static void add_ray_tracing(mgl_shader *s)
         mgl_rt_light_ids[0] = lo;
         mgl_rt_light_ids[1] = hi;
     }
+    /* MCMETAL_RT_RADIUS r: rays never go further than r blocks from the camera, so the scene can drop the rest
+       (the last program to say wins; packs that don't say get every section) */
+    const char *rr = strstr(s->source, "#define MCMETAL_RT_RADIUS");
+    float radius;
+    if (rr && sscanf(rr + 25, "%f", &radius) == 1 && radius != mgl_rt_radius) {
+        mgl_rt_radius = radius;
+        mgl_log("ray tracing: scene keeps sections within %.0f blocks of the camera", radius);
+    }
     size_t pre = (size_t)(v - s->source), rest = strlen(eol + 1);
     char *n = malloc(pre + sizeof head + rest + sizeof body);
     memcpy(n, s->source, pre);
@@ -435,6 +443,7 @@ static void add_photon_rt(mgl_shader *s)
         return;
     static const char wrap[] =
         "\n#define MCMETAL_LIGHT_IDS 10032 10079\n"
+        "#define MCMETAL_RT_RADIUS 48\n" /* the light list's reach: block light rays end within 15 blocks of a pixel */
         "int mcm_lights_near(vec3 p, int slot, out vec3 pos, out int blockId);\n"
         "float mcm_trace(vec3 origin, vec3 dir, float tmax);\n"
         "const vec3 mcm_photon_light[48] = vec3[48](\n"

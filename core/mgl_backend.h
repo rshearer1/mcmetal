@@ -164,6 +164,7 @@ mglb_buffer *mglb_rt_instances(void); /* this frame's per-instance triangle-data
 extern mglb_texture *mgl_rt_atlas;
 /* Block ids the light list collects (MCMETAL_LIGHT_IDS in a pack), {-1, -1} = none; set by mgl_program.c. */
 extern int mgl_rt_light_ids[2];
+extern float mgl_rt_radius; /* MCMETAL_RT_RADIUS: the scene keeps only sections this close to the camera (0 = all) */
 mglb_buffer *mglb_rt_lights(void); /* this frame's light list (mcm_lights_near's McmLights) */
 
 void mglb_draw(const mgl_draw *d);
