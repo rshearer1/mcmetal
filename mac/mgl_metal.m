@@ -265,10 +265,42 @@ static void gs_flush_at(int line);
 #define gs_flush() gs_flush_at(__LINE__) /* MGL_GS_FLUSH_LOG=1 counts which call sites end a batch */
 static int gs_recording; /* mglb_draw_gs is opening its compute encoder: keep the pending draws pending */
 
+/* MGL_GS_FLUSH_LOG=1 diagnostics: count events by source line, log every 600 */
+typedef struct { const char *what; int lines[16], counts[16], total; } line_tally;
+static int flush_log_on(void)
+{
+    static int on = -1;
+    if (on < 0)
+        on = getenv("MGL_GS_FLUSH_LOG") && atoi(getenv("MGL_GS_FLUSH_LOG"));
+    return on;
+}
+static void tally_line(line_tally *t, int line)
+{
+    int k = 0;
+    while (k < 15 && t->lines[k] && t->lines[k] != line)
+        k++;
+    t->lines[k] = line;
+    t->counts[k]++;
+    if (++t->total == 600) {
+        char msg[512];
+        int n = snprintf(msg, sizeof msg, "%s (600, by source line):", t->what);
+        for (int i = 0; i < 16 && t->lines[i]; i++)
+            n += snprintf(msg + n, sizeof msg - (size_t)n, " %d x%d", t->lines[i], t->counts[i]);
+        mgl_log("%s", msg);
+        memset(t->lines, 0, sizeof t->lines);
+        memset(t->counts, 0, sizeof t->counts);
+        t->total = 0;
+    }
+}
+
 static void end_encoders_at(int line)
 {
     if (!gs_recording)
         gs_flush_at(line);
+    if (renc && renc_target.width >= 2048 && renc_target.width == renc_target.height && flush_log_on()) {
+        static line_tally big = {"square shadow-map passes ended"};
+        tally_line(&big, line);
+    }
     if (renc) { [renc endEncoding]; renc = nil; }
     if (benc) { [benc endEncoding]; benc = nil; }
     if (cenc) { [cenc endEncoding]; cenc = nil; }
@@ -1809,9 +1841,16 @@ static void set_attachment(MTLRenderPassAttachmentDescriptor *ad, mglb_texture *
 static unsigned pass_dontcare; /* colour attachments the next begin_pass needn't load (see pass_for_draw) */
 
 /* Open a render pass on t. clear_colors / clear_depth turn the matching load actions into clears. */
-static id<MTLRenderCommandEncoder> begin_pass(const mgl_target *t, unsigned clear_colors, const float *rgba,
-                                              int clear_depth, float depth)
+static id<MTLRenderCommandEncoder> begin_pass_at(int line, const mgl_target *t, unsigned clear_colors, const float *rgba,
+                                                 int clear_depth, float depth);
+#define begin_pass(...) begin_pass_at(__LINE__, __VA_ARGS__)
+static id<MTLRenderCommandEncoder> begin_pass_at(int line, const mgl_target *t, unsigned clear_colors, const float *rgba,
+                                                 int clear_depth, float depth)
 {
+    if (t->width >= 2048 && t->width == t->height && flush_log_on()) {
+        static line_tally big = {"square shadow-map passes opened"};
+        tally_line(&big, line);
+    }
     prof_serialize();
     end_encoders();
     MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
