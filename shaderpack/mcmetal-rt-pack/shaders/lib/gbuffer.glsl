@@ -37,6 +37,14 @@ in vec4 mc_Entity;
 
 void main() {
     gl_Position = gl_ProjectionMatrix * (gl_ModelViewMatrix * gl_Vertex);   // not ftransform(): Iris leaves it in line programs
+#ifdef TAA
+    // a different sub-pixel shift every frame (Halton 2,3 over 8 frames); composite1 blends them into smooth edges
+    int k = frameCounter % 8 + 1;
+    vec2 halton = vec2(0.0);
+    for (float f = 0.5, i = float(k); i > 0.0; f *= 0.5, i = floor(i / 2.0)) halton.x += f * mod(i, 2.0);
+    for (float f = 1.0 / 3.0, i = float(k); i > 0.0; f /= 3.0, i = floor(i / 3.0)) halton.y += f * mod(i, 3.0);
+    gl_Position.xy += (halton - 0.5) * 2.0 / vec2(viewWidth, viewHeight) * gl_Position.w;
+#endif
     texcoord = (gl_TextureMatrix[0] * gl_MultiTexCoord0).xy;
     lmcoord = clamp(((gl_TextureMatrix[1] * gl_MultiTexCoord1).xy * 16.0 - 0.5) / 15.0, 0.0, 1.0);
     tint = gl_Color;

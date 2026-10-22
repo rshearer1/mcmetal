@@ -1,9 +1,6 @@
 #version 330 compatibility
 // Fog over everything (after water and glass): air haze towards the sky colour, a soft edge at the render
 // distance, and fog under water / in lava / in powder snow.
-/*
-const bool colortex0MipmapEnabled = true;   // composite1 meters the picture's brightness from the small mip levels
-*/
 #include "/lib/settings.glsl"
 #include "/lib/common.glsl"
 #include "/lib/uniforms.glsl"
