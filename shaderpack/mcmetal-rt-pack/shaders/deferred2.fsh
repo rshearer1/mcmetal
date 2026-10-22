@@ -117,7 +117,8 @@ void main() {
             vec3 v = normalize(p);
             vec3 pn = vec3(0.0, 1.0, 0.0);
             vec3 rd = reflect(v, pn);
-            float f = 0.02 + 0.98 * pow(1.0 - clamp(-v.y, 0.0, 1.0), 5.0);
+            // (at least 15%: a real puddle seen from above is dark and still shows the sky; pure Fresnel's 2% vanishes)
+            float f = max(0.02 + 0.98 * pow(1.0 - clamp(-v.y, 0.0, 1.0), 5.0), 0.15);
             float skyOpen = smoothstep(0.3, 0.9, nl.w);
             vec3 refl = skyColor(rd, sunDir) * skyOpen;
   #ifdef PUDDLE_RT

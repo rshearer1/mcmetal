@@ -124,9 +124,9 @@ void main() {
     if (wet > 0.001) {
         vec2 w = playerPos.xz + cameraPosition.xz;
         // two noise layers add up to a narrow range around 0.5: stretch it, then keep the top ~quarter as puddles
-        float shape = (valueNoise(w * 0.3) * 0.7 + valueNoise(w * 1.1) * 0.3 - 0.5) * 2.5 + 0.5;
+        float shape = (valueNoise(w * 0.45) * 0.7 + valueNoise(w * 1.6) * 0.3 - 0.5) * 2.5 + 0.5;
         puddle = wet * smoothstep(0.56, 0.64, shape + 0.1 * (PUDDLE_AMOUNT - 1.0)) * smoothstep(0.9, 0.98, n.y);
-        c.rgb = pow(c.rgb, vec3(1.0 + 0.4 * wet)) * (1.0 - 0.25 * wet - 0.3 * puddle);
+        c.rgb = pow(c.rgb, vec3(1.0 + 0.4 * wet)) * (1.0 - 0.25 * wet - 0.55 * puddle);
     }
   #endif
     outAlbedo = vec4(c.rgb, 1.0);
