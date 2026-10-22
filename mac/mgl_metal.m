@@ -1508,7 +1508,11 @@ static void archive_save(void)
     pthread_mutex_unlock(&archive_lock);
 }
 
-static void save_at_exit(void) { archive_save(); }
+static void save_at_exit(void)
+{
+    mgl_program_drain(); /* registered after the link workers' drain, so it runs first: finish their pipelines */
+    archive_save();
+}
 
 static void archive_maybe_save(void)
 {
