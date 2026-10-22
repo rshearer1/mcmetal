@@ -122,7 +122,7 @@ void mgl_cache_store(const char *key, const mgl_xlate_result *r)
     put_int(f, r->num_attribs); put(f, r->attribs, sizeof *r->attribs * (size_t)r->num_attribs);
     put_int(f, r->num_outs); put(f, r->outs, sizeof *r->outs * (size_t)r->num_outs);
     put_int(f, r->gs_max_vertices);
-    put_int(f, r->gs_record_vec4s);
+    put_int(f, r->gs_record_floats);
     put_int(f, r->uses_scene);
     put_str(f, r->log);
     int bad = ferror(f);
@@ -153,7 +153,7 @@ int mgl_cache_load(const char *key, mgl_xlate_result *r)
     ok = ok && get_arr(f, (void **)&r->ssbos, &r->num_ssbos, sizeof *r->ssbos);
     ok = ok && get_arr(f, (void **)&r->attribs, &r->num_attribs, sizeof *r->attribs);
     ok = ok && get_arr(f, (void **)&r->outs, &r->num_outs, sizeof *r->outs);
-    ok = ok && get_int(f, &r->gs_max_vertices) && get_int(f, &r->gs_record_vec4s) && get_int(f, &r->uses_scene);
+    ok = ok && get_int(f, &r->gs_max_vertices) && get_int(f, &r->gs_record_floats) && get_int(f, &r->uses_scene);
     ok = ok && get_str(f, &r->log);
     fclose(f);
     if (!ok) {

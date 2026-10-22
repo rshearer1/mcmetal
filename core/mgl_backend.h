@@ -11,6 +11,7 @@ typedef struct mglb_program mglb_program;
 /* ---- buffers: always CPU-visible (unified memory on Apple GPUs) ---- */
 mglb_buffer *mglb_buffer_new(size_t size);
 void *mglb_buffer_ptr(mglb_buffer *b);
+size_t mglb_buffer_size(mglb_buffer *b);
 void mglb_buffer_release(mglb_buffer *b);
 /* true while work that reads the buffer has been recorded but not finished by the GPU */
 int mglb_buffer_in_use(mglb_buffer *b);
@@ -184,7 +185,7 @@ void mglb_draw(const mgl_draw *d);
 void mglb_dispatch(const mgl_draw *d, int gx, int gy, int gz); /* uses program, uniforms, ubo, textures[2] */
 /* Geometry-shader program (see mgl_gs.c): run the compute stage over `triangles` input triangles, fetching
    vertices from d->vbufs/attrs/index_buf, then draw the emitted strips with the passthrough vertex stage. */
-void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record_vec4s);
+void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record_floats);
 void mglb_clear(const mgl_target *t, unsigned mask_color /* bit per attachment */, const float rgba[4],
                 int clear_depth, float depth, const int *scissor /* NULL = whole target */, uint8_t color_write_mask);
 void mglb_blit(const mgl_target *src, int src_att, const int src_rect[4],

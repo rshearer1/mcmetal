@@ -75,9 +75,9 @@ typedef struct mgl_xlate_result {
     mgl_frag_out *outs; int num_outs;
 
     /* Geometry-shader programs (mgl_gs.c): the compute stage runs VS + GS per input triangle and writes
-       gs_max_vertices records of gs_record_vec4s vec4s each, plus a count; the vertex stage is a passthrough
+       gs_max_vertices records of gs_record_floats floats each, plus a count; the vertex stage is a passthrough
        that turns those triangle strips into a triangle list. 0 when the program has no geometry shader. */
-    int gs_max_vertices, gs_record_vec4s;
+    int gs_max_vertices, gs_record_floats;
     int uses_scene;             /* some stage declares an accelerationStructureEXT */
     void *pending[MGL_NUM_STAGES]; /* deferred MSL emission (mgl_xlate_set_deferred), consumed by mgl_xlate_emit */
 } mgl_xlate_result;

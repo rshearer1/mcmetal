@@ -57,6 +57,7 @@ static unsigned long frame_draws, frame_sections, frame_dispatches, frame_probes
 static int opt_profile = -1;
 static struct {
     unsigned long draws, passes, reopened, dontcare, blits, computes, cbs, finishes, skipped_presents;
+    unsigned long gs_draws, gs_tris, gs_bytes; /* geometry-shader draws, their input triangles and record bytes */
     uint64_t wait_ns, start_ns, frames;
 } prof;
 static _Atomic uint64_t prof_gpu_ns;
@@ -261,7 +262,12 @@ static id<MTLCommandBuffer> current_cb(void)
 {
     if (!cb) {
         init_device();
-        cb = [queue commandBuffer];
+        /* the game's render thread has no autorelease pool between swaps: an autoreleased command buffer (and
+           every buffer it retains, e.g. one-off geometry-shader record buffers) was never freed. Same below for
+           encoders and pass descriptors. */
+        @autoreleasepool {
+            cb = [queue commandBuffer];
+        }
         prof.cbs++;
         pt_begin_cb(cb);
         uint64_t serial = cb_serial = ++submitted_serial;
@@ -287,17 +293,114 @@ static id<MTLCommandBuffer> current_cb(void)
     return cb;
 }
 
-static void gs_flush(void);
+static void gs_flush_at(int line);
+#define gs_flush() gs_flush_at(__LINE__) /* MGL_GS_FLUSH_LOG=1 counts which call sites end a batch */
 static int gs_recording; /* mglb_draw_gs is opening its compute encoder: keep the pending draws pending */
 
-static void end_encoders(void)
+/* MGL_GS_FLUSH_LOG=1 diagnostics: count events by source line, log every 600 */
+typedef struct { const char *what; int lines[16], counts[16], total; } line_tally;
+static int flush_log_on(void)
+{
+    static int on = -1;
+    if (on < 0)
+        on = getenv("MGL_GS_FLUSH_LOG") && atoi(getenv("MGL_GS_FLUSH_LOG"));
+    return on;
+}
+static void tally_line(line_tally *t, int line)
+{
+    int k = 0;
+    while (k < 15 && t->lines[k] && t->lines[k] != line)
+        k++;
+    t->lines[k] = line;
+    t->counts[k]++;
+    if (++t->total == 600) {
+        char msg[512];
+        int n = snprintf(msg, sizeof msg, "%s (600, by source line):", t->what);
+        for (int i = 0; i < 16 && t->lines[i]; i++)
+            n += snprintf(msg + n, sizeof msg - (size_t)n, " %d x%d", t->lines[i], t->counts[i]);
+        mgl_log("%s", msg);
+        memset(t->lines, 0, sizeof t->lines);
+        memset(t->counts, 0, sizeof t->counts);
+        t->total = 0;
+    }
+}
+
+/* Deferred full clears (MGL_DEFER_CLEAR=0 turns them off): a glClear of a whole offscreen target opens no pass of
+   its own. The next pass that renders into a cleared image clears it with its load action; anything else that
+   could see the images first (another encoder, a commit, a texture release) replays the clears as passes, as
+   before. Iris clears the 4096x4096 shadow map's images one framebuffer at a time, and each clear pass loaded and
+   stored every attachment. */
+typedef struct { mgl_target t; unsigned colors; float rgba[4]; int depth; float depth_value; } pending_clear;
+static pending_clear pclear[8];
+static int npclear, keep_clears;
+static id<MTLRenderCommandEncoder> begin_pass_at(int line, const mgl_target *t, unsigned clear_colors, const float *rgba,
+                                                 int clear_depth, float depth);
+
+static void mark_clean(const pending_clear *r);
+static void target_dirty(const mgl_target *t);
+
+static void materialize_clears(void)
+{
+    if (!npclear)
+        return;
+    pending_clear list[8];
+    int n = npclear;
+    memcpy(list, pclear, sizeof list);
+    npclear = 0;
+    for (int i = 0; i < n; i++)
+        if (list[i].colors || list[i].depth)
+        {
+            begin_pass_at(__LINE__, &list[i].t, list[i].colors, list[i].rgba, list[i].depth, list[i].depth_value);
+            mark_clean(&list[i]);
+        }
+}
+
+/* any image of a pending clear's target, cleared or only loaded */
+static int pending_clear_uses(const mglb_texture *x)
+{
+    for (int i = 0; i < npclear; i++) {
+        for (int a = 0; a < MGL_MAX_ATTACHMENTS; a++)
+            if (pclear[i].t.tex[a] == x)
+                return 1;
+        if (pclear[i].t.depth == x)
+            return 1;
+    }
+    return 0;
+}
+
+/* an image a pending clear actually clears (attachments it only loads keep their contents either way) */
+static int pending_clear_clears(const mglb_texture *x)
+{
+    for (int i = 0; i < npclear; i++) {
+        for (int a = 0; a < MGL_MAX_ATTACHMENTS; a++)
+            if (pclear[i].t.tex[a] == x && (pclear[i].colors & (1u << a)))
+                return 1;
+        if (pclear[i].t.depth == x && pclear[i].depth)
+            return 1;
+    }
+    return 0;
+}
+
+static void end_encoders_at(int line)
 {
     if (!gs_recording)
-        gs_flush();
+        gs_flush_at(line);
+    if (!keep_clears && npclear) {
+        if (flush_log_on()) {
+            static line_tally replay = {"pending clears replayed as passes"};
+            tally_line(&replay, line);
+        }
+        materialize_clears();
+    }
+    if (renc && renc_target.width >= 2048 && renc_target.width == renc_target.height && flush_log_on()) {
+        static line_tally big = {"square shadow-map passes ended"};
+        tally_line(&big, line);
+    }
     if (renc) { [renc endEncoding]; renc = nil; }
     if (benc) { [benc endEncoding]; benc = nil; }
     if (cenc) { [cenc endEncoding]; cenc = nil; }
 }
+#define end_encoders() end_encoders_at(__LINE__)
 
 static void commit(void)
 {
@@ -325,27 +428,48 @@ static void prof_serialize(void)
     busy = 0;
 }
 
-static id<MTLBlitCommandEncoder> blit_encoder(void)
+static id<MTLBlitCommandEncoder> blit_encoder_at(int line)
 {
     gs_flush();
     if (benc)
         return benc;
     prof_serialize();
-    end_encoders();
+    end_encoders_at(line);
     id<MTLCommandBuffer> c = current_cb();
     int k = pt_pass("blits");
-    if (k >= 0) {
-        MTLBlitPassDescriptor *d = [MTLBlitPassDescriptor blitPassDescriptor];
-        d.sampleBufferAttachments[0].sampleBuffer = pt_cur->sb;
-        d.sampleBufferAttachments[0].startOfEncoderSampleIndex = (NSUInteger)k * 2;
-        d.sampleBufferAttachments[0].endOfEncoderSampleIndex = (NSUInteger)k * 2 + 1;
-        benc = [c blitCommandEncoderWithDescriptor:d];
-    } else {
-        benc = [c blitCommandEncoder];
+    @autoreleasepool {
+        if (k >= 0) {
+            MTLBlitPassDescriptor *d = [MTLBlitPassDescriptor blitPassDescriptor];
+            d.sampleBufferAttachments[0].sampleBuffer = pt_cur->sb;
+            d.sampleBufferAttachments[0].startOfEncoderSampleIndex = (NSUInteger)k * 2;
+            d.sampleBufferAttachments[0].endOfEncoderSampleIndex = (NSUInteger)k * 2 + 1;
+            benc = [c blitCommandEncoderWithDescriptor:d];
+        } else {
+            benc = [c blitCommandEncoder];
+        }
     }
     prof.blits++;
     return benc;
 }
+#define blit_encoder() blit_encoder_at(__LINE__)
+
+/* A blit that touches no image a pending clear clears leaves the clears pending, so the next pass into the
+   cleared images can still take them as load actions (images the clear only loads keep whatever the blit wrote).
+   One that does touch them replays the clears first. */
+static void tex_dirty(mglb_texture *t);
+static id<MTLBlitCommandEncoder> blit_encoder_for_at(int line, mglb_texture *a, mglb_texture *b)
+{
+    int touches = (a && pending_clear_clears(a)) || (b && pending_clear_clears(b));
+    if (touches && benc)
+        end_encoders_at(line); /* an open blit encoder would otherwise run this blit before the clears */
+    keep_clears = !touches;
+    id<MTLBlitCommandEncoder> e = blit_encoder_at(line);
+    keep_clears = 0;
+    tex_dirty(a); /* the copy source too: cheaper than telling the caller's direction apart */
+    tex_dirty(b);
+    return e;
+}
+#define blit_encoder_for(a, b) blit_encoder_for_at(__LINE__, a, b)
 
 static id<MTLComputeCommandEncoder> compute_encoder(void)
 {
@@ -357,14 +481,16 @@ static id<MTLComputeCommandEncoder> compute_encoder(void)
     end_encoders();
     id<MTLCommandBuffer> c = current_cb();
     int k = pt_pass("pass compute");
-    if (k >= 0) {
-        MTLComputePassDescriptor *d = [MTLComputePassDescriptor computePassDescriptor];
-        d.sampleBufferAttachments[0].sampleBuffer = pt_cur->sb;
-        d.sampleBufferAttachments[0].startOfEncoderSampleIndex = (NSUInteger)k * 2;
-        d.sampleBufferAttachments[0].endOfEncoderSampleIndex = (NSUInteger)k * 2 + 1;
-        cenc = [c computeCommandEncoderWithDescriptor:d];
-    } else {
-        cenc = [c computeCommandEncoder];
+    @autoreleasepool {
+        if (k >= 0) {
+            MTLComputePassDescriptor *d = [MTLComputePassDescriptor computePassDescriptor];
+            d.sampleBufferAttachments[0].sampleBuffer = pt_cur->sb;
+            d.sampleBufferAttachments[0].startOfEncoderSampleIndex = (NSUInteger)k * 2;
+            d.sampleBufferAttachments[0].endOfEncoderSampleIndex = (NSUInteger)k * 2 + 1;
+            cenc = [c computeCommandEncoderWithDescriptor:d];
+        } else {
+            cenc = [c computeCommandEncoder];
+        }
     }
     prof.computes++;
     return cenc;
@@ -395,6 +521,9 @@ static int size_class(size_t size)
     return c;
 }
 
+static size_t buf_live_bytes, buf_pooled_bytes; /* MGL_PROFILE: Metal buffer memory we hold, and of it in the pool */
+static unsigned long tr_oneoff, tr_waits;       /* transient allocations that fell back to their own buffer; waits for a chunk */
+int mglb_fence_wait(uint64_t id, uint64_t timeout_ns);
 mglb_buffer *mglb_buffer_new(size_t size)
 {
     init_device();
@@ -408,6 +537,7 @@ mglb_buffer *mglb_buffer_new(size_t size)
         if (b->last_use <= done && b->cap >= size) {
             *pp = b->next_free;
             pool_count[c]--;
+            buf_pooled_bytes -= b->cap;
             b->next_free = NULL;
             b->size = size;
             return b;
@@ -424,10 +554,12 @@ mglb_buffer *mglb_buffer_new(size_t size)
     b->ptr = m.contents;
     b->size = size;
     b->cap = cap;
+    buf_live_bytes += cap;
     return b;
 }
 
 void *mglb_buffer_ptr(mglb_buffer *b) { return b ? b->ptr : NULL; }
+size_t mglb_buffer_size(mglb_buffer *b) { return b ? b->size : 0; }
 
 void mglb_buffer_release(mglb_buffer *b)
 {
@@ -438,8 +570,10 @@ void mglb_buffer_release(mglb_buffer *b)
         b->next_free = pool[c];
         pool[c] = b;
         pool_count[c]++;
+        buf_pooled_bytes += b->cap;
         return;
     }
+    buf_live_bytes -= b->cap;
     release_obj(b->mtl); /* Metal keeps it alive for command buffers still using it */
     free(b);
 }
@@ -460,7 +594,7 @@ static void use_buffer(mglb_buffer *b)
    allocated two fresh buffers: with ~190 of them in flight per frame the pool had nothing free, and the kernel
    call behind each new buffer grew to 88% of the render thread (SEUS at 1x slid from 49 to 15 fps in 90 s). */
 #define TR_CHUNK ((size_t)32 << 20)
-#define TR_MAX 48
+#define TR_MAX 128 /* SEUS while turning: ~800 MB of records per frame, 2-3 frames in flight */
 static struct { mglb_buffer *b; size_t used; } tr_chunk[TR_MAX];
 static int tr_n, tr_cur = -1;
 
@@ -471,6 +605,7 @@ static transient_t transient(size_t size)
     current_cb(); /* cb_serial is this command buffer's */
     size = (size + 255) & ~(size_t)255;
     if (size > TR_CHUNK) {
+        tr_oneoff++;
         mglb_buffer *b = mglb_buffer_new(size);
         if (!b)
             return (transient_t){nil, 0, NULL};
@@ -493,7 +628,24 @@ static transient_t transient(size_t size)
                 tr_chunk[k].b = b;
             }
         }
-        if (k < 0) { /* all chunks busy: a one-off buffer */
+        if (k < 0 && tr_n) {
+            /* all chunks busy: wait for the oldest instead of allocating. One-off buffers here (~1500 a frame
+               while SEUS turns) grew the process by ~6 GB/s: Metal didn't hand their memory back. */
+            int old = 0;
+            for (int i = 1; i < tr_n; i++)
+                if (tr_chunk[i].b->last_use < tr_chunk[old].b->last_use)
+                    old = i;
+            uint64_t serial = tr_chunk[old].b->last_use;
+            if (serial >= cb_serial && cb)
+                commit(); /* the oldest is this command buffer's own: submit it first */
+            tr_waits++;
+            if (mglb_fence_wait(serial, 1000000000ull)) {
+                current_cb();
+                k = old;
+            }
+        }
+        if (k < 0) { /* still nothing: a one-off buffer */
+            tr_oneoff++;
             mglb_buffer *b = mglb_buffer_new(size);
             if (!b)
                 return (transient_t){nil, 0, NULL};
@@ -518,7 +670,34 @@ struct mglb_texture {
     void *mtl;
     mglb_texture_desc d;
     MTLPixelFormat pf;
+    /* level 0 holds only `cval` (colour, or depth in cval[0]) since a clear pass, nothing written since: a
+       repeat of that clear has nothing to do (Iris clears images every frame that nothing draws into) */
+    int clean;
+    float cval[4];
 };
+static void tex_dirty(mglb_texture *t) { if (t) t->clean = 0; }
+static void target_dirty(const mgl_target *t)
+{
+    for (int a = 0; a < MGL_MAX_ATTACHMENTS; a++)
+        tex_dirty(t->tex[a]);
+    tex_dirty(t->depth);
+}
+/* after a pass that only clears: the cleared level-0 images of plain 2D textures hold just the clear value */
+static void mark_clean(const pending_clear *r)
+{
+    for (int a = 0; a < MGL_MAX_ATTACHMENTS; a++) {
+        mglb_texture *x = r->t.tex[a];
+        if (x && (r->colors & (1u << a)) && x->d.type == MGLT_2D && r->t.level[a] == 0) {
+            x->clean = 1;
+            memcpy(x->cval, r->rgba, sizeof x->cval);
+        }
+    }
+    mglb_texture *z = r->t.depth;
+    if (z && r->depth && z->d.type == MGLT_2D && r->t.depth_level == 0) {
+        z->clean = 1;
+        z->cval[0] = r->depth_value;
+    }
+}
 
 static MTLPixelFormat pixel_format(enum mgl_format f)
 {
@@ -635,6 +814,8 @@ void mglb_texture_release(mglb_texture *t)
     if (!t)
         return;
     gs_flush(); /* a pending geometry-shader draw may still bind it */
+    if (pending_clear_uses(t))
+        materialize_clears();
     if (renc) {
         /* the open render pass may still reference it; Metal retains it for the command buffer */
     }
@@ -655,7 +836,7 @@ void mglb_texture_upload(mglb_texture *t, int level, int x, int y, int z, int w,
         for (int yy = 0; yy < h; yy++)
             memcpy((char *)stage.ptr + (size_t)zz * img + (size_t)yy * row,
                    (const char *)data + (size_t)zz * bytes_per_image + (size_t)yy * bytes_per_row, row);
-    id<MTLBlitCommandEncoder> e = blit_encoder();
+    id<MTLBlitCommandEncoder> e = blit_encoder_for(t, NULL);
     id<MTLTexture> tex = OBJ(id<MTLTexture>, t->mtl);
     if (t->d.type == MGLT_3D) {
         [e copyFromBuffer:stage.buf sourceOffset:stage.off sourceBytesPerRow:row sourceBytesPerImage:img
@@ -674,7 +855,7 @@ void mglb_texture_generate_mipmaps(mglb_texture *t)
 {
     if (!t || t->d.levels < 2 || is_int_format(t->pf) || is_depth_format(t->pf))
         return;
-    [blit_encoder() generateMipmapsForTexture:OBJ(id<MTLTexture>, t->mtl)];
+    [blit_encoder_for(t, NULL) generateMipmapsForTexture:OBJ(id<MTLTexture>, t->mtl)];
 }
 
 /* glClearTexImage source: one GPU-only buffer holding the clear pattern, refilled on the GPU only when the pattern
@@ -741,7 +922,7 @@ void mglb_texture_clear(mglb_texture *t, int level, const void *texel)
     clear_source(bytes, texel ? texel : zero, bpt);
     if (!clear_src || clear_filled < bytes)
         return;
-    id<MTLBlitCommandEncoder> e = blit_encoder();
+    id<MTLBlitCommandEncoder> e = blit_encoder_for(t, NULL);
     id<MTLTexture> tex = OBJ(id<MTLTexture>, t->mtl);
     if (t->d.type == MGLT_3D)
         [e copyFromBuffer:clear_src sourceOffset:0 sourceBytesPerRow:row sourceBytesPerImage:img
@@ -801,7 +982,7 @@ void mglb_texture_copy(mglb_texture *src, int src_level, int sx, int sy, int sz,
         }
         stex = [stex newTextureViewWithPixelFormat:dst->pf];
     }
-    id<MTLBlitCommandEncoder> e = blit_encoder();
+    id<MTLBlitCommandEncoder> e = blit_encoder_for(src, dst);
     int s3 = src->d.type == MGLT_3D, d3 = dst->d.type == MGLT_3D;
     for (int i = 0; i < d; i++)
         [e copyFromTexture:stex sourceSlice:(NSUInteger)(s3 ? 0 : sz + i)
@@ -1881,51 +2062,98 @@ static void set_attachment(MTLRenderPassAttachmentDescriptor *ad, mglb_texture *
 static unsigned pass_dontcare; /* colour attachments the next begin_pass needn't load (see pass_for_draw) */
 
 /* Open a render pass on t. clear_colors / clear_depth turn the matching load actions into clears. */
-static id<MTLRenderCommandEncoder> begin_pass(const mgl_target *t, unsigned clear_colors, const float *rgba,
-                                              int clear_depth, float depth)
+static id<MTLRenderCommandEncoder> begin_pass_at(int line, const mgl_target *t, unsigned clear_colors, const float *rgba,
+                                                 int clear_depth, float depth);
+#define begin_pass(...) begin_pass_at(__LINE__, __VA_ARGS__)
+static id<MTLRenderCommandEncoder> begin_pass_at(int line, const mgl_target *t, unsigned clear_colors, const float *rgba,
+                                                 int clear_depth, float depth)
 {
+    target_dirty(t);
+    /* pending clears of this target's images become its load actions; other pending clears go first */
+    unsigned take_colors = 0;
+    float take_rgba[MGL_MAX_ATTACHMENTS][4];
+    int take_depth = 0;
+    float take_depth_value = 0;
+    if (npclear) {
+        pending_clear list[8];
+        int n = npclear;
+        memcpy(list, pclear, sizeof list);
+        npclear = 0;
+        for (int i = 0; i < n; i++) {
+            pending_clear *r = &list[i];
+            for (int a = 0; a < MGL_MAX_ATTACHMENTS; a++) {
+                if (!(r->colors & (1u << a)))
+                    continue;
+                for (int j = 0; j < MGL_MAX_ATTACHMENTS; j++)
+                    if (t->tex[j] == r->t.tex[a] && t->level[j] == r->t.level[a] && t->layer[j] == r->t.layer[a]) {
+                        take_colors |= 1u << j;
+                        memcpy(take_rgba[j], r->rgba, sizeof r->rgba);
+                        r->colors &= ~(1u << a);
+                        break;
+                    }
+            }
+            if (r->depth && t->depth == r->t.depth && t->depth_level == r->t.depth_level) {
+                take_depth = 1;
+                take_depth_value = r->depth_value;
+                r->depth = 0;
+            }
+        }
+        for (int i = 0; i < n; i++)
+            if (list[i].colors || list[i].depth)
+                begin_pass_at(__LINE__, &list[i].t, list[i].colors, list[i].rgba, list[i].depth, list[i].depth_value);
+    }
+    if (t->width >= 2048 && t->width == t->height && flush_log_on()) {
+        static line_tally big = {"square shadow-map passes opened"};
+        tally_line(&big, line);
+    }
     prof_serialize();
     end_encoders();
-    MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
-    for (int i = 0; i < MGL_MAX_ATTACHMENTS; i++) {
-        if (!t->tex[i])
-            continue;
-        set_attachment(rp.colorAttachments[i], t->tex[i], t->level[i], t->layer[i]);
-        if (pass_dontcare & (1u << i))
-            rp.colorAttachments[i].loadAction = MTLLoadActionDontCare;
-        if (clear_colors & (1u << i)) {
-            rp.colorAttachments[i].loadAction = MTLLoadActionClear;
-            rp.colorAttachments[i].clearColor = MTLClearColorMake(rgba[0], rgba[1], rgba[2], rgba[3]);
+    @autoreleasepool {
+        MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
+        for (int i = 0; i < MGL_MAX_ATTACHMENTS; i++) {
+            if (!t->tex[i])
+                continue;
+            set_attachment(rp.colorAttachments[i], t->tex[i], t->level[i], t->layer[i]);
+            if (pass_dontcare & (1u << i))
+                rp.colorAttachments[i].loadAction = MTLLoadActionDontCare;
+            if (clear_colors & (1u << i)) {
+                rp.colorAttachments[i].loadAction = MTLLoadActionClear;
+                rp.colorAttachments[i].clearColor = MTLClearColorMake(rgba[0], rgba[1], rgba[2], rgba[3]);
+            } else if (take_colors & (1u << i)) {
+                rp.colorAttachments[i].loadAction = MTLLoadActionClear;
+                rp.colorAttachments[i].clearColor =
+                    MTLClearColorMake(take_rgba[i][0], take_rgba[i][1], take_rgba[i][2], take_rgba[i][3]);
+            }
         }
-    }
-    if (t->depth) {
-        set_attachment(rp.depthAttachment, t->depth, t->depth_level, 0);
-        if (clear_depth) {
-            rp.depthAttachment.loadAction = MTLLoadActionClear;
-            rp.depthAttachment.clearDepth = depth;
+        if (t->depth) {
+            set_attachment(rp.depthAttachment, t->depth, t->depth_level, 0);
+            if (clear_depth || take_depth) {
+                rp.depthAttachment.loadAction = MTLLoadActionClear;
+                rp.depthAttachment.clearDepth = clear_depth ? depth : take_depth_value;
+            }
+            if (t->depth->pf == MTLPixelFormatDepth32Float_Stencil8) {
+                set_attachment(rp.stencilAttachment, t->depth, t->depth_level, 0);
+                if (clear_depth || take_depth)
+                    rp.stencilAttachment.loadAction = MTLLoadActionClear;
+            }
         }
-        if (t->depth->pf == MTLPixelFormatDepth32Float_Stencil8) {
-            set_attachment(rp.stencilAttachment, t->depth, t->depth_level, 0);
-            if (clear_depth)
-                rp.stencilAttachment.loadAction = MTLLoadActionClear;
+        rp.renderTargetWidth = (NSUInteger)t->width;
+        rp.renderTargetHeight = (NSUInteger)t->height;
+        id<MTLCommandBuffer> c = current_cb();
+        char name[40];
+        snprintf(name, sizeof name, "pass %dx%d", t->width, t->height);
+        int k = pt_pass(name);
+        if (k >= 0) {
+            rp.sampleBufferAttachments[0].sampleBuffer = pt_cur->sb;
+            rp.sampleBufferAttachments[0].startOfVertexSampleIndex = (NSUInteger)k * 2;
+            rp.sampleBufferAttachments[0].endOfVertexSampleIndex = MTLCounterDontSample;
+            rp.sampleBufferAttachments[0].startOfFragmentSampleIndex = MTLCounterDontSample;
+            rp.sampleBufferAttachments[0].endOfFragmentSampleIndex = (NSUInteger)k * 2 + 1;
         }
+        renc = [c renderCommandEncoderWithDescriptor:rp];
     }
-    rp.renderTargetWidth = (NSUInteger)t->width;
-    rp.renderTargetHeight = (NSUInteger)t->height;
-    id<MTLCommandBuffer> c = current_cb();
-    char name[40];
-    snprintf(name, sizeof name, "pass %dx%d", t->width, t->height);
-    int k = pt_pass(name);
-    if (k >= 0) {
-        rp.sampleBufferAttachments[0].sampleBuffer = pt_cur->sb;
-        rp.sampleBufferAttachments[0].startOfVertexSampleIndex = (NSUInteger)k * 2;
-        rp.sampleBufferAttachments[0].endOfVertexSampleIndex = MTLCounterDontSample;
-        rp.sampleBufferAttachments[0].startOfFragmentSampleIndex = MTLCounterDontSample;
-        rp.sampleBufferAttachments[0].endOfFragmentSampleIndex = (NSUInteger)k * 2 + 1;
-    }
-    renc = [c renderCommandEncoderWithDescriptor:rp];
     prof.passes++;
-    if (same_target(t, &prof_last_target) && !clear_colors && !clear_depth)
+    if (same_target(t, &prof_last_target) && !clear_colors && !clear_depth && !take_colors && !take_depth)
         prof.reopened++;
     prof_last_target = *t;
     renc_target = *t;
@@ -1935,6 +2163,7 @@ static id<MTLRenderCommandEncoder> begin_pass(const mgl_target *t, unsigned clea
 static id<MTLRenderCommandEncoder> pass_for(const mgl_target *t)
 {
     gs_flush();
+    target_dirty(t);
     if (renc && same_target(t, &renc_target))
         return renc;
     return begin_pass(t, 0, NULL, 0, 0);
@@ -1950,6 +2179,7 @@ static id<MTLRenderCommandEncoder> pass_for_draw(const mgl_draw *d)
 {
     gs_flush();
     const mgl_target *t = &d->target;
+    target_dirty(t);
     if (renc && same_target(t, &renc_target))
         return renc;
     if (opt_smart_load == ~0u)
@@ -2235,7 +2465,52 @@ void mglb_clear(const mgl_target *t, unsigned mask_color, const float rgba[4], i
                                scissor[1] + scissor[3] < t->height)) ||
                   (mask_color && cmask != 0xf);
     if (!partial) {
-        begin_pass(t, mask_color, rgba, clear_depth, depth);
+        static int defer = -1;
+        if (defer < 0)
+            defer = !getenv("MGL_DEFER_CLEAR") || atoi(getenv("MGL_DEFER_CLEAR")) != 0;
+        if (!defer || t->is_default || (!mask_color && !clear_depth)) {
+            begin_pass(t, mask_color, rgba, clear_depth, depth);
+            return;
+        }
+        gs_flush(); /* draws issued before the clear keep their place */
+        keep_clears = 1;
+        end_encoders();
+        keep_clears = 0;
+        /* images still holding exactly this clear (and no other clear pending) need nothing */
+        for (int j = 0; j < MGL_MAX_ATTACHMENTS; j++) {
+            mglb_texture *x = t->tex[j];
+            if ((mask_color & (1u << j)) && x && x->clean && t->level[j] == 0 && !pending_clear_clears(x) &&
+                !memcmp(x->cval, rgba, sizeof x->cval))
+                mask_color &= ~(1u << j);
+        }
+        if (clear_depth && t->depth && t->depth->clean && t->depth_level == 0 && !pending_clear_clears(t->depth) &&
+            t->depth->cval[0] == depth)
+            clear_depth = 0;
+        if (!mask_color && !(clear_depth && t->depth)) {
+            if (flush_log_on()) {
+                static line_tally skipped = {"clears skipped (images still clear)"};
+                tally_line(&skipped, __LINE__);
+            }
+            return;
+        }
+        /* a later clear of the same image wins */
+        for (int i = 0; i < npclear; i++) {
+            for (int a = 0; a < MGL_MAX_ATTACHMENTS; a++)
+                for (int j = 0; j < MGL_MAX_ATTACHMENTS; j++)
+                    if ((mask_color & (1u << j)) && (pclear[i].colors & (1u << a)) && pclear[i].t.tex[a] == t->tex[j] &&
+                        pclear[i].t.level[a] == t->level[j] && pclear[i].t.layer[a] == t->layer[j])
+                        pclear[i].colors &= ~(1u << a);
+            if (clear_depth && pclear[i].t.depth == t->depth && pclear[i].t.depth_level == t->depth_level)
+                pclear[i].depth = 0;
+        }
+        if (npclear == 8)
+            materialize_clears();
+        pending_clear *r = &pclear[npclear++];
+        r->t = *t;
+        r->colors = mask_color;
+        memcpy(r->rgba, rgba, sizeof r->rgba);
+        r->depth = clear_depth && t->depth;
+        r->depth_value = depth;
         return;
     }
     /* scissored or masked clear: draw a quad */
@@ -2386,6 +2661,8 @@ static void bind_stage_resources(id<MTLRenderCommandEncoder> e, id<MTLComputeCom
         if (!bt->dim)
             continue; /* slot unused by this stage */
         id<MTLTexture> tex = bt->tex ? OBJ(id<MTLTexture>, bt->tex->mtl) : dummy_texture(bt->dim, bt->sample_kind, bt->is_shadow);
+        if (bt->is_image)
+            tex_dirty(bt->tex);
         if (bt->is_image && bt->tex && bt->image_level > 0)
             tex = [tex newTextureViewWithPixelFormat:tex.pixelFormat textureType:tex.textureType
                                               levels:NSMakeRange((NSUInteger)bt->image_level, 1)
@@ -2561,7 +2838,7 @@ static int gs_batch = -1;
 /* Geometry-shader emulation (mgl_gs.c). The compute stage gets: 21 attribute descriptors, 22..25 raw vertex
    buffers, 26 index buffer, 27 emitted vertex records, 28 per-primitive vertex counts. The passthrough vertex
    stage reads 27/28 and turns each strip into a triangle list. */
-void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record_vec4s)
+void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record_floats)
 {
     if (!d->program->compute || !d->program->vfn || max_vertices < 3 || triangles <= 0)
         return;
@@ -2586,7 +2863,10 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
         desc[i][2] = vb->stride;
         desc[i][3] = (int32_t)a->type | (a->size << 4) | (a->normalized ? 1 << 8 : 0);
     }
-    size_t out_bytes = (size_t)triangles * (size_t)max_vertices * (size_t)record_vec4s * 16;
+    size_t out_bytes = (size_t)triangles * (size_t)max_vertices * (size_t)record_floats * 4;
+    prof.gs_draws++;
+    prof.gs_tris += (unsigned long)triangles;
+    prof.gs_bytes += out_bytes;
     transient_t ov = transient(out_bytes), oc = transient((size_t)triangles * 4);
     if (!ov.buf || !oc.buf)
         return;
@@ -2598,8 +2878,20 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
         gs_batch = !getenv("MGL_GS_BATCH") || atoi(getenv("MGL_GS_BATCH")) != 0;
     if (!gs_batch || !same_target(&d->target, &gs_target) || gs_pending.count >= 2048)
         gs_flush();
+    /* the vertex and geometry stages run as compute: pending clears can wait for the strips' render pass unless
+       this draw also reads one of their images */
+    int reads_cleared = 0;
+    for (int st = 0; st < 3 && npclear && !reads_cleared; st++)
+        for (int i = 0; i < MGL_MAX_TEXTURES && !reads_cleared; i++)
+            reads_cleared = d->textures[st][i].tex && pending_clear_uses(d->textures[st][i].tex);
+    if (reads_cleared && flush_log_on()) {
+        static line_tally gs_reads = {"geometry-shader draws reading a pending clear's image"};
+        tally_line(&gs_reads, __LINE__);
+    }
     gs_recording = 1;
+    keep_clears = !reads_cleared;
     id<MTLComputeCommandEncoder> c = compute_encoder();
+    keep_clears = 0;
     gs_recording = 0;
     [c setComputePipelineState:OBJ(id<MTLComputePipelineState>, d->program->compute)];
     bind_stage_resources(nil, c, d, 2);
@@ -2692,11 +2984,31 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
 /* Draw the pending geometry-shader draws in one render pass on their target. Called before anything else uses
    the GPU (any encoder, a commit, a barrier, a texture release), so GL's order is kept for everything that
    could see their results. */
-static void gs_flush(void)
+static void gs_flush_at(int line)
 {
     static int flushing;
     if (!gs_pending.count || flushing)
         return;
+    static int flush_log = -1, lines[16], counts[16], total;
+    if (flush_log < 0)
+        flush_log = getenv("MGL_GS_FLUSH_LOG") && atoi(getenv("MGL_GS_FLUSH_LOG"));
+    if (flush_log) {
+        int k = 0;
+        while (k < 15 && lines[k] && lines[k] != line)
+            k++;
+        lines[k] = line;
+        counts[k]++;
+        if (++total == 600) {
+            char msg[512];
+            int n = snprintf(msg, sizeof msg, "geometry shader batches ended (600, by source line):");
+            for (int i = 0; i < 16 && lines[i]; i++)
+                n += snprintf(msg + n, sizeof msg - (size_t)n, " %d x%d", lines[i], counts[i]);
+            mgl_log("%s; last batch %d draws", msg, (int)gs_pending.count);
+            memset(lines, 0, sizeof lines);
+            memset(counts, 0, sizeof counts);
+            total = 0;
+        }
+    }
     flushing = 1;
     NSArray<gs_play> *list = gs_pending;
     gs_pending = [NSMutableArray new];
@@ -2777,6 +3089,10 @@ static id<MTLAccelerationStructure> build_as(MTLAccelerationStructureDescriptor 
     return as;
 }
 
+static unsigned long rt_built, rt_built_tris; /* section structures built since the last MGL_RT_DEBUG line */
+static unsigned long rt_rebuilt; /* of those, ranges built before (vertex data rewritten, or another block-id offset) */
+static NSMutableSet<NSData *> *rt_ranges; /* MGL_RT_DEBUG=1: every range built, without generation and offsets */
+
 static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer **tris_out, RtSection **sec_out)
 {
     rt_key k;
@@ -2801,6 +3117,21 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer
         *tris_out = s.tris;
         *sec_out = s;
         return s.as;
+    }
+    rt_built++;
+    rt_built_tris += (unsigned long)(g->count / 3);
+    if (getenv("MGL_RT_DEBUG") && atoi(getenv("MGL_RT_DEBUG"))) {
+        rt_key r = k;
+        r.gen = 0;
+        r.ent_off = 0;
+        r.lmin = r.lmax = 0;
+        NSData *rk = [[NSData alloc] initWithBytes:&r length:sizeof r];
+        if (!rt_ranges)
+            rt_ranges = [NSMutableSet set];
+        if ([rt_ranges containsObject:rk])
+            rt_rebuilt++;
+        else
+            [rt_ranges addObject:rk];
     }
     id<MTLComputePipelineState> ps = rt_decode_pipeline();
     int tris = g->count / 3;
@@ -2911,7 +3242,7 @@ static void rt_build_lights(const mgl_rt_geom *g, RtSection *__strong *secs, con
         mglb_buffer_release(hash);
         return;
     }
-    id<MTLBlitCommandEncoder> b = blit_encoder();
+    id<MTLBlitCommandEncoder> b = blit_encoder_for(NULL, NULL);
     [b fillBuffer:OBJ(id<MTLBuffer>, lb->mtl) range:NSMakeRange(0, RT_LIGHTS_BYTES) value:0];
     [b fillBuffer:OBJ(id<MTLBuffer>, hash->mtl) range:NSMakeRange(0, 8192 * 4) value:0];
     id<MTLComputeCommandEncoder> c = compute_encoder();
@@ -3129,8 +3460,13 @@ static void rt_update(const mgl_rt_geom *g, int n)
     if (debug < 0)
         debug = getenv("MGL_RT_DEBUG") && atoi(getenv("MGL_RT_DEBUG"));
     if (!logged++ || (debug && rt_frame % 120 == 0))
-        mgl_log("ray tracing: scene built from %d of %d terrain sections (%lu cached), %d entity triangles",
-                count - (ent ? 1 : 0), n, (unsigned long)rt_sections.count, ent ? rt_ent_n : 0);
+    {
+        mgl_log("ray tracing: scene built from %d of %d terrain sections (%lu cached), %d entity triangles; %lu section "
+                "structures (%luk triangles) built in the last %d frames, %lu of them ranges built before",
+                count - (ent ? 1 : 0), n, (unsigned long)rt_sections.count, ent ? rt_ent_n : 0, rt_built,
+                rt_built_tris / 1000, logged == 1 ? 1 : 120, rt_rebuilt);
+        rt_built = rt_built_tris = rt_rebuilt = 0;
+    }
 }
 
 static void bind_scene(id<MTLRenderCommandEncoder> e, id<MTLComputeCommandEncoder> c)
@@ -4171,6 +4507,13 @@ static void profile_frame(unsigned long draws)
             f * 1000.0 / ((double)(t - prof.start_ns) * 1e-6), ms, (double)prof.wait_ns * 1e-6 / f,
             (double)atomic_load(&prof_gpu_ns) * 1e-6 / f, prof.draws / f, prof.passes / f, prof.reopened / f, prof.dontcare / f,
             prof.blits / f, prof.computes / f, prof.cbs / f, prof.finishes / f, 100.0 * prof.skipped_presents / f);
+    if (prof.gs_draws)
+        mgl_log("profile: geometry shaders %.0f draws, %.0fk input triangles, %.1f MB of records per frame", prof.gs_draws / f,
+                prof.gs_tris / f * 1e-3, prof.gs_bytes / f / 1048576.0);
+    mgl_log("profile: buffers %.0f MB held (%.0f MB pooled), %d of %d transient chunks, %.1f one-off transient "
+            "buffers and %.1f waits for a chunk per frame", buf_live_bytes / 1048576.0, buf_pooled_bytes / 1048576.0, tr_n,
+            TR_MAX, tr_oneoff / f, tr_waits / f);
+    tr_oneoff = tr_waits = 0;
     if (pt_ok > 0)
         pt_report(f);
     memset(&prof, 0, sizeof prof);
