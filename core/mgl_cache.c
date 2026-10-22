@@ -50,8 +50,6 @@ int mgl_cache_key(const char *src[MGL_NUM_STAGES], const char *geometry, const m
         return 0;
     h128 h = {0xcbf29ce484222325ull, 0x84222325cbf29ce4ull};
     mix(&h, build_tag, sizeof build_tag);
-    int soa = mgl_gs_soa(); /* the geometry-shader record layout is baked into the translated shaders */
-    mix(&h, &soa, sizeof soa);
     for (int s = 0; s < MGL_NUM_STAGES; s++)
         mix(&h, src[s] ? src[s] : "", src[s] ? strlen(src[s]) : 0);
     mix(&h, geometry ? geometry : "", geometry ? strlen(geometry) : 0);

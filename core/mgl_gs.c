@@ -457,19 +457,6 @@ static int type_info(const char *t, int *comps, int *is_int, int *is_uint)
 
 static const char *swz[5] = {"", ".x", ".xy", ".xyz", ""};
 
-/* Record layout. MGL_GS_SOA=0: each vertex's floats side by side (record r, float f at r * R + f), so one thread's
-   stores land 4 bytes apart and neighbouring threads' stores R * M floats apart. Default: blocks of 32 primitives,
-   float f of slot e of primitive p at ((p / 32 * M + e) * R + f) * 32 + p % 32, so the 32 threads of a SIMD group
-   store each float to 32 consecutive addresses. Same size (the buffer is padded to whole blocks). */
-int mgl_gs_soa(void)
-{
-    static int v = -1;
-    if (v < 0)
-        v = !getenv("MGL_GS_SOA") || atoi(getenv("MGL_GS_SOA")) != 0;
-    return v;
-}
-#define FS (mgl_gs_soa() ? 32 : 1) /* distance between a record's consecutive floats */
-
 /* value of a varying packed into a vec4 (ints as bits) */
 /* Records are tightly packed floats: position (4), then each varying's own components, then the strip id (1).
    SEUS's shadow pass (8 varyings, 18 components) writes 23 floats per vertex instead of 10 vec4s: the record
@@ -483,13 +470,13 @@ static void pack_store(sb *o, const varying *v, const char *expr, int off)
         else
             snprintf(c, sizeof c, "%s[%d]", expr, j);
         if (!strcmp(v->type, "bool"))
-            sb_printf(o, "  mgl_ov[rec + %du] = %s ? 1.0 : 0.0;\n", (off + j) * FS, c);
+            sb_printf(o, "  mgl_ov[rec + %du] = %s ? 1.0 : 0.0;\n", off + j, c);
         else if (v->is_int)
-            sb_printf(o, "  mgl_ov[rec + %du] = intBitsToFloat(%s);\n", (off + j) * FS, c);
+            sb_printf(o, "  mgl_ov[rec + %du] = intBitsToFloat(%s);\n", off + j, c);
         else if (v->is_uint)
-            sb_printf(o, "  mgl_ov[rec + %du] = uintBitsToFloat(%s);\n", (off + j) * FS, c);
+            sb_printf(o, "  mgl_ov[rec + %du] = uintBitsToFloat(%s);\n", off + j, c);
         else
-            sb_printf(o, "  mgl_ov[rec + %du] = %s;\n", (off + j) * FS, c);
+            sb_printf(o, "  mgl_ov[rec + %du] = %s;\n", off + j, c);
     }
 }
 
@@ -497,13 +484,13 @@ static void unpack_expr(sb *o, const varying *v, int off)
 {
     const char *conv = v->is_int && strcmp(v->type, "bool") ? "floatBitsToInt" : v->is_uint ? "floatBitsToUint" : "";
     if (!strcmp(v->type, "bool")) {
-        sb_printf(o, "(mgl_ov[rec + %du] > 0.5 ? 1 : 0)", off * FS);
+        sb_printf(o, "(mgl_ov[rec + %du] > 0.5 ? 1 : 0)", off);
         return;
     }
     if (v->comps > 1)
         sb_printf(o, "%s(", v->type);
     for (int j = 0; j < v->comps; j++)
-        sb_printf(o, "%s%s(mgl_ov[rec + %du])", j ? ", " : "", conv, (off + j) * FS);
+        sb_printf(o, "%s%s(mgl_ov[rec + %du])", j ? ", " : "", conv, off + j);
     if (v->comps > 1)
         sb_puts(o, ")");
 }
@@ -791,12 +778,6 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
         R += gout[i].comps;
     }
 
-    char rec_expr[160]; /* start of slot e of primitive prim in mgl_ov (see mgl_gs_soa) */
-    if (mgl_gs_soa())
-        snprintf(rec_expr, sizeof rec_expr, "((prim >> 5u) * %du + e) * %du + (prim & 31u)", max_vertices, R * 32);
-    else
-        snprintf(rec_expr, sizeof rec_expr, "(prim * %du + e) * %du", max_vertices, R);
-
     /* ---- compute shader ---- */
     /* MGL_GS_PROBE (timing experiments only, the picture is wrong): 1 = no geometry stage (nothing emitted),
        2 = no vertex stage (attributes straight to the geometry stage), 3 = no record writes, 4 = constant attributes (no fetch),
@@ -820,17 +801,16 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
         sb_printf(&comp, "void mgl_emit() {\n  if (mgl_emitted < %du) mgl_emitted++;\n}\nvoid mgl_emit_unused() {\n"
                          "  uint rec = 0u;\n", max_vertices);
     else
-    sb_printf(&comp, "uint mgl_rec(uint prim, uint e) {\n  return %s;\n}\n"
-                     "void mgl_emit() {\n  if (mgl_emitted >= %du) return;\n"
-                     "  uint rec = mgl_rec(uint(mgl_prim_id), mgl_emitted);\n"
-                     "  mgl_ov[rec] = mgl_g_Position.x;\n  mgl_ov[rec + %du] = mgl_g_Position.y;\n"
-                     "  mgl_ov[rec + %du] = mgl_g_Position.z;\n  mgl_ov[rec + %du] = mgl_g_Position.w;\n",
-              rec_expr, max_vertices, FS, 2 * FS, 3 * FS);
+    sb_printf(&comp, "void mgl_emit() {\n  if (mgl_emitted >= %du) return;\n"
+                     "  uint rec = (uint(mgl_prim_id) * %du + mgl_emitted) * %du;\n"
+                     "  mgl_ov[rec] = mgl_g_Position.x;\n  mgl_ov[rec + 1u] = mgl_g_Position.y;\n"
+                     "  mgl_ov[rec + 2u] = mgl_g_Position.z;\n  mgl_ov[rec + 3u] = mgl_g_Position.w;\n",
+              max_vertices, max_vertices, R);
     for (int i = 0; i < ngout; i++)
         if (voff[i] >= 0)
             pack_store(&comp, &gout[i], gout[i].name, voff[i]);
     sb_printf(&comp, "  mgl_ov[rec + %du] = uintBitsToFloat(mgl_strip);\n  mgl_emitted++;\n}\n"
-                     "void mgl_end_primitive() { mgl_strip++; }\n", (R - 1) * FS);
+                     "void mgl_end_primitive() { mgl_strip++; }\n", R - 1);
     /* one vertex-stage run: fetch the attributes of vtx, run the vertex shader, store the results as input c */
     sb_puts(&comp, "void mgl_run_vs(uint vtx, int c) {\n    mgl_vertex_id = int(vtx);\n    mgl_instance_id = 0;\n");
     for (int i = 0; i < nattrs; i++) {
@@ -931,17 +911,17 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
                   : gout[i].noperspective                                                            ? "noperspective "
                                                                                                      : "",
                   !strcmp(gout[i].type, "bool") ? "int" : gout[i].type, gout[i].name);
-    sb_printf(&pass, "uint mgl_rec(uint prim, uint e) {\n  return %s;\n}\n"
-                     "void main() {\n"
-                     "  const uint M = %du, T = M - 2u, S = %du, SID = %du;\n"
+    sb_printf(&pass, "void main() {\n"
+                     "  const uint M = %du, R = %du, T = M - 2u;\n"
                      "  uint v = uint(gl_VertexIndex);\n  uint prim = v / (T * 3u);\n  uint rem = v %% (T * 3u);\n"
                      "  uint t = rem / 3u;\n  uint j = rem %% 3u;\n"
                      "  uint k = (t & 1u) != 0u ? (j == 0u ? 1u : (j == 1u ? 0u : 2u)) : j; /* keep strip winding */\n"
+                     "  uint base = prim * M;\n"
                      "  bool ok = t + 2u < mgl_oc[prim] &&\n"
-                     "      floatBitsToUint(mgl_ov[mgl_rec(prim, t) + SID]) == floatBitsToUint(mgl_ov[mgl_rec(prim, t + 2u) + SID]);\n"
-                     "  uint rec = mgl_rec(prim, t + k);\n"
-                     "  gl_Position = ok ? vec4(mgl_ov[rec], mgl_ov[rec + S], mgl_ov[rec + 2u * S], mgl_ov[rec + 3u * S]) : vec4(2.0, 2.0, 2.0, 1.0);\n",
-              rec_expr, max_vertices, FS, (R - 1) * FS);
+                     "      floatBitsToUint(mgl_ov[(base + t) * R + R - 1u]) == floatBitsToUint(mgl_ov[(base + t + 2u) * R + R - 1u]);\n"
+                     "  uint rec = (base + t + k) * R;\n"
+                     "  gl_Position = ok ? vec4(mgl_ov[rec], mgl_ov[rec + 1u], mgl_ov[rec + 2u], mgl_ov[rec + 3u]) : vec4(2.0, 2.0, 2.0, 1.0);\n",
+              max_vertices, R);
     sb_puts(&pass, "  if (!ok) return; /* unused slot or strip join: off-screen, its varyings never read */\n");
     for (int i = 0; i < ngout; i++) {
         if (voff[i] < 0)
