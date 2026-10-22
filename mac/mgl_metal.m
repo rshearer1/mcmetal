@@ -2865,7 +2865,12 @@ static int gs_batch = -1;
 #define GSC_MAX_SLABS 64
 #define GSC_MAX 16384 /* entries; the table has twice as many slots */
 typedef struct { uint32_t off, len; } gsc_range;
-typedef struct { id<MTLBuffer> buf; gsc_range *free; int nfree, cap; } gsc_slab;
+typedef struct {
+    id<MTLBuffer> buf;
+    gsc_range *free;
+    int nfree, cap;
+    uint64_t empty_since; /* frame it last became empty, 0 = in use */
+} gsc_slab;
 typedef struct { int slab; uint32_t off, len; uint64_t serial; } gsc_later; /* freed, but the GPU may still read it */
 typedef struct {
     uint64_t k0, k1;
@@ -2940,7 +2945,7 @@ static void gsc_release(const gsc_entry *e)
 }
 
 /* bytes from the slabs, 256-aligned; -1 when the cache is full */
-static int gsc_alloc(uint32_t len, uint32_t *off)
+static void gsc_reclaim(void)
 {
     uint64_t done = atomic_load(&completed_serial);
     int n = 0;
@@ -2950,6 +2955,11 @@ static int gsc_alloc(uint32_t len, uint32_t *off)
         else
             gsc_laters[n++] = gsc_laters[i];
     gsc_nlater = n;
+}
+
+static int gsc_alloc(uint32_t len, uint32_t *off)
+{
+    gsc_reclaim();
     for (int k = 0; k <= gsc_nslabs; k++) {
         if (k == gsc_nslabs) {
             if (k == GSC_MAX_SLABS || (size_t)(k + 1) * GSC_SLAB > gsc_cap_bytes())
@@ -2993,6 +3003,24 @@ static void gsc_rehash(void)
 static void gsc_end_frame(void)
 {
     gsc_frame++;
+    if (gsc_nslabs) { /* give back slabs at the end that stayed empty for 120 frames (walking empties them) */
+        gsc_reclaim();
+        while (gsc_nslabs) {
+            gsc_slab *s = &gsc_slabs[gsc_nslabs - 1];
+            if (!(s->nfree == 1 && s->free[0].len == (uint32_t)GSC_SLAB)) {
+                s->empty_since = 0;
+                break;
+            }
+            if (!s->empty_since)
+                s->empty_since = gsc_frame;
+            if (gsc_frame - s->empty_since < 120)
+                break;
+            s->buf = nil;
+            free(s->free);
+            *s = (gsc_slab){0};
+            gsc_nslabs--;
+        }
+    }
     if (!gsc_n)
         return;
     int n = 0;
