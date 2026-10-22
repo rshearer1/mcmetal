@@ -307,8 +307,15 @@ dh_phase() { # dh / dh-shaders: Distant Horizons at noon, without a pack or with
     python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import bare_mc; bare_mc.fetch(*sys.argv[2:])' \
         "$SRC/tools" "$url" "$G/mods/distanthorizons.jar" "$sha" || { echo "could not download Distant Horizons"; return; }
     scene noon clear dh
+    # GAME_DH_OPTS="graphics.quality.lodChunkRenderDistanceRadius=128 graphics.enableSsao=false": DH settings, as
+    # keys under [client.advanced] of config/DistantHorizons.toml (DH fills in the rest); unset = DH's defaults
+    rm -f "$G/config/DistantHorizons.toml"
+    if [ -n "${GAME_DH_OPTS:-}" ]; then
+        mkdir -p "$G/config"; echo "_version = 5" > "$G/config/DistantHorizons.toml"
+        local kv; for kv in $GAME_DH_OPTS; do echo "client.advanced.${kv%%=*} = ${kv#*=}" >> "$G/config/DistantHorizons.toml"; done
+    fi
     GAME_SHOTS=${GAME_SHOTS:-16} run_phase "$1" 360 metal "$2"
-    rm -f "$G/mods/distanthorizons.jar"
+    rm -f "$G/mods/distanthorizons.jar" "$G/config/DistantHorizons.toml"
 }
 
 # packnight-NAME turns each pack's coloured block light on (all ship with it off except Solas and RV)

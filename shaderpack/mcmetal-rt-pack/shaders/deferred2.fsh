@@ -101,6 +101,7 @@ void main() {
         float cosSun = dot(dir, sunDir), edge = smoothstep(0.99955, 0.99975, cosSun);
         col += lightTransmittance(sunDir) * edge * (60.0 * (0.6 + 0.4 * smoothstep(0.99955, 0.99995, cosSun)));
         if (mat == MAT_SKY) col += toLinear(albedo.rgb) * 0.4 * (1.0 - 0.9 * rainStrength);
+        col += styleAurora(dir, smoothstep(0.02, -0.12, sunDir.y)) * (1.0 - rainStrength);
   #ifdef CLOUDS
         col = drawClouds(col, dir, lightDir, sunCol, skyAmb);
   #endif
@@ -131,6 +132,12 @@ void main() {
         // GI brings the sky light and the bounced light, so the lightmap's sky guess is left out
         // the held item isn't in the ray scene's history: it gets the plain sky light instead
         vec3 gi = mat == MAT_HAND ? skyAmb * (nl.w * nl.w) * (0.7 + 0.3 * n.y) : filteredGI(n, length(p));
+  #ifdef LABPBR
+        // the GI is traced for the block's face: let the normal map shade it too (light comes mostly from above
+        // and from in front of the face), so bumps show in shade and under an overhead sun
+        vec3 gd = normalize(n + vec3(0.0, 0.8, 0.0));
+        gi *= clamp(1.0 + 2.0 * (dot(nm, gd) - dot(n, gd)), 0.45, 1.4);
+  #endif
   #ifdef USE_LIGHTS
         // coloured block light (in the GI, deferred.fsh) replaces the lightmap's block light; the held light stays
         col = a * (surfaceLight(p, nm, vec2(mat == MAT_HAND ? nl.z : 0.0, nl.w), ao, mat, lightDir, sunCol, vec3(0.0), sh) + gi)

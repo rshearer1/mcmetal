@@ -87,6 +87,6 @@ vec3 coloredBlockLight(vec3 p, vec3 n, int mat, float u1, float u2, float u3) {
 #else
     if (dist > 0.9 && mcm_trace(o, dir, dist - 0.9) > 0.0) return vec3(0.0);
 #endif
-    return l * (total / w[pick]) * COLORED_LIGHT_STRENGTH;
+    return l * (total / w[pick]) * COLORED_LIGHT_STRENGTH * STYLE_BLOCK_TINT;
 }
 #endif

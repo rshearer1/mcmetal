@@ -4,11 +4,14 @@
 name: mac
 on:
   push:
+    paths-ignore:  # notes and gallery pictures only: nothing to build or run
+      - '**.md'
+      - 'shaderpack/screens/**'
   workflow_dispatch:
     inputs:
       phases:
-        description: game phases (title world complementary water water-shaders night nether nether-shaders)
-        default: title world complementary
+        description: 'game phases, one Mac each (title world complementary water ...); a&b runs a then b on one Mac'
+        default: title&world complementary
       env:
         description: extra env for every phase, e.g. MGL_DEBUG_DRAWS=1
         default: ''
@@ -39,6 +42,14 @@ on:
       jvm:
         description: 'JVM options for the game, e.g. "-XX:+UseZGC -XX:+ZGenerational" (bench: JVM pauses in gc-report.txt)'
         default: ''
+# A newer push to the same branch cancels the older push's run (it tests the same work plus more). Manual runs
+# (bench, profile, ab-*) each get their own group and are never cancelled.
+concurrency:
+  group: mac-${{ github.event_name == 'push' && github.ref || github.run_id }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+  actions: read  # Pick game phases looks up earlier runs
 defaults:
   run:
     shell: bash  # bash -eo pipefail: a failing build isn't hidden by `| tee`
@@ -102,10 +113,19 @@ jobs:
           PHASES: ${{ github.event.inputs.phases }}
           EVENT: ${{ github.event_name }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
+          TREE: ${{ github.event.head_commit.tree_id }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           phases="$PHASES"
-          [ -n "$phases" ] || phases="title world complementary"
+          [ -n "$phases" ] || phases="title&world complementary"
           if [ "$EVENT" = push ] && grep -q '\[no game\]' <<< "$COMMIT_MSG"; then phases=""; fi
+          # the exact same files already passed the game phases in an earlier push (typically a branch merged into
+          # main as it was): build and check, but don't play them again. "[full game]" in the message plays anyway.
+          if [ "$EVENT" = push ] && [ -n "$phases" ] && [ -n "$TREE" ] && ! grep -q '\[full game\]' <<< "$COMMIT_MSG"; then
+            tested=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/mac.yml/runs?event=push&status=success&per_page=100" \
+              --jq '.workflow_runs[] | select(.id != '"$GITHUB_RUN_ID"') | select(.head_commit.message | contains("[no game]") | not) | .head_commit.tree_id' || true)
+            if grep -qxF "$TREE" <<< "$tested"; then echo "tree $TREE already passed the game phases"; phases=""; fi
+          fi
           echo "phases=$(printf '%s\n' $phases | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().split()))')" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
@@ -130,7 +150,9 @@ jobs:
     needs: build
     if: ${{ needs.build.outputs.phases != '[]' && needs.build.outputs.phases != '' }}
     runs-on: macos-15
-    timeout-minutes: 30
+    # a hung game must not hold one of our 5 Macs for half an hour: the slowest healthy phase (ab-*) takes ~8 min;
+    # segment benches and soak tests (long) keep 30
+    timeout-minutes: ${{ (github.event.inputs.segments || github.event.inputs.long == 'true') && 30 || 15 }}
     strategy:
       fail-fast: false
       matrix:
@@ -164,7 +186,9 @@ jobs:
           GAME_SEGMENTS: ${{ github.event.inputs.segments }}
           GAME_JVM: ${{ github.event.inputs.jvm }}
           PHASE: ${{ matrix.phase }}
-        run: bash tests/game/ci_game.sh ~/mcgame game-out "$PHASE"
+        run: |
+          IFS='&' read -ra P <<< "$PHASE"  # "title&world": both phases, one after the other, on this Mac
+          bash tests/game/ci_game.sh ~/mcgame game-out "${P[@]}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

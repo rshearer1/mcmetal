@@ -160,7 +160,6 @@ void main() {
         c.rgb = pow(c.rgb, vec3(1.0 + 0.4 * wet)) * (1.0 - 0.25 * wet - 0.55 * puddle);
     }
   #endif
-    outAlbedo = vec4(c.rgb, 1.0);
     outNormalLight = vec4(octEncode(n), lmcoord);
     // LabPBR: normal map (tangent space xy, AO in b), smoothness / F0 / emission from the specular map
     vec3 nm = n;
@@ -168,19 +167,22 @@ void main() {
   #ifdef LABPBR
     {
         vec4 nt = texture(normals, texcoord);
-        vec2 xy = nt.xy * 2.0 - 1.0;
+        vec2 xy = (nt.xy * 2.0 - 1.0) * LABPBR_NORMAL_STRENGTH;
         vec3 tn = vec3(xy, sqrt(max(1.0 - dot(xy, xy), 0.0)));
         vec3 t = tangentW.xyz - n * dot(tangentW.xyz, n);
         if (dot(t, t) > 1e-6 && nt.a > 0.0) {
             t = normalize(t);
             vec3 b = cross(n, t) * (tangentW.w < 0.0 ? -1.0 : 1.0);
             nm = normalize(t * tn.x + b * tn.y + n * tn.z);
-            ao *= nt.b;
+            // the pack's own AO and height (cracks, grout, mortar lines) darken the colour itself, so the relief
+            // shows in every light, also in the ray-traced bounce light and at noon when the sun is straight above
+            c.rgb *= nt.b * mix(1.0 - 0.3 * LABPBR_NORMAL_STRENGTH, 1.0, nt.a);
         }
         spec = texture(specular, texcoord);
         if (spec.a > 254.5 / 255.0) spec.a = 0.0;   // LabPBR: 255 = no emission
     }
   #endif
+    outAlbedo = vec4(c.rgb, 1.0);
     // puddles are flat and mirror-smooth
     spec.r = max(spec.r, puddle);
     outMaterial = vec4(float(mat) / 255.0, ao, puddle, spec.a);

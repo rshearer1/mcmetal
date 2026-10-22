@@ -1,5 +1,6 @@
 // Our sky: single-scattering atmosphere (Nishita et al. 1993) with Rayleigh and Mie scattering, written from the
 // paper's equations. Directions are in player space (y up). Needs common.glsl.
+#include "/lib/style.glsl"
 const float R_EARTH = 6360e3, R_ATMOS = 6420e3, H_RAY = 8000.0, H_MIE = 1200.0, MIE_G = 0.76;
 const vec3 BETA_RAY = vec3(5.8e-6, 13.5e-6, 33.1e-6);
 const float BETA_MIE = 21e-6;
@@ -66,5 +67,5 @@ vec3 lightTransmittance(vec3 lightDir) {
 vec3 skyColor(vec3 dir, vec3 sunDir) {
     vec3 c = atmosphere(dir, sunDir, SUN_INTENSITY);
     c += atmosphere(dir, -sunDir, MOON_INTENSITY) + vec3(0.0006, 0.0009, 0.0018);
-    return c * PI;
+    return stylePaintSky(c * PI, dir, sunDir);   // the chosen look's sky colours (lib/style.glsl)
 }
