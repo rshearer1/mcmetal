@@ -21,7 +21,8 @@ import subprocess
 import sys
 import time
 
-MODS = [("net.caffeinemc.mods.lithium.", "Lithium"), ("net.irisshaders.", "Iris"), ("net.coderbot.", "Iris"), ("net.caffeinemc.", "Sodium"),
+MODS = [("com.seibel.distanthorizons.", "Distant Horizons"), ("loaderCommon.neoforge.com.seibel.", "Distant Horizons"),
+        ("net.caffeinemc.mods.lithium.", "Lithium"), ("net.irisshaders.", "Iris"), ("net.coderbot.", "Iris"), ("net.caffeinemc.", "Sodium"),
         ("me.jellysquid.", "Sodium"), ("net.neoforged.", "NeoForge"), ("net.minecraft.", "Minecraft"),
         ("com.mojang.blaze3d.", "Minecraft (blaze3d)"), ("com.mojang.", "Minecraft"), ("org.lwjgl.", "LWJGL"),
         ("java.", "JDK"), ("jdk.", "JDK"), ("sun.", "JDK")]

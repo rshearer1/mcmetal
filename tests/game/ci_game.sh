@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
-#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-underwater
+#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-underwater
 #   pack-NAME packnight-NAME packshadow-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
 #   glcount-pack-NAME (the pack on Apple's OpenGL, draws counted by tools/glcount.c)
 #   ab-pack-NAME ab-packnight-NAME (the pack three times in one job: new, old = with GAME_AB_OFF's env, new)
@@ -219,6 +219,12 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
         # where the render thread's time went in the measured window
         python3 -I "$SRC/tools/jfr_report.py" "$JFR_TOOL" "$WORK/rec.jfr" $jfr_window > "$OUT/$name/jfr-report.txt" 2>&1
         head -12 "$OUT/$name/jfr-report.txt"
+        # what the render thread and the others were doing inside each frame of 50 ms or more (GAME_HITCH_MS)
+        if [ -f "$OUT/$name/frames.txt" ] && [ -f "$OUT/$name/gc.log" ]; then
+            python3 -I "$SRC/tools/hitch_report.py" "$JFR_TOOL" "$WORK/rec.jfr" "$OUT/$name/frames.txt" \
+                "$OUT/$name/gc.log" $jfr_window "${GAME_HITCH_MS:-50}" > "$OUT/$name/hitch-report.txt" 2>&1
+            head -40 "$OUT/$name/hitch-report.txt"
+        fi
     fi
     rm -f "$WORK/rec.jfr"; jfr_window=
     if [ -n "${gc_window:-}" ] && [ -f "$OUT/$name/gc.log" ]; then # JVM pauses in the measured window
@@ -306,9 +312,19 @@ EUPHORIA_PACK="ComplementaryReimagined_r5.9.3 + EuphoriaPatches_1.10.5"
 
 # Distant Horizons (LOD terrain past the render distance), fetched at run time like the packs and removed after
 DH="https://cdn.modrinth.com/data/uCdwusMi/versions/9w34y8ai/DistantHorizons-3.3.3-1.21.1-fabric-neoforge.jar|4357b4d19fab818780c94f0e43dad1cc931634b2"
-dh_phase() { # dh / dh-shaders: Distant Horizons at noon, without a pack or with Complementary (it has DH support);
-             # 16 screenshots (~160 s) so DH has time to build its distant terrain
-    local url sha
+dh_phase() { # dh / dh-shaders / dh-PACK: Distant Horizons at noon, without a pack, with Complementary (it has DH
+             # support) or with PACK (a name from PACKS, or "ours" for shaderpack/mcmetal-rt-pack); 16 screenshots
+             # (~160 s) so DH has time to build its distant terrain
+    local url sha pack=${3:-} file= purl=-
+    if [ -n "$pack" ]; then
+        if [ "$pack" = ours ]; then file=mcmetal-rt-pack
+        else
+            IFS='|' read -r _ file purl sha <<< "$(grep "^$pack|" <<< "$PACKS")"
+            [ -n "$file" ] || { echo "unknown pack $pack"; return; }
+            if [ "$purl" != - ] && ! python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import bare_mc; bare_mc.fetch(*sys.argv[2:])' \
+                "$SRC/tools" "$purl" "$G/shaderpacks/$file" "$sha"; then echo "could not download $file"; return; fi
+        fi
+    fi
     IFS='|' read -r url sha <<< "$DH"
     python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import bare_mc; bare_mc.fetch(*sys.argv[2:])' \
         "$SRC/tools" "$url" "$G/mods/distanthorizons.jar" "$sha" || { echo "could not download Distant Horizons"; return; }
@@ -325,8 +341,9 @@ dh_phase() { # dh / dh-shaders: Distant Horizons at noon, without a pack or with
         mkdir -p "$G/config"; echo "_version = 5" > "$G/config/DistantHorizons.toml"
         local kv; for kv in $GAME_DH_OPTS; do echo "client.advanced.${kv%%=*} = ${kv#*=}" >> "$G/config/DistantHorizons.toml"; done
     fi
-    GAME_SHOTS=${GAME_SHOTS:-16} run_phase "$1" 360 metal "$2"
+    PACK=${file:-${PACK:-}} GAME_SHOTS=${GAME_SHOTS:-16} run_phase "$1" 360 metal "$2"
     rm -f "$G/mods/distanthorizons.jar" "$G/config/DistantHorizons.toml" "$G/saves/metal/data"/DistantHorizons.sqlite*
+    if [ "$purl" != - ]; then rm -rf "$G/shaderpacks/$file"; fi
 }
 
 # packnight-NAME turns each pack's coloured block light on (all ship with it off except Solas and RV)
@@ -423,6 +440,7 @@ for p in $PHASES; do
     nether-shaders) scene noon clear nether; run_phase nether-shaders 240 metal true ;;      # Nether room, Complementary
     dh) dh_phase dh false ;;                    # Distant Horizons, Sodium
     dh-shaders) dh_phase dh-shaders true ;;     # Distant Horizons + Complementary
+    dh-*) dh_phase "$p" true "${p#dh-}" ;;      # Distant Horizons + a pack: dh-photon, dh-bliss, dh-ours, ...
     glcount-*) # the pack on Apple's OpenGL through tools/glcount.c, which logs draws and triangles per second (all,
                # and into shadow-map-sized viewports) to glcount.log: what Iris and Sodium draw on real OpenGL
         # (Apple's OpenGL can't make a context on GitHub's runners; on Linux this counts Mesa, the cloud reference rig)
