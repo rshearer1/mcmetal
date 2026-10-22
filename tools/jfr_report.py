@@ -70,7 +70,11 @@ def main():
     exec_self, exec_incl, exec_mod = collections.Counter(), collections.Counter(), collections.Counter()
     nat_fn, nat_caller, nat_mod = collections.Counter(), collections.Counter(), collections.Counter()
     n_exec = n_nat = 0
+    seen, t_lo, t_hi = collections.Counter(), None, None  # to say why nothing matched
     for typ, start, th, names in samples(tool, rec):
+        seen[th] += 1
+        if start is not None:
+            t_lo, t_hi = min(t_lo or start, start), max(t_hi or start, start)
         if th != thread or not names or start is None or not lo <= start <= hi:
             continue
         first_mod = next((mod_of(n) for n in names if mod_of(n) not in ("JDK", "LWJGL", "other")), "other")
@@ -94,6 +98,9 @@ def main():
             print(f"  {100 * n / max(total, 1):5.1f}%  {k}")
 
     print(f"thread '{thread}': {n_exec} Java samples (running Java), {n_nat} native samples (inside native code)")
+    if not n_exec + n_nat:
+        print(f"nothing matched: {sum(seen.values())} samples in the recording, from {t_lo} to {t_hi} (window {lo} to {hi});"
+              f" busiest threads: {seen.most_common(8)}")
     table("Java running, by mod (first mod frame from the top)", exec_mod, n_exec)
     table("Java running, hottest methods (self)", exec_self, n_exec)
     table("Java running, Iris and Sodium methods on the stack (inclusive)", exec_incl, n_exec)
