@@ -56,7 +56,9 @@ void main() {
         vec4 v1 = gbufferProjectionInverse * vec4(vec3(texcoord, depth1) * 2.0 - 1.0, 1.0);
         vec3 p1 = mat3(gbufferModelViewInverse) * (v1.xyz / v1.w);
         // only where the sun reaches (the traced shadow from deferred1.fsh), fading out in deep water
-        float sun = luma(texture(colortex5, texcoord).rgb) * smoothstep(-0.02, 0.15, sunDir.y);
+        // (lit or not: the shadow ray already passed the water surface, whose tint makes the value itself small)
+        vec3 sh5 = texture(colortex5, texcoord).rgb;
+        float sun = smoothstep(0.01, 0.08, max(sh5.r, max(sh5.g, sh5.b))) * smoothstep(-0.02, 0.15, sunDir.y);
         float deep = throughWater ? exp(-(length(p1) - dist) * 0.04) : 1.0;
         float c = caustics(p1 + cameraPosition, sunDir, frameTimeCounter);
         // focused lines brighter, the gaps between them darker (about the same light overall)
