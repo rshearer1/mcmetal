@@ -452,23 +452,32 @@ static void add_photon_rt(mgl_shader *s)
         "  vec3(0.55,0.15,1.0)*10.0, vec3(1.0,0.2,0.9)*10.0, vec3(1.0,0.55,0.85)*10.0);\n"
         "vec3 get_lpv_blocklight(vec3 scene_pos, vec3 normal, vec3 mc_blocklight, float ao) {\n"
         "  vec3 lpv = mcm_photon_lpv(scene_pos, normal, mc_blocklight, ao);\n"
-        "  vec3 seen = vec3(0.0), all_ = vec3(0.0);\n"
+        /* no block light here worth shadowing: skip the rays */
+        "  if (dot(lpv, vec3(0.2126, 0.7152, 0.0722)) < 0.002) return lpv;\n"
         "  vec3 o = scene_pos + normal * 0.02;\n"
+        "  vec3 c[4], dir[4]; float dist[4]; float w[4];\n"
+        "  vec3 all_ = vec3(0.0); float total = 0.0; int n = 0;\n"
         "  for (int i = 0; i < 4; i++) {\n"
         "    vec3 lp; int id;\n"
         "    if (mcm_lights_near(scene_pos, i, lp, id) < 0) break;\n"
         "    vec3 d = lp - o;\n"
-        "    float dist = length(d);\n"
-        "    vec3 dir = d / max(dist, 1e-4);\n"
-        "    float fade = clamp(1.0 - dist / 15.0, 0.0, 1.0);\n"
-        "    float ndl = dist < 0.9 ? 1.0 : max(dot(normal, dir), 0.0);\n"
-        "    vec3 c = mcm_photon_light[clamp(id - 32, 0, 47)] * fade * fade * ndl / (0.25 * dist * dist + 1.0);\n"
-        "    if (dot(c, vec3(1.0)) <= 0.0) continue;\n"
-        "    all_ += c;\n"
-        /* stop short of the light block itself (a full block's faces are 0.5 from its centre, corners up to 0.87) */
-        "    if (dist <= 0.9 || mcm_trace(o + dir * 0.01, dir, dist - 0.9) < 0.0) seen += c;\n"
+        "    dist[n] = length(d);\n"
+        "    dir[n] = d / max(dist[n], 1e-4);\n"
+        "    float fade = clamp(1.0 - dist[n] / 15.0, 0.0, 1.0);\n"
+        "    float ndl = dist[n] < 0.9 ? 1.0 : max(dot(normal, dir[n]), 0.0);\n"
+        "    c[n] = mcm_photon_light[clamp(id - 32, 0, 47)] * fade * fade * ndl / (0.25 * dist[n] * dist[n] + 1.0);\n"
+        "    w[n] = dot(c[n], vec3(0.2126, 0.7152, 0.0722));\n"
+        "    if (w[n] <= 0.0) continue;\n"
+        "    all_ += c[n]; total += w[n]; n++;\n"
         "  }\n"
-        "  if (dot(all_, vec3(1.0)) <= 1e-4) return lpv;\n"
+        "  if (total <= 1e-4) return lpv;\n"
+        /* shadow rays only for lights that give at least a tenth of the light here; the faint ones count as seen */
+        "  vec3 seen = vec3(0.0);\n"
+        "  for (int i = 0; i < n; i++) {\n"
+        /* stop short of the light block itself (a full block's faces are 0.5 from its centre, corners up to 0.87) */
+        "    if (w[i] < 0.1 * total || dist[i] <= 0.9 || mcm_trace(o + dir[i] * 0.01, dir[i], dist[i] - 0.9) < 0.0)\n"
+        "      seen += c[i];\n"
+        "  }\n"
         "  return lpv * mix(vec3(0.25), min(seen / max(all_, vec3(1e-4)), vec3(2.0)), 0.75);\n"
         "}\n";
     size_t pre = (size_t)(f - s->source);
@@ -484,9 +493,8 @@ static void add_photon_rt(mgl_shader *s)
     memcpy(o, end, rest + 1);
     free(s->source);
     s->source = n;
-    static int noted;
-    if (!noted++)
-        mgl_log("Photon: ray-traced shadows for its coloured block light (MCMETAL_PHOTON_RT)");
+    static int patched;
+    mgl_log("Photon: ray-traced shadows for its coloured block light (MCMETAL_PHOTON_RT), shader %d", ++patched);
 }
 
 void glShaderSource(GLuint name, GLsizei count, const GLchar *const *strings, const GLint *lengths)
