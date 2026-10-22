@@ -34,6 +34,7 @@ static float terrain_proj[16];
 static int have_terrain_mv;
 static float *ent_tris;      /* this frame's entity triangles, camera-relative, 9 floats each */
 static int ent_n, ent_cap;
+static int ent_near_skipped; /* debug: triangles left out as the held item */
 
 static double now_s(void)
 {
@@ -169,6 +170,15 @@ static void record_entity(const mgl_program *p, const mgl_draw *d)
         const float *v = (const float *)(base + vb->offset + a->offset + (size_t)((int64_t)idx + d->base_vertex) * (size_t)vb->stride);
         for (int r = 0; r < 3; r++)
             o[k * 3 + r] = m[r] * v[0] + m[4 + r] * v[1] + m[8 + r] * v[2] + m[12 + r];
+    }
+    float far2 = 0; /* the held item and arm sit within a block of the eye; nothing in the world fits there whole */
+    for (int k = 0; k < tris * 3; k++) {
+        float d2 = o[k * 3] * o[k * 3] + o[k * 3 + 1] * o[k * 3 + 1] + o[k * 3 + 2] * o[k * 3 + 2];
+        far2 = d2 > far2 ? d2 : far2;
+    }
+    if (far2 < 1.0f) {
+        ent_near_skipped += tris;
+        return;
     }
     ent_n += tris;
 }
@@ -380,12 +390,13 @@ void mgl_rt_end_frame(void)
     if (rt_debug() && ent_n) {
         static double last;
         if (now_s() - last > 1.0) {
-            mgl_log("rt debug: %d entity triangles this frame", ent_n);
+            mgl_log("rt debug: %d entity triangles this frame (%d left out next to the eye)", ent_n, ent_near_skipped);
             last = now_s();
         }
     }
     mglb_rt_dynamic(ent_tris, ent_n);
     ent_n = 0;
+    ent_near_skipped = 0;
     mglb_rt_update(list, num_draws);
 }
 
