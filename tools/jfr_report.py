@@ -5,7 +5,7 @@ Usage: python3 -I jfr_report.py JFR_TOOL RECORDING.jfr [FROM_EPOCH_S TO_EPOCH_S]
 
 JFR samples Java threads every ~10 ms (jdk.ExecutionSample: running Java code) and threads that are inside native
 code every ~20 ms (jdk.NativeMethodSample: e.g. inside a GL call, i.e. in mcmetal). This prints, for one thread
-(default "Render thread"):
+(default "Render thread", or "main" on macOS):
   - share of samples by mod (first Iris/Sodium/NeoForge/Minecraft frame from the top of the stack),
   - the hottest methods where Java was itself running (self time),
   - the hottest methods anywhere on the stack (inclusive), Iris and Sodium only,
@@ -66,7 +66,8 @@ def main():
     tool, rec = sys.argv[1], sys.argv[2]
     lo = float(sys.argv[3]) if len(sys.argv) > 4 else 0
     hi = float(sys.argv[4]) if len(sys.argv) > 4 else 1e12
-    thread = sys.argv[5] if len(sys.argv) > 5 else "Render thread"
+    # the game's render thread: "Render thread" elsewhere, but on macOS it is the JVM's main thread (-XstartOnFirstThread)
+    thread = sys.argv[5] if len(sys.argv) > 5 else ("Render thread", "main")
     exec_self, exec_incl, exec_mod = collections.Counter(), collections.Counter(), collections.Counter()
     nat_fn, nat_caller, nat_mod = collections.Counter(), collections.Counter(), collections.Counter()
     n_exec = n_nat = 0
@@ -75,7 +76,7 @@ def main():
         seen[th] += 1
         if start is not None:
             t_lo, t_hi = min(t_lo or start, start), max(t_hi or start, start)
-        if th != thread or not names or start is None or not lo <= start <= hi:
+        if th not in (thread if isinstance(thread, tuple) else (thread,)) or not names or start is None or not lo <= start <= hi:
             continue
         first_mod = next((mod_of(n) for n in names if mod_of(n) not in ("JDK", "LWJGL", "other")), "other")
         if typ == "jdk.ExecutionSample":
