@@ -35,6 +35,7 @@ static id<MTLRenderCommandEncoder> renc;
 static mgl_target renc_target;
 static id<MTLBlitCommandEncoder> benc;
 static id<MTLComputeCommandEncoder> cenc;
+static int cenc_concurrent; /* cenc lets its dispatches overlap (geometry-shader jobs only) */
 
 /* Smoothness options (STEP1.md "Smoothness 2/3"), all off unless set:
    MGL_BINARY_ARCHIVE=1   keep finished GPU pipelines in MGL_CACHE_DIR/pipelines.metallib across launches
@@ -478,12 +479,17 @@ static id<MTLBlitCommandEncoder> blit_encoder_for_at(int line, mglb_texture *a, 
 }
 #define blit_encoder_for(a, b) blit_encoder_for_at(__LINE__, a, b)
 
-static id<MTLComputeCommandEncoder> compute_encoder(void)
+/* concurrent: dispatches may run at the same time. The geometry-shader jobs of one batch write their own record
+   ranges and only read everything else, so they don't need each other's results; SEUS's shadow pass issues ~1700
+   small ones a frame, and in a serial encoder each waits for the one before. Everything else gets a serial
+   encoder, as GL ordering needs. MGL_GS_CONCURRENT=0: serial for both. */
+static id<MTLComputeCommandEncoder> compute_encoder_kind(int concurrent)
 {
     if (!gs_recording)
         gs_flush();
-    if (cenc)
+    if (cenc && cenc_concurrent == concurrent)
         return cenc;
+    if (cenc) { [cenc endEncoding]; cenc = nil; }
     prof_serialize();
     end_encoders();
     id<MTLCommandBuffer> c = current_cb();
@@ -494,14 +500,19 @@ static id<MTLComputeCommandEncoder> compute_encoder(void)
             d.sampleBufferAttachments[0].sampleBuffer = pt_cur->sb;
             d.sampleBufferAttachments[0].startOfEncoderSampleIndex = (NSUInteger)k * 2;
             d.sampleBufferAttachments[0].endOfEncoderSampleIndex = (NSUInteger)k * 2 + 1;
+            if (concurrent)
+                d.dispatchType = MTLDispatchTypeConcurrent;
             cenc = [c computeCommandEncoderWithDescriptor:d];
         } else {
-            cenc = [c computeCommandEncoder];
+            cenc = concurrent ? [c computeCommandEncoderWithDispatchType:MTLDispatchTypeConcurrent]
+                              : [c computeCommandEncoder];
         }
     }
+    cenc_concurrent = concurrent;
     prof.computes++;
     return cenc;
 }
+static id<MTLComputeCommandEncoder> compute_encoder(void) { return compute_encoder_kind(0); }
 
 /* ================================================================ buffers (pooled by size class) */
 
@@ -3622,7 +3633,10 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
         }
         gs_recording = 1;
         keep_clears = !reads_cleared;
-        id<MTLComputeCommandEncoder> c = compute_encoder();
+        static int gs_concurrent = -1;
+        if (gs_concurrent < 0)
+            gs_concurrent = !getenv("MGL_GS_CONCURRENT") || atoi(getenv("MGL_GS_CONCURRENT")) != 0;
+        id<MTLComputeCommandEncoder> c = compute_encoder_kind(gs_concurrent);
         keep_clears = 0;
         gs_recording = 0;
         [c setComputePipelineState:OBJ(id<MTLComputePipelineState>, d->program->compute)];
