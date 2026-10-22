@@ -219,6 +219,12 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
         # where the render thread's time went in the measured window
         python3 -I "$SRC/tools/jfr_report.py" "$JFR_TOOL" "$WORK/rec.jfr" $jfr_window > "$OUT/$name/jfr-report.txt" 2>&1
         head -12 "$OUT/$name/jfr-report.txt"
+        # what the render thread and the others were doing inside each frame of 50 ms or more (GAME_HITCH_MS)
+        if [ -f "$OUT/$name/frames.txt" ] && [ -f "$OUT/$name/gc.log" ]; then
+            python3 -I "$SRC/tools/hitch_report.py" "$JFR_TOOL" "$WORK/rec.jfr" "$OUT/$name/frames.txt" \
+                "$OUT/$name/gc.log" $jfr_window "${GAME_HITCH_MS:-50}" > "$OUT/$name/hitch-report.txt" 2>&1
+            head -40 "$OUT/$name/hitch-report.txt"
+        fi
     fi
     rm -f "$WORK/rec.jfr"; jfr_window=
     if [ -n "${gc_window:-}" ] && [ -f "$OUT/$name/gc.log" ]; then # JVM pauses in the measured window
