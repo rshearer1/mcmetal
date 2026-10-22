@@ -3541,6 +3541,7 @@ void mglb_dispatch(const mgl_draw *d, int gx, int gy, int gz)
     if (!d->program->compute)
         return;
     id<MTLComputeCommandEncoder> c = compute_encoder();
+    pt_label(d->program->label); /* MGL_PROFILE=2/3: name the pass after its first compute program */
     [c setComputePipelineState:OBJ(id<MTLComputePipelineState>, d->program->compute)];
     bind_stage_resources(nil, c, d, 2);
     if (d->uses_scene)
