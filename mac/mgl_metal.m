@@ -3240,7 +3240,11 @@ static int choose_paced_fps(mgl_ctx *c, int shown_per_frame)
         if (next < 0)
             next = i;
         double b = 1000.0 / rates[i];
-        if (c->avg_frame_ms * 1.25 <= b || (i == next && c->avg_frame_ms <= b))
+        /* one step up needs the cost within the budget; with interpolation within 83% of it, since two presents
+           per frame make a miss costlier (M3 SEUS panning at 54-61 ms kept trying 15 shown as 30, budget 66.7, and
+           juddered until it fell back to 12) */
+        double step_margin = shown_per_frame > 1 ? 1.2 : 1.0;
+        if (c->avg_frame_ms * 1.25 <= b || (i == next && c->avg_frame_ms * step_margin <= b))
             best = i;
     }
     if (best < cur) {
