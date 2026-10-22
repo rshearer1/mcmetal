@@ -45,10 +45,11 @@ static void makeContextCurrentNSGL(_GLFWwindow* window)
 
 /* The game's render thread never drains an autorelease pool of its own, so anything autoreleased by GL calls
    between swaps (command buffers, encoders, and every buffer they hold) piled up for good: one pool per frame,
-   popped and pushed again here, outside any other pool. */
+   popped and pushed again here, outside any other pool. Per thread: NeoForge's loading screen swaps on its own
+   thread before the game's render thread takes over. */
 extern void* objc_autoreleasePoolPush(void);
 extern void objc_autoreleasePoolPop(void* pool);
-static void* framePool;
+static __thread void* framePool;
 
 static void swapBuffersNSGL(_GLFWwindow* window)
 {
