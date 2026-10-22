@@ -57,6 +57,7 @@ uint64_t gp_now(void)
 
 /* frames (swaps) and the time spent inside swap, which includes waiting for the GPU and for a drawable */
 static uint64_t start_ns, last_write, frames, swap_ns, swap_calls;
+uint64_t gp_frame_ns;
 
 static void write_snapshot(uint64_t now)
 {
@@ -121,9 +122,30 @@ GP_EXPORT void mgl_glfw_swap(void *ctx)
         real = (void (*)(void *))gp_real("mgl_glfw_swap");
     uint64_t t0 = gp_now();
     real(ctx);
-    swap_ns += gp_now() - t0;
+    uint64_t t1 = gp_now();
+    swap_ns += t1 - t0;
     swap_calls++;
     frames++;
+    /* GLPROF_FRAMES: this frame's split, swap end to swap end */
+    static FILE *ff;
+    static int ff_tried;
+    static uint64_t last_end;
+    if (!ff_tried) {
+        ff_tried = 1;
+        const char *p = getenv("GLPROF_FRAMES");
+        ff = p ? fopen(p, "w") : NULL;
+    }
+    if (ff && last_end) {
+        struct timespec w;
+        clock_gettime(CLOCK_REALTIME, &w);
+        fprintf(ff, "%llu.%03ld %llu %llu %llu\n", (unsigned long long)w.tv_sec * 1000 + (unsigned long long)(w.tv_nsec / 1000000),
+                (w.tv_nsec / 1000) % 1000, (unsigned long long)((t1 - last_end) / 1000), (unsigned long long)(gp_frame_ns / 1000),
+                (unsigned long long)((t1 - t0) / 1000));
+        if (!(frames & 127))
+            fflush(ff);
+    }
+    last_end = t1;
+    gp_frame_ns = 0;
     gp_tick();
 }
 #else
