@@ -340,67 +340,12 @@ static int in_list(const char *list, const char *name, size_t n)
     return 0;
 }
 
-/* Ray-tracing experiments on the MSL (mcm_trace, see mgl_program.c), for A/B runs on a Mac with ray tracing:
-   MGL_RT_LOCAL_QUERY=1: SPIRV-Cross declares the ray query (mcm_q) once in main and threads it through every
-   function down to mcm_trace, so it lives for the whole shader (Photon's deferred pass got ~10 ms slower with
-   ray-tracing code it never ran). This makes it a local of each function that uses it.
-   MGL_RT_NOINLINE=1: keep mcm_trace out of line instead of always_inline. */
-static char *rt_post(char *msl)
-{
-    static int local = -1, noinline = -1;
-    if (local < 0) {
-        const char *e = getenv("MGL_RT_LOCAL_QUERY"), *f = getenv("MGL_RT_NOINLINE");
-        local = e && *e == '1';
-        noinline = f && *f == '1';
-    }
-    if (!msl || (!local && !noinline) || !strstr(msl, "mcm_q"))
-        return msl;
-    static const char type[] = "raytracing::intersection_query<raytracing::instancing, raytracing::triangle_data>";
-    size_t len = strlen(msl);
-    char *out = malloc(len * 2 + 4096), *o = out;
-    const char *p = msl;
-    char param[256], decl[256];
-    snprintf(param, sizeof param, ", thread %s& mcm_q", type);
-    snprintf(decl, sizeof decl, "    %s mcm_q;\n", type);
-    while (*p) {
-        if (local && !strncmp(p, param, strlen(param))) { /* parameter in a signature */
-            p += strlen(param);
-            continue;
-        }
-        if (local && !strncmp(p, ", mcm_q", 7) && (p[7] == ',' || p[7] == ')')) { /* argument in a call */
-            p += 7;
-            continue;
-        }
-        if (local && !strncmp(p, decl, strlen(decl))) { /* main's declaration */
-            p += strlen(decl);
-            continue;
-        }
-        if (noinline && !strncmp(p, "static inline __attribute__((always_inline))\nfloat mcm_trace(", 61)) {
-            o += sprintf(o, "__attribute__((noinline))\nfloat mcm_trace(");
-            p += 61;
-            continue;
-        }
-        /* a function body: give it its own query if it uses one */
-        if (local && !strncmp(p, "\n{\n", 3)) {
-            const char *end = strstr(p + 3, "\n}\n"), *use = strstr(p + 3, "mcm_q.");
-            memcpy(o, p, 3); o += 3; p += 3;
-            if (end && use && use < end)
-                o += sprintf(o, "%s", decl);
-            continue;
-        }
-        *o++ = *p++;
-    }
-    *o = 0;
-    free(msl);
-    return out;
-}
-
 /* SPIRV-Cross pads narrow fragment outputs (vec3, float) to float4 but writes only out.x.xyz, leaving alpha 0:
    with blending that made SEUS PTGI's passes transparent. GL's missing components read as (0, 0, 0, 1), so
    every padded output starts as that before the shader's own write. A vec4 output the shader only partly writes
    (Bliss's final passes write .rgb of colortex7) keeps 0 in the rest, as GL drivers leave it: alpha 1 there made
    Bliss read its glass as water the next frame (no tint, milky haze). narrow: from narrow_outputs(). */
-static char *msl_dup_raw(const char *msl, int stage, const char *narrow)
+static char *msl_dup(const char *msl, int stage, const char *narrow)
 {
     const char *init = stage == MGL_FRAGMENT ? strstr(msl, "main0_out out = {};\n") : NULL;
     if (stage == MGL_COMPUTE)
@@ -437,11 +382,6 @@ static char *msl_dup_raw(const char *msl, int stage, const char *narrow)
         o += sprintf(o, "    out.%s = float4(0.0, 0.0, 0.0, 1.0);\n", names[k]);
     strcpy(o, msl + at);
     return out;
-}
-
-static char *msl_dup(const char *msl, int stage, const char *narrow)
-{
-    return rt_post(msl_dup_raw(msl, stage, narrow));
 }
 
 /* Whether the module declares a 1D image or sampler (OpTypeImage with Dim1D). */
