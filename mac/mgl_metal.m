@@ -3733,6 +3733,56 @@ static void profile_frame(unsigned long draws)
     atomic_store(&prof_gpu_ns, 0);
 }
 
+/* MCMETAL_FG_TIMING=1: each part of an interpolated frame in its own command buffer, with its GPU time and the
+   gap before the GPU started it (a gap means the GPU sat waiting, e.g. for a drawable), averaged once a second. */
+enum { FG_GAME, FG_MAKE, FG_SHOW_MID, FG_SHOW_REAL, FG_STAGES };
+static _Atomic uint64_t fg_stage_ns[FG_STAGES], fg_stage_gap_ns[FG_STAGES], fg_stage_n[FG_STAGES];
+static _Atomic uint64_t fg_last_end_ns; /* GPU end of the last timed command buffer, ns */
+
+static int fg_timing(void)
+{
+    static int on = -1;
+    if (on < 0)
+        on = opt("MCMETAL_FG_TIMING");
+    return on;
+}
+
+static void fg_time_stage(int stage)
+{
+    if (!fg_timing())
+        return;
+    [current_cb() addCompletedHandler:^(id<MTLCommandBuffer> done) {
+      if (done.GPUEndTime <= done.GPUStartTime)
+          return;
+      uint64_t s = (uint64_t)(done.GPUStartTime * 1e9), e = (uint64_t)(done.GPUEndTime * 1e9);
+      uint64_t prev = atomic_exchange(&fg_last_end_ns, e);
+      atomic_fetch_add(&fg_stage_ns[stage], e - s);
+      if (prev && s > prev)
+          atomic_fetch_add(&fg_stage_gap_ns[stage], s - prev);
+      atomic_fetch_add(&fg_stage_n[stage], 1);
+    }];
+    commit();
+}
+
+static void fg_timing_report(void)
+{
+    static uint64_t last;
+    uint64_t t = now_ns();
+    if (!fg_timing() || t - last < 1000000000ull)
+        return;
+    last = t;
+    static const char *names[FG_STAGES] = {"game", "interpolate", "show made-up", "show real"};
+    char line[400];
+    int n = snprintf(line, sizeof line, "frame interpolation timing (gpu ms / gap before ms):");
+    for (int i = 0; i < FG_STAGES && n < (int)sizeof line; i++) {
+        uint64_t k = atomic_exchange(&fg_stage_n[i], 0), ns = atomic_exchange(&fg_stage_ns[i], 0),
+                 gap = atomic_exchange(&fg_stage_gap_ns[i], 0);
+        if (k)
+            n += snprintf(line + n, sizeof line - n, " %s %.2f / %.2f;", names[i], ns * 1e-6 / k, gap * 1e-6 / k);
+    }
+    mgl_log("%s", line);
+}
+
 static atomic_int presents_waiting; /* drawn but not yet on screen */
 
 /* Count a drawable as waiting until it is shown, and feed pacing and MGL_PRESENT_STATS its time on screen. */
@@ -3822,7 +3872,11 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
         /* Frame interpolation: the made-up frame, then the real one half a frame after it. deltaTime is the paced
            real frame time once there is one. */
         double frame_s = c->paced_fps > 0 ? 1.0 / c->paced_fps : c->avg_frame_ms > 0 ? c->avg_frame_ms * 1e-3 : 1.0 / 60;
+        if (fg_enabled())
+            fg_time_stage(FG_GAME);
         id<MTLTexture> mid = fg_interpolate(frame_s);
+        if (mid)
+            fg_time_stage(FG_MAKE);
         static int fg_no_present = -1;
         if (fg_no_present < 0)
             fg_no_present = opt("MCMETAL_FG_NO_PRESENT");
@@ -3840,15 +3894,22 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
                 mgl_log("frame interpolation: %d real fps shown as an even %d (frame time %.1f ms)", fps, 2 * fps, c->avg_frame_ms);
             }
             double half = 0.5 / fps;
-            draw_to_drawable(c, mid, drawable);
+            static int passthru = -1;
+            if (passthru < 0)
+                passthru = opt("MCMETAL_FG_PASSTHRU");
+            /* test: MCMETAL_FG_PASSTHRU=1 shows the real frame in the made-up frame's place (same presenting, no
+               made-up picture shown), to tell the interpolator's cost from the cost of showing its output */
+            draw_to_drawable(c, passthru ? OBJ(id<MTLTexture>, mgl->window_color->mtl) : mid, drawable);
             static int show_mid = -1;
             if (show_mid < 0)
                 show_mid = opt("MCMETAL_FG_SHOW_MID");
             if (show_mid) { /* test: show only made-up frames (test screenshots of the upscaled frame then see them) */
                 [current_cb() presentDrawable:drawable afterMinimumDuration:2 * half];
+                fg_time_stage(FG_SHOW_MID);
                 drawable = nil;
             } else {
                 [current_cb() presentDrawable:drawable afterMinimumDuration:half];
+                fg_time_stage(FG_SHOW_MID);
                 commit(); /* send the made-up frame on its way before waiting for the second drawable */
                 uint64_t t_d2 = now_ns();
                 drawable = [c->layer nextDrawable];
@@ -3858,6 +3919,7 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
                     watch_drawable(drawable);
                     draw_to_drawable(c, OBJ(id<MTLTexture>, mgl->window_color->mtl), drawable);
                     [current_cb() presentDrawable:drawable afterMinimumDuration:half];
+                    fg_time_stage(FG_SHOW_REAL);
                 }
             }
         } else
@@ -3884,6 +3946,8 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
         } else {
             [current_cb() presentDrawable:drawable];
         }
+        if (!mid && fg_enabled())
+            fg_time_stage(FG_SHOW_REAL);
     }
     commit();
     archive_maybe_save();
@@ -3897,8 +3961,13 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
         profile_frame(frame_draws);
     if (opt_profile > 0 || opt("MGL_PRESENT_STATS"))
         present_stats_report();
+    fg_timing_report();
     frame_draws = frame_sections = frame_dispatches = frame_probes = 0;
-    /* keep at most ~2 frames in flight */
-    if (cb_serial > 3)
-        mglb_fence_wait(submitted_serial - 2, 100000000ull);
+    /* keep at most ~2 frames in flight: wait for the frame before last (by frame, not command buffer, since an
+       interpolated frame commits several) */
+    static uint64_t frame_end_serial[2];
+    uint64_t before_last = frame_end_serial[c->frames & 1];
+    frame_end_serial[c->frames & 1] = submitted_serial;
+    if (before_last)
+        mglb_fence_wait(before_last, 100000000ull);
 }
