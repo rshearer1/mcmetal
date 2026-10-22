@@ -112,16 +112,36 @@ static void pt_begin_cb(id<MTLCommandBuffer> c)
                         pt_ok = pt_pool[i] != nil;
                     }
                 }
-        mgl_log("profile: GPU pass timing %s", pt_ok ? "on" : "not supported on this GPU");
+        mgl_log("profile: GPU pass timing %s", pt_ok ? "on"
+                : opt_profile >= 3 ? "from command buffer GPU times (no timestamp counters on this GPU)"
+                                   : "not supported on this GPU (MGL_PROFILE=3 times command buffers instead)");
         [dev sampleTimestamps:&pt_cal_cpu gpuTimestamp:&pt_cal_gpu];
     }
-    if (!pt_ok)
+    if (!pt_ok && opt_profile < 3)
         return;
     pt_frame *f = calloc(1, sizeof *f);
-    f->sb = pt_pool[pt_next++ % 6];
+    f->sb = pt_ok ? pt_pool[pt_next++ % 6] : nil;
     pt_cur = f;
     [c addCompletedHandler:^(id<MTLCommandBuffer> done) {
-      (void)done;
+      if (!f->sb) { /* level 3 without counters: each pass ran in its own command buffer; its GPU time is the pass's */
+          double ns = (done.GPUEndTime - done.GPUStartTime) * 1e9;
+          if (f->n && ns > 0) {
+              pthread_mutex_lock(&pt_lock);
+              pt_total_ns += ns;
+              int k = 0;
+              while (k < PT_SLOTS && pt_sum[k].n && strcmp(pt_sum[k].label, f->label[0]))
+                  k++;
+              if (k == PT_SLOTS)
+                  k = PT_SLOTS - 1;
+              if (!pt_sum[k].n)
+                  snprintf(pt_sum[k].label, sizeof pt_sum[k].label, "%s", f->label[0]);
+              pt_sum[k].ns += ns;
+              pt_sum[k].n++;
+              pthread_mutex_unlock(&pt_lock);
+          }
+          free(f);
+          return;
+      }
       if (f->n) {
           NSData *data = [f->sb resolveCounterRange:NSMakeRange(0, (NSUInteger)f->n * 2)];
           const MTLCounterResultTimestamp *ts = data.bytes;
@@ -154,6 +174,10 @@ static int pt_pass(const char *label)
     if (!pt_cur || pt_cur->n >= PT_MAX)
         return -1;
     snprintf(pt_cur->label[pt_cur->n], sizeof pt_cur->label[0], "%s", label);
+    if (!pt_cur->sb) { /* command buffer timing: labels only, no sample buffer to attach */
+        pt_cur->n++;
+        return -1;
+    }
     return pt_cur->n++;
 }
 
@@ -6112,7 +6136,7 @@ static void profile_frame(unsigned long draws)
             mgl_bstats.data_bytes / f / 1048576.0, prof.tex_views / f, prof.pipe_lookups / f, prof.big_uniforms / f,
             tex_upgrades);
     memset(&mgl_bstats, 0, sizeof mgl_bstats);
-    if (pt_ok > 0)
+    if (pt_ok > 0 || (pt_ok == 0 && opt_profile >= 3))
         pt_report(f);
     memset(&prof, 0, sizeof prof);
     prof.start_ns = t;
