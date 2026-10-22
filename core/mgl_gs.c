@@ -334,16 +334,21 @@ static int split_global_init(sb *decl, sb *init, const toks *ts, const stmt *s, 
         int n = s->names[k], j = n + 1;
         while (j < s->end && tok_is(&ts->t[j], "["))
             j = match(ts, j) + 1;
-        emit_range(decl, ts, s->start, s->type_end, m); /* qualifiers and type */
-        emit_range(decl, ts, n, j, m);                  /* name and array suffix */
-        sb_puts(decl, ";\n");
+        int e = j, unsized = 0;
         if (j < s->end && tok_is(&ts->t[j], "=")) {
-            int e = j + 1;
+            e = j + 1;
             while (e < s->end && !tok_is(&ts->t[e], ",") && !tok_is(&ts->t[e], ";")) {
                 if (tok_is(&ts->t[e], "(") || tok_is(&ts->t[e], "[") || tok_is(&ts->t[e], "{"))
                     e = match(ts, e);
                 e++;
             }
+        }
+        for (int q = s->start; q + 1 < j; q++) /* vec3[] x = vec3[](...): the size comes from the initialiser */
+            unsized |= tok_is(&ts->t[q], "[") && tok_is(&ts->t[q + 1], "]");
+        emit_range(decl, ts, s->start, s->type_end, m); /* qualifiers and type */
+        emit_range(decl, ts, n, unsized ? e : j, m);    /* name, array suffix (and an unsized array's initialiser) */
+        sb_puts(decl, ";\n");
+        if (!unsized && j < s->end && tok_is(&ts->t[j], "=")) {
             sb_puts(init, "  ");
             emit_range(init, ts, n, n + 1, m);
             sb_puts(init, "= ");
@@ -415,6 +420,18 @@ static char *preprocess(const char *src, glslang_stage_t stage, char **log)
     return out;
 }
 
+/* does text contain name as a whole identifier (comments and inactive #if blocks count: erring on keeping) */
+static int mentions(const char *text, const char *name)
+{
+    size_t n = strlen(name);
+    for (const char *p = strstr(text, name); p; p = strstr(p + 1, name)) {
+        char a = p > text ? p[-1] : ' ', b = p[n];
+        if (!(isalnum((unsigned char)a) || a == '_') && !(isalnum((unsigned char)b) || b == '_'))
+            return 1;
+    }
+    return 0;
+}
+
 /* ------------------------------------------------------------------ varyings */
 typedef struct {
     char type[32], name[96];
@@ -441,29 +458,41 @@ static int type_info(const char *t, int *comps, int *is_int, int *is_uint)
 static const char *swz[5] = {"", ".x", ".xy", ".xyz", ""};
 
 /* value of a varying packed into a vec4 (ints as bits) */
-static void pack_expr(sb *o, const varying *v, const char *expr)
+/* Records are tightly packed floats: position (4), then each varying's own components, then the strip id (1).
+   SEUS's shadow pass (8 varyings, 18 components) writes 23 floats per vertex instead of 10 vec4s: the record
+   traffic was most of the geometry stage's cost. */
+static void pack_store(sb *o, const varying *v, const char *expr, int off)
 {
-    static const char *zeros[5] = {"", ", 0.0, 0.0, 0.0", ", 0.0, 0.0", ", 0.0", ""};
-    if (!strcmp(v->type, "bool"))
-        sb_printf(o, "vec4(%s ? 1.0 : 0.0, 0.0, 0.0, 0.0)", expr);
-    else if (v->is_int)
-        sb_printf(o, "vec4(intBitsToFloat(%s)%s)", expr, zeros[v->comps]);
-    else if (v->is_uint)
-        sb_printf(o, "vec4(uintBitsToFloat(%s)%s)", expr, zeros[v->comps]);
-    else
-        sb_printf(o, "vec4(%s%s)", expr, zeros[v->comps]);
+    for (int j = 0; j < v->comps; j++) {
+        char c[160];
+        if (v->comps == 1)
+            snprintf(c, sizeof c, "%s", expr);
+        else
+            snprintf(c, sizeof c, "%s[%d]", expr, j);
+        if (!strcmp(v->type, "bool"))
+            sb_printf(o, "  mgl_ov[rec + %du] = %s ? 1.0 : 0.0;\n", off + j, c);
+        else if (v->is_int)
+            sb_printf(o, "  mgl_ov[rec + %du] = intBitsToFloat(%s);\n", off + j, c);
+        else if (v->is_uint)
+            sb_printf(o, "  mgl_ov[rec + %du] = uintBitsToFloat(%s);\n", off + j, c);
+        else
+            sb_printf(o, "  mgl_ov[rec + %du] = %s;\n", off + j, c);
+    }
 }
 
-static void unpack_expr(sb *o, const varying *v, const char *rec)
+static void unpack_expr(sb *o, const varying *v, int off)
 {
-    if (!strcmp(v->type, "bool"))
-        sb_printf(o, "(%s.x > 0.5)", rec);
-    else if (v->is_int)
-        sb_printf(o, "floatBitsToInt(%s%s)", rec, swz[v->comps]);
-    else if (v->is_uint)
-        sb_printf(o, "floatBitsToUint(%s%s)", rec, swz[v->comps]);
-    else
-        sb_printf(o, "%s%s", rec, swz[v->comps]);
+    const char *conv = v->is_int && strcmp(v->type, "bool") ? "floatBitsToInt" : v->is_uint ? "floatBitsToUint" : "";
+    if (!strcmp(v->type, "bool")) {
+        sb_printf(o, "(mgl_ov[rec + %du] > 0.5 ? 1 : 0)", off);
+        return;
+    }
+    if (v->comps > 1)
+        sb_printf(o, "%s(", v->type);
+    for (int j = 0; j < v->comps; j++)
+        sb_printf(o, "%s%s(mgl_ov[rec + %du])", j ? ", " : "", conv, off + j);
+    if (v->comps > 1)
+        sb_puts(o, ")");
 }
 
 /* ------------------------------------------------------------------ the rewrite */
@@ -533,7 +562,7 @@ static const char *compute_prelude =
     "layout(std430, binding = 23) readonly buffer mgl_i3_ { uint mgl_vb2[]; };\n"
     "layout(std430, binding = 24) readonly buffer mgl_i4_ { uint mgl_vb3[]; };\n"
     "layout(std430, binding = 25) readonly buffer mgl_i5_ { uint mgl_ib[]; };\n"
-    "layout(std430, binding = 26) writeonly buffer mgl_i6_ { vec4 mgl_ov[]; };\n"
+    "layout(std430, binding = 26) writeonly buffer mgl_i6_ { float mgl_ov[]; };\n"
     "layout(std430, binding = 27) writeonly buffer mgl_i7_ { uint mgl_oc[]; };\n"
     "uniform ivec4 mgl_draw_info; /* triangles, index type (0 none, 1 u16, 2 u32), base vertex, first index */\n"
     "vec4 mgl_v_Position; float mgl_v_PointSize; int mgl_vertex_id; int mgl_instance_id;\n"
@@ -737,52 +766,147 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
         goto out;
     }
 
-    int R = 2 + ngout; /* record: position, one vec4 per varying, strip id */
+    /* record floats: position, the components of each varying the fragment shader mentions (the rest are never
+       stored, voff -1; MGL_GS_KEEP_ALL=1 keeps them), strip id */
+    int R = 5, voff[64];
+    int keep_all = !src[MGL_FRAGMENT] || (getenv("MGL_GS_KEEP_ALL") && atoi(getenv("MGL_GS_KEEP_ALL")));
+    for (int i = 0; i < ngout; i++) {
+        voff[i] = -1;
+        if (!keep_all && !mentions(src[MGL_FRAGMENT], gout[i].name))
+            continue;
+        voff[i] = R - 1;
+        R += gout[i].comps;
+    }
 
     /* ---- compute shader ---- */
-    sb_puts(&comp, compute_prelude);
+    /* MGL_GS_PROBE (timing experiments only, the picture is wrong): 1 = no geometry stage (nothing emitted),
+       2 = no vertex stage (attributes straight to the geometry stage), 3 = no record writes, 4 = constant attributes (no fetch),
+       5 = attribute fetch only (no vertex stage). MGL_GS_LOCAL = threads
+       per threadgroup (default 64). Both change the generated shader: run with MGL_CACHE_DIR unset. */
+    int probe = getenv("MGL_GS_PROBE") ? atoi(getenv("MGL_GS_PROBE")) : 0;
+    int local = getenv("MGL_GS_LOCAL") ? atoi(getenv("MGL_GS_LOCAL")) : 64;
+    if (local < 2 || local > 1024 || (local & 1))
+        local = 64;
+    const char *prelude = strstr(compute_prelude, "\n") + 1; /* past "#version 450" */
+    prelude = strstr(prelude, "\n") + 1;                     /* past the default local size */
+    sb_printf(&comp, "#version 450\nlayout(local_size_x = %d) in;\n", local);
+    sb_puts(&comp, prelude);
     sb_add(&comp, vs.s, vs.n);
     sb_puts(&comp, "void mgl_v_init() {\n");
     if (vinit.n)
         sb_add(&comp, vinit.s, vinit.n);
     sb_puts(&comp, "}\n");
     sb_add(&comp, gs.s, gs.n);
+    if (probe == 3)
+        sb_printf(&comp, "void mgl_emit() {\n  if (mgl_emitted < %du) mgl_emitted++;\n}\nvoid mgl_emit_unused() {\n"
+                         "  uint rec = 0u;\n", max_vertices);
+    else
     sb_printf(&comp, "void mgl_emit() {\n  if (mgl_emitted >= %du) return;\n"
-                     "  uint rec = (uint(mgl_prim_id) * %du + mgl_emitted) * %du;\n  mgl_ov[rec] = mgl_g_Position;\n",
+                     "  uint rec = (uint(mgl_prim_id) * %du + mgl_emitted) * %du;\n"
+                     "  mgl_ov[rec] = mgl_g_Position.x;\n  mgl_ov[rec + 1u] = mgl_g_Position.y;\n"
+                     "  mgl_ov[rec + 2u] = mgl_g_Position.z;\n  mgl_ov[rec + 3u] = mgl_g_Position.w;\n",
               max_vertices, max_vertices, R);
-    for (int i = 0; i < ngout; i++) {
-        sb_printf(&comp, "  mgl_ov[rec + %du] = ", 1 + i);
-        pack_expr(&comp, &gout[i], gout[i].name);
-        sb_puts(&comp, ";\n");
-    }
-    sb_printf(&comp, "  mgl_ov[rec + %du] = vec4(uintBitsToFloat(mgl_strip), 0.0, 0.0, 0.0);\n  mgl_emitted++;\n}\n"
+    for (int i = 0; i < ngout; i++)
+        if (voff[i] >= 0)
+            pack_store(&comp, &gout[i], gout[i].name, voff[i]);
+    sb_printf(&comp, "  mgl_ov[rec + %du] = uintBitsToFloat(mgl_strip);\n  mgl_emitted++;\n}\n"
                      "void mgl_end_primitive() { mgl_strip++; }\n", R - 1);
-    sb_puts(&comp, "void main() {\n  uint prim = gl_GlobalInvocationID.x;\n  if (prim >= uint(mgl_draw_info.x)) return;\n"
-                   "  mgl_prim_id = int(prim);\n  mgl_emitted = 0u;\n  mgl_strip = 0u;\n"
-                   "  for (int c = 0; c < 3; c++) {\n"
-                   "    uint vtx = mgl_index(prim * 3u + uint(c)) + uint(mgl_draw_info.z);\n"
-                   "    mgl_vertex_id = int(vtx);\n    mgl_instance_id = 0;\n");
+    /* one vertex-stage run: fetch the attributes of vtx, run the vertex shader, store the results as input c */
+    sb_puts(&comp, "void mgl_run_vs(uint vtx, int c) {\n    mgl_vertex_id = int(vtx);\n    mgl_instance_id = 0;\n");
     for (int i = 0; i < nattrs; i++) {
         vs_attr *a = &attrs[i];
         const char *fetch = a->is_int || a->is_uint ? "mgl_fetchi" : "mgl_fetchf";
-        sb_printf(&comp, "    %s = %s(%s(%d, vtx)%s);\n", a->renamed, a->type, fetch, a->location, swz[a->comps]);
+        if (probe == 4) /* constants instead of fetched attributes */
+            sb_printf(&comp, "    %s = %s(%s(%s(1)));\n", a->renamed, a->type, a->is_int || a->is_uint ? "ivec4" : "vec4",
+                      a->is_int || a->is_uint ? "" : "0.5 * float");
+        else
+            sb_printf(&comp, "    %s = %s(%s(%d, vtx)%s);\n", a->renamed, a->type, fetch, a->location, swz[a->comps]);
     }
-    sb_puts(&comp, "    mgl_v_Position = vec4(0.0, 0.0, 0.0, 1.0);\n    mgl_v_PointSize = 1.0;\n    mgl_v_init();\n    mgl_v_main();\n"
-                   "    mgl_gin[c].pos = mgl_v_Position;\n    mgl_gin[c].pointSize = mgl_v_PointSize;\n");
+    if (probe == 5) { /* fetch only: keep the fetched attributes alive through the position, no vertex shader */
+        sb_puts(&comp, "    vec4 mgl_probe_sum = vec4(0.0);\n");
+        for (int i = 0; i < nattrs; i++)
+            sb_printf(&comp, "    mgl_probe_sum += vec4(%s(%d, vtx));\n", attrs[i].is_int || attrs[i].is_uint ? "mgl_fetchi" : "mgl_fetchf", attrs[i].location);
+    }
+    sb_puts(&comp, probe == 5 ? "    mgl_v_Position = mgl_probe_sum * 1e-6 + vec4(0.0, 0.0, 0.0, 1.0);\n    mgl_v_PointSize = 1.0;\n" :
+                   probe == 2 ? "    mgl_v_Position = vec4(0.0, 0.0, 0.0, 1.0);\n    mgl_v_PointSize = 1.0;\n" : "    mgl_v_Position = vec4(0.0, 0.0, 0.0, 1.0);\n    mgl_v_PointSize = 1.0;\n    mgl_v_init();\n    mgl_v_main();\n");
+    sb_puts(&comp, "    mgl_gin[c].pos = mgl_v_Position;\n    mgl_gin[c].pointSize = mgl_v_PointSize;\n");
+    int fed[32] = {0};
     for (int i = 0; i < ngin; i++) { /* only inputs the vertex shader writes; the rest stay zero */
         tok t = {T_ID, gin[i].name, (int)strlen(gin[i].name)};
         const char *v = lookup(&rv, &t);
-        if (v)
+        if (v) {
             sb_printf(&comp, "    %s[c] = %s;\n", gin[i].name, v);
+            fed[i] = 1;
+        }
     }
-    sb_puts(&comp, "  }\n  mgl_g_main();\n  mgl_oc[prim] = mgl_emitted;\n}\n");
+    sb_puts(&comp, "}\n");
+    const char *gs_call = probe == 1 ? "" : "  mgl_g_main();\n";
+    /* MGL_GS_SHARE=0: every thread runs the vertex stage for its own three corners. Default: when two neighbouring
+       triangles form a quad the way Sodium indexes them (0 1 2, 2 3 0), the pair runs the vertex stage once per
+       corner, two corners per thread, and swaps the results through threadgroup memory (4 runs instead of 6). */
+    int share = !getenv("MGL_GS_SHARE") || atoi(getenv("MGL_GS_SHARE")) != 0;
+    int sh_bytes = 32; /* threadgroup bytes per corner: mgl_gin_t plus each fed input, at Metal's alignment */
+    for (int i = 0; i < ngin; i++)
+        if (fed[i])
+            sh_bytes += gin[i].comps >= 3 ? 16 : gin[i].comps * 4;
+    if (sh_bytes * local * 2 > 28 * 1024) /* stay well inside Apple GPUs' 32 KB */
+        share = 0;
+    if (!share) {
+        sb_printf(&comp, "void main() {\n  uint prim = gl_GlobalInvocationID.x;\n  if (prim >= uint(mgl_draw_info.x)) return;\n"
+                         "  for (int c = 0; c < 3; c++)\n    mgl_run_vs(mgl_index(prim * 3u + uint(c)) + uint(mgl_draw_info.z), c);\n"
+                         "  mgl_prim_id = int(prim);\n  mgl_emitted = 0u;\n  mgl_strip = 0u;\n"
+                         "%s  mgl_oc[prim] = mgl_emitted;\n}\n", gs_call);
+    } else {
+        sb_printf(&comp, "shared mgl_gin_t mgl_gin_sh[%d];\n", local * 2);
+        for (int i = 0; i < ngin; i++)
+            if (fed[i])
+                sb_printf(&comp, "shared %s %s_mgl_sh[%d];\n", gin[i].type, gin[i].name, local * 2);
+        sb_puts(&comp, "void mgl_put_sh(uint slot, int c) {\n  mgl_gin_sh[slot] = mgl_gin[c];\n");
+        for (int i = 0; i < ngin; i++)
+            if (fed[i])
+                sb_printf(&comp, "  %s_mgl_sh[slot] = %s[c];\n", gin[i].name, gin[i].name);
+        sb_puts(&comp, "}\nvoid mgl_get_sh(uint slot, int c) {\n  mgl_gin[c] = mgl_gin_sh[slot];\n");
+        for (int i = 0; i < ngin; i++)
+            if (fed[i])
+                sb_printf(&comp, "  %s[c] = %s_mgl_sh[slot];\n", gin[i].name, gin[i].name);
+        sb_printf(&comp, "}\n"
+                         "void main() {\n"
+                         "  uint ntri = uint(mgl_draw_info.x), bv = uint(mgl_draw_info.z);\n"
+                         "  uint prim = gl_GlobalInvocationID.x;\n"
+                         "  uint lt = gl_LocalInvocationID.x;\n"
+                         "  bool odd = (lt & 1u) != 0u;\n"
+                         "  uint pa = prim & ~1u;\n" /* the pair's first triangle; local size is even, so the pair shares a group */
+                         "  bool quad = pa + 1u < ntri;\n"
+                         "  uint a0 = 0u, a1 = 0u, a2 = 0u, b1 = 0u;\n"
+                         "  if (quad) {\n"
+                         "    a0 = mgl_index(pa * 3u); a1 = mgl_index(pa * 3u + 1u); a2 = mgl_index(pa * 3u + 2u);\n"
+                         "    b1 = mgl_index(pa * 3u + 4u);\n"
+                         "    quad = mgl_index(pa * 3u + 3u) == a2 && mgl_index(pa * 3u + 5u) == a0;\n"
+                         "  }\n"
+                         "  uint s = (lt & ~1u) * 2u;\n" /* the pair's four slots: a0 a1 a2 b1 */
+                         "  if (quad) {\n"
+                         "    mgl_run_vs((odd ? a2 : a0) + bv, 0);\n    mgl_put_sh(s + (odd ? 2u : 0u), 0);\n"
+                         "    mgl_run_vs((odd ? b1 : a1) + bv, 0);\n    mgl_put_sh(s + (odd ? 3u : 1u), 0);\n"
+                         "  }\n"
+                         "  barrier();\n"
+                         "  if (prim >= ntri) return;\n"
+                         "  if (quad) {\n"
+                         "    mgl_get_sh(odd ? s + 2u : s, 0);\n    mgl_get_sh(odd ? s + 3u : s + 1u, 1);\n"
+                         "    mgl_get_sh(odd ? s : s + 2u, 2);\n"
+                         "  } else {\n"
+                         "    for (int c = 0; c < 3; c++)\n      mgl_run_vs(mgl_index(prim * 3u + uint(c)) + bv, c);\n"
+                         "  }\n"
+                         "  mgl_prim_id = int(prim);\n  mgl_emitted = 0u;\n  mgl_strip = 0u;\n"
+                         "%s  mgl_oc[prim] = mgl_emitted;\n}\n", gs_call);
+    }
 
     /* ---- passthrough vertex shader: strip -> triangle list ---- */
     sb_puts(&pass, "#version 450\n"
-                   "layout(std430, binding = 26) readonly buffer mgl_i6_ { vec4 mgl_ov[]; };\n"
+                   "layout(std430, binding = 26) readonly buffer mgl_i6_ { float mgl_ov[]; };\n"
                    "layout(std430, binding = 27) readonly buffer mgl_i7_ { uint mgl_oc[]; };\n");
     for (int i = 0; i < ngout; i++)
-        sb_printf(&pass, "%sout %s %s;\n",
+        if (voff[i] >= 0)
+            sb_printf(&pass, "%sout %s %s;\n",
                   gout[i].flat || gout[i].is_int || gout[i].is_uint || !strcmp(gout[i].type, "bool") ? "flat "
                   : gout[i].noperspective                                                            ? "noperspective "
                                                                                                      : "",
@@ -794,18 +918,16 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
                      "  uint k = (t & 1u) != 0u ? (j == 0u ? 1u : (j == 1u ? 0u : 2u)) : j; /* keep strip winding */\n"
                      "  uint base = prim * M;\n"
                      "  bool ok = t + 2u < mgl_oc[prim] &&\n"
-                     "      floatBitsToUint(mgl_ov[(base + t) * R + R - 1u].x) == floatBitsToUint(mgl_ov[(base + t + 2u) * R + R - 1u].x);\n"
+                     "      floatBitsToUint(mgl_ov[(base + t) * R + R - 1u]) == floatBitsToUint(mgl_ov[(base + t + 2u) * R + R - 1u]);\n"
                      "  uint rec = (base + t + k) * R;\n"
-                     "  gl_Position = ok ? mgl_ov[rec] : vec4(2.0, 2.0, 2.0, 1.0);\n",
+                     "  gl_Position = ok ? vec4(mgl_ov[rec], mgl_ov[rec + 1u], mgl_ov[rec + 2u], mgl_ov[rec + 3u]) : vec4(2.0, 2.0, 2.0, 1.0);\n",
               max_vertices, R);
+    sb_puts(&pass, "  if (!ok) return; /* unused slot or strip join: off-screen, its varyings never read */\n");
     for (int i = 0; i < ngout; i++) {
-        char rec[64];
-        snprintf(rec, sizeof rec, "mgl_ov[rec + %du]", 1 + i);
+        if (voff[i] < 0)
+            continue;
         sb_printf(&pass, "  %s = ", gout[i].name);
-        if (!strcmp(gout[i].type, "bool")) {
-            sb_printf(&pass, "%s.x > 0.5 ? 1 : 0", rec);
-        } else
-            unpack_expr(&pass, &gout[i], rec);
+        unpack_expr(&pass, &gout[i], voff[i]);
         sb_puts(&pass, ";\n");
     }
     sb_puts(&pass, "}\n");
@@ -816,7 +938,7 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
     mgl_xlate_program(stages, r);
     if (r->ok) {
         r->gs_max_vertices = max_vertices;
-        r->gs_record_vec4s = R;
+        r->gs_record_floats = R;
         /* the attributes Iris binds belong to the original vertex shader, now fetched by the compute stage */
         free(r->attribs);
         r->attribs = calloc((size_t)(nattrs ? nattrs : 1), sizeof *r->attribs);

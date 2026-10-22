@@ -41,7 +41,12 @@ static void *pack_dest(void *pixels)
     if (!mgl->pixel_pack_buffer)
         return pixels;
     mgl_buffer *b = mgl_table_get(&mgl->buffers, mgl->pixel_pack_buffer);
-    return b && b->mem ? (char *)mglb_buffer_ptr(b->mem) + (size_t)pixels : NULL;
+    if (b && b->mem)
+        mglb_buffer_written(b->mem); /* about to be filled: caches keyed on its contents start over */
+    if (!b || !b->mem)
+        return NULL;
+    mglb_buffer_wait_writes(b->mem); /* a GPU copy into it may still be on its way */
+    return (char *)mglb_buffer_ptr(b->mem) + (size_t)pixels;
 }
 
 static int supported(GLenum format, GLenum type, const char *who)

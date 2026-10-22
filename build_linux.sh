@@ -12,3 +12,7 @@ gcc -std=gnu11 -O1 -g -Wall -Wno-unused-parameter -fPIC -shared -fvisibility=hid
     -Wl,--whole-archive -lglslang -lglslang-default-resource-limits -lSPIRV -Wl,--no-whole-archive \
     -lSPIRV-Tools-opt -lSPIRV-Tools -lspirv-cross-c-shared -lstdc++ -lpthread -lm -ldl
 echo "built build-linux/libmcmetal.so: $(nm -D --defined-only build-linux/libmcmetal.so | grep -c ' gl') GL symbols"
+# GL call profiler for the Mesa reference rig (tools/glprof.h): -Dorg.lwjgl.opengl.libname=build-linux/libglprof.so
+python3 -I gen/gen_glprof.py build-linux/gl.xml build-linux/gen/glprof_gen.c
+gcc -std=gnu11 -O2 -Wall -Wno-unused-parameter -fPIC -shared -fvisibility=hidden -Icore -Itools tools/glprof.c \
+    build-linux/gen/glprof_gen.c -o build-linux/libglprof.so -ldl

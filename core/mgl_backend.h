@@ -11,9 +11,15 @@ typedef struct mglb_program mglb_program;
 /* ---- buffers: always CPU-visible (unified memory on Apple GPUs) ---- */
 mglb_buffer *mglb_buffer_new(size_t size);
 void *mglb_buffer_ptr(mglb_buffer *b);
+size_t mglb_buffer_size(mglb_buffer *b);
 void mglb_buffer_release(mglb_buffer *b);
 /* true while work that reads the buffer has been recorded but not finished by the GPU */
 int mglb_buffer_in_use(mglb_buffer *b);
+/* the CPU wrote into the buffer (every glBufferData / SubData / map / copy goes through here): caches keyed on its
+   contents start over */
+void mglb_buffer_written(mglb_buffer *b);
+/* mapped persistently: the CPU can write it at any time without telling us, so nothing may cache its contents */
+void mglb_buffer_volatile(mglb_buffer *b);
 
 /* ---- textures ---- */
 enum mgl_format {
@@ -40,6 +46,24 @@ void mglb_texture_release(mglb_texture *t);
 void mglb_texture_upload(mglb_texture *t, int level, int x, int y, int z, int w, int h, int d,
                          const void *data, size_t bytes_per_row, size_t bytes_per_image);
 void mglb_texture_generate_mipmaps(mglb_texture *t);
+/* textures start with only render-target and sample usage (so Apple GPUs can compress them); these add image
+   writes or format/swizzle views the first time a texture needs them (it is remade, contents kept) */
+void mglb_texture_need_image(mglb_texture *t);
+void mglb_texture_need_view(mglb_texture *t);
+/* GPU buffer copy in command order (0: not possible, e.g. offsets not 4-byte aligned; copy on the CPU instead).
+   Until it has run, the CPU must not read or write dst: mglb_buffer_wait_writes waits for it. */
+int mglb_buffer_copy(mglb_buffer *src, size_t src_off, mglb_buffer *dst, size_t dst_off, size_t size);
+int mglb_buffer_gpu_writing(mglb_buffer *b);
+void mglb_buffer_wait_writes(mglb_buffer *b);
+
+/* MGL_PROFILE: CPU-side buffer traffic in core/mgl_buffer.c, logged and reset by the backend once a second */
+typedef struct {
+    uint64_t renames, rename_copy_bytes, rename_ns; /* fresh memory for a buffer the GPU still reads (and bytes copied over) */
+    uint64_t copies, copy_bytes, copy_ns;           /* glCopyBufferSubData on the CPU (memmove only) */
+    uint64_t gpu_copies, gpu_copy_bytes, gpu_waits; /* ... as GPU copies; CPU accesses that had to wait for one */
+    uint64_t datas, data_bytes;                     /* glBufferData */
+} mgl_buf_stats;
+extern mgl_buf_stats mgl_bstats;
 /* reads w x h texels at (x, y) of a colour texture into out, tightly packed, GL row order; waits for the GPU */
 void mglb_texture_read(mglb_texture *t, int level, int x, int y, int w, int h, void *out);
 enum mgl_format mglb_texture_format(mglb_texture *t);
@@ -125,6 +149,7 @@ typedef struct mgl_draw {
     int num_vbufs;
 
     const void *uniforms[3]; int uniform_size[3];   /* default block per stage (vertex, fragment, compute) */
+    const int (*uniform_used)[2]; int num_uniform_used; /* compute stage: byte ranges it reads, -1 = all */
     mglb_buffer *ubo[12]; size_t ubo_offset[12]; size_t ubo_size[12];
     mglb_buffer *ssbo[8]; size_t ssbo_offset[8];   /* by x.ssbos[] index */
     mgl_bound_texture textures[3][MGL_MAX_TEXTURES]; /* per stage, by MSL index */
@@ -159,6 +184,9 @@ typedef struct mgl_rt_geom {
 /* The terrain sections live this frame; the backend keeps one acceleration structure per section (cached by
    buffer, range and gen) and rebuilds the scene from them. Bound at MGL_BUF_SCENE for programs with uses_scene. */
 void mglb_rt_update(const mgl_rt_geom *g, int n);
+/* This frame's entity triangles (mobs, players, item frames, chests...): camera-relative float3 corners, 9 floats
+   per triangle, solid. Called just before mglb_rt_update; the backend adds them to that scene. */
+void mglb_rt_dynamic(const float *tris, int n);
 mglb_buffer *mglb_rt_instances(void); /* this frame's per-instance triangle-data addresses (mcm_trace's McmInstances) */
 /* The block atlas the terrain was last drawn with, for mcm_trace's alpha test (mcm_atlas); set by mgl_rt.c. */
 extern mglb_texture *mgl_rt_atlas;
@@ -167,11 +195,22 @@ extern int mgl_rt_light_ids[2];
 extern float mgl_rt_radius; /* MCMETAL_RT_RADIUS: the scene keeps only sections this close to the camera (0 = all) */
 mglb_buffer *mglb_rt_lights(void); /* this frame's light list (mcm_lights_near's McmLights) */
 
+/* Camera from Iris's uniforms, as the pack was last given them (column-major, GL conventions), for MetalFX frame
+   interpolation's motion vectors (MCMETAL_FRAMEGEN): gbufferModelView, gbufferProjection,
+   gbufferPreviousModelView, gbufferPreviousProjection; cameraPosition, previousCameraPosition. seen: bit per
+   value set since the backend last cleared it. Filled by mgl_program.c. */
+typedef struct mgl_camera {
+    float mat[4][16];
+    float pos[2][3];
+    unsigned seen;
+} mgl_camera;
+extern mgl_camera mgl_cam;
+
 void mglb_draw(const mgl_draw *d);
 void mglb_dispatch(const mgl_draw *d, int gx, int gy, int gz); /* uses program, uniforms, ubo, textures[2] */
 /* Geometry-shader program (see mgl_gs.c): run the compute stage over `triangles` input triangles, fetching
    vertices from d->vbufs/attrs/index_buf, then draw the emitted strips with the passthrough vertex stage. */
-void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record_vec4s);
+void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record_floats);
 void mglb_clear(const mgl_target *t, unsigned mask_color /* bit per attachment */, const float rgba[4],
                 int clear_depth, float depth, const int *scissor /* NULL = whole target */, uint8_t color_write_mask);
 void mglb_blit(const mgl_target *src, int src_att, const int src_rect[4],

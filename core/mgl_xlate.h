@@ -65,6 +65,9 @@ typedef struct mgl_xlate_result {
     char *log;              /* compile/link errors, malloc'd */
     char *msl[MGL_NUM_STAGES];  /* malloc'd MSL source per present stage, entry point "main0" */
     int default_block_size[MGL_NUM_STAGES];
+    /* byte ranges of the default block the stage actually reads ({offset, size}); -1 = unknown (treat it all as
+       read). glslang keeps every declared uniform in the block, used or not. */
+    int used_ranges[MGL_NUM_STAGES][64][2]; int num_used_ranges[MGL_NUM_STAGES];
     int local_size[3];      /* compute only */
 
     mgl_uniform *uniforms; int num_uniforms;
@@ -75,9 +78,9 @@ typedef struct mgl_xlate_result {
     mgl_frag_out *outs; int num_outs;
 
     /* Geometry-shader programs (mgl_gs.c): the compute stage runs VS + GS per input triangle and writes
-       gs_max_vertices records of gs_record_vec4s vec4s each, plus a count; the vertex stage is a passthrough
+       gs_max_vertices records of gs_record_floats floats each, plus a count; the vertex stage is a passthrough
        that turns those triangle strips into a triangle list. 0 when the program has no geometry shader. */
-    int gs_max_vertices, gs_record_vec4s;
+    int gs_max_vertices, gs_record_floats;
     int uses_scene;             /* some stage declares an accelerationStructureEXT */
     void *pending[MGL_NUM_STAGES]; /* deferred MSL emission (mgl_xlate_set_deferred), consumed by mgl_xlate_emit */
 } mgl_xlate_result;

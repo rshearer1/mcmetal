@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "mgl_backend.h"
+#include "mgl_state.h" /* mgl_rt_end_frame */
 #include "mgl_log.h"
 
 struct mglb_buffer { void *mem; size_t size; };
@@ -20,8 +21,11 @@ mglb_buffer *mglb_buffer_new(size_t size)
     return b;
 }
 void *mglb_buffer_ptr(mglb_buffer *b) { return b->mem; }
+size_t mglb_buffer_size(mglb_buffer *b) { return b ? b->size : 0; }
 void mglb_buffer_release(mglb_buffer *b) { if (b) { free(b->mem); free(b); } }
 int mglb_buffer_in_use(mglb_buffer *b) { return 0; }
+void mglb_buffer_written(mglb_buffer *b) {}
+void mglb_buffer_volatile(mglb_buffer *b) {}
 
 mglb_texture *mglb_texture_new(const mglb_texture_desc *d)
 {
@@ -38,6 +42,11 @@ void mglb_texture_read(mglb_texture *t, int level, int x, int y, int w, int h, v
 void mglb_texture_upload(mglb_texture *t, int level, int x, int y, int z, int w, int h, int d, const void *data,
                          size_t bpr, size_t bpi) { uploads++; }
 void mglb_texture_generate_mipmaps(mglb_texture *t) {}
+void mglb_texture_need_image(mglb_texture *t) {}
+void mglb_texture_need_view(mglb_texture *t) {}
+int mglb_buffer_copy(mglb_buffer *src, size_t so, mglb_buffer *dst, size_t dof, size_t n) { return 0; }
+int mglb_buffer_gpu_writing(mglb_buffer *b) { return 0; }
+void mglb_buffer_wait_writes(mglb_buffer *b) {}
 void mglb_texture_clear(mglb_texture *t, int level, const void *texel) {}
 void mglb_texture_copy(mglb_texture *s, int sl, int sx, int sy, int sz, mglb_texture *d, int dl, int dx, int dy,
                        int dz, int w, int h, int dd) {}
@@ -49,16 +58,33 @@ mglb_program *mglb_program_new(const char *v, const char *f, const char *c, char
 void mglb_program_release(mglb_program *p) { free(p); }
 void mglb_program_label(mglb_program *p, const char *label) {}
 
-void mglb_draw(const mgl_draw *d) { draws += d->multi_n > 0 ? (unsigned long)d->multi_n : 1; }
+/* GLX swaps the window, so there is no swap hook here: the first draw, clear or blit into the window after
+   offscreen drawing ends the frame (for ray-tracing capture, MGL_RT_SNAPSHOT) */
+static void frame_mark(int is_default)
+{
+    static int offscreen;
+    if (!is_default)
+        offscreen = 1;
+    else if (offscreen) {
+        offscreen = 0;
+        mgl_rt_end_frame();
+    }
+}
+void mglb_draw(const mgl_draw *d)
+{
+    draws += d->multi_n > 0 ? (unsigned long)d->multi_n : 1;
+    frame_mark(d->target.is_default);
+}
 void mglb_dispatch(const mgl_draw *d, int gx, int gy, int gz) { dispatches++; }
 static int gs_draws;
 void mglb_draw_gs(const mgl_draw *d, int t, int mv, int r) { if (!gs_draws++) mgl_log("first geometry-shader draw: %d triangles, max_vertices %d, %d vec4s per record", t, mv, r); draws++; }
 void mglb_clear(const mgl_target *t, unsigned mask, const float rgba[4], int cd, float depth, const int *sc,
-                uint8_t cm) { clears++; }
+                uint8_t cm) { clears++; frame_mark(t->is_default); }
 void mglb_blit(const mgl_target *s, int sa, const int sr[4], const mgl_target *d, const int dr[4], int c, int dp,
-               int lin) { blits++; }
+               int lin) { blits++; frame_mark(d->is_default); }
 void mglb_memory_barrier(void) {}
 void mglb_rt_update(const mgl_rt_geom *g, int n) {}
+void mglb_rt_dynamic(const float *tris, int n) {}
 mglb_buffer *mglb_rt_instances(void) { return NULL; }
 mglb_buffer *mglb_rt_lights(void) { return NULL; }
 

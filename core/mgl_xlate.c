@@ -118,6 +118,36 @@ static void reflect_default_block(mgl_xlate_result *r, spvc_compiler comp, int s
         if (u->columns > 1 && spvc_compiler_type_struct_member_matrix_stride(comp, type, i, &mstride) == SPVC_SUCCESS)
             u->matrix_stride = (int)mstride;
     }
+    /* the members this stage reads, as merged byte ranges (sorted by offset) */
+    const spvc_buffer_range *br = NULL;
+    size_t nbr = 0;
+    r->num_used_ranges[stage] = -1;
+    if (spvc_compiler_get_active_buffer_ranges(comp, res->id, &br, &nbr) != SPVC_SUCCESS)
+        return;
+    int (*ur)[2] = r->used_ranges[stage], nu = 0;
+    for (size_t k = 0; k < nbr; k++) {
+        int off = (int)br[k].offset, len = (int)br[k].range, at = nu;
+        while (at > 0 && ur[at - 1][0] > off)
+            at--;
+        if (nu == 64)
+            return; /* too scattered: treat the whole block as read */
+        memmove(&ur[at + 1], &ur[at], sizeof ur[0] * (size_t)(nu - at));
+        ur[at][0] = off;
+        ur[at][1] = len;
+        nu++;
+    }
+    int m = 0;
+    for (int k = 0; k < nu; k++) {
+        if (m && ur[k][0] <= ur[m - 1][0] + ur[m - 1][1]) { /* overlapping or touching: join */
+            int end = ur[k][0] + ur[k][1] > ur[m - 1][0] + ur[m - 1][1] ? ur[k][0] + ur[k][1] : ur[m - 1][0] + ur[m - 1][1];
+            ur[m - 1][1] = end - ur[m - 1][0];
+        } else {
+            ur[m][0] = ur[k][0];
+            ur[m][1] = ur[k][1];
+            m++;
+        }
+    }
+    r->num_used_ranges[stage] = m;
 }
 
 static int image_dim(spvc_type t)
@@ -345,11 +375,74 @@ static int in_list(const char *list, const char *name, size_t n)
    every padded output starts as that before the shader's own write. A vec4 output the shader only partly writes
    (Bliss's final passes write .rgb of colortex7) keeps 0 in the rest, as GL drivers leave it: alpha 1 there made
    Bliss read its glass as water the next frame (no tint, milky haze). narrow: from narrow_outputs(). */
+/* A "#version 330 compatibility" vertex shader gets glslang's legacy output block (gl_ClipVertex, gl_FrontColor,
+   gl_TexCoord...). SPIRV-Cross flattens it into main0_out members m_<N>_..._gl_<X> but keeps writing and reading the
+   block variable _<N> itself, which it never declares: "use of undeclared identifier '_50'" (our RT pack's
+   lit-material program, which writes none of it). Point those uses at the flattened members and drop the copies
+   that become out.m = out.m. Nothing downstream reads these members. */
+static char *fix_legacy_vertex_block(char *msl)
+{
+    static const char tag[] = "_RESERVED_IDENTIFIER_FIXUP_gl_";
+    char block[24] = "";
+    const char *m = strstr(msl, "    float4 m_"); /* a flattened member: "float4 m_50_..._gl_ClipVertex;" */
+    for (; m; m = strstr(m + 1, "    float4 m_")) {
+        int n = 0;
+        while (isdigit((unsigned char)m[13 + n]) && n < 16)
+            n++;
+        if (n && !strncmp(m + 13 + n, tag, sizeof tag - 1)) {
+            snprintf(block, sizeof block, "_%.*s", n, m + 13);
+            break;
+        }
+    }
+    if (!*block)
+        return msl;
+    char decl[40];
+    snprintf(decl, sizeof decl, " %s;", block); /* "SomeType _50;": declared after all, leave it */
+    if (strstr(msl, decl))
+        return msl;
+    char use[64], member[64];
+    int ul = snprintf(use, sizeof use, "%s.%s", block, tag);
+    int ml = snprintf(member, sizeof member, "out.m%s%s", block, tag);
+    char *out = malloc(strlen(msl) * 2 + 1), *o = out;
+    for (const char *p = msl; *p;) {
+        int edge = p == msl || !(isalnum((unsigned char)p[-1]) || p[-1] == '_' || p[-1] == '.');
+        if (edge && !strncmp(p, use, (size_t)ul)) {
+            memcpy(o, member, (size_t)ml);
+            o += ml;
+            p += ul;
+            while (isalnum((unsigned char)*p) || *p == '_')
+                *o++ = *p++;
+            if (*p == '[' && isdigit((unsigned char)p[1]) && p[2] == ']') { /* gl_TexCoord[0] -> gl_TexCoord_0 */
+                *o++ = '_';
+                *o++ = p[1];
+                p += 3;
+            }
+            continue;
+        }
+        *o++ = *p++;
+    }
+    *o = 0;
+    for (char *p = strstr(out, "    out.m"); p; p = strstr(p, "    out.m")) { /* out.m_50_X = out.m_50_X; */
+        char *eq = strstr(p, " = "), *eol = strchr(p, '\n');
+        if (!eol)
+            break;
+        size_t l = eq && eq < eol ? (size_t)(eq - p - 4) : 0;
+        if (l && eol - (eq + 3) == (long)l + 1 && !strncmp(p + 4, eq + 3, l) && eq[3 + l] == ';')
+            memmove(p, eol + 1, strlen(eol + 1) + 1);
+        else
+            p = eol;
+    }
+    free(msl);
+    return out;
+}
+
 static char *msl_dup(const char *msl, int stage, const char *narrow)
 {
     const char *init = stage == MGL_FRAGMENT ? strstr(msl, "main0_out out = {};\n") : NULL;
     if (stage == MGL_COMPUTE)
         return pack_threadgroup_vec3(strdup(msl));
+    if (stage == MGL_VERTEX && strstr(msl, "_RESERVED_IDENTIFIER_FIXUP_gl_ClipVertex"))
+        return fix_legacy_vertex_block(strdup(msl));
     if (!init)
         return strdup(msl);
     char names[16][128];
@@ -658,6 +751,46 @@ static char *with_420pack(const char *text)
     return out;
 }
 
+/* dFdxFine & co. (GL_ARB_derivative_control, which GL drivers take in #version 330 shaders: Distant Horizons'
+   SSAO): glslang only declares them from #version 400. Before that, they become the plain dFdx/dFdy/fwidth, which
+   is what Metal's derivatives are anyway. Returns a new copy (text is freed) or text itself when nothing matched. */
+static char *plain_derivatives(char *text, const char *orig)
+{
+    const char *base = text ? text : orig;
+    const char *v = strstr(base, "#version");
+    if (!v || atoi(v + 8) >= 400 || (!strstr(base, "Fine") && !strstr(base, "Coarse")))
+        return text;
+    static const char *const from[] = {"dFdxFine", "dFdyFine", "fwidthFine", "dFdxCoarse", "dFdyCoarse", "fwidthCoarse"};
+    size_t len = strlen(base);
+    char *out = malloc(len + 1), *o = out;
+    int changed = 0;
+    for (const char *c = base; *c;) {
+        int hit = -1;
+        if (c == base || !(isalnum((unsigned char)c[-1]) || c[-1] == '_'))
+            for (int i = 0; i < 6 && hit < 0; i++) {
+                size_t n = strlen(from[i]);
+                if (!strncmp(c, from[i], n) && !(isalnum((unsigned char)c[n]) || c[n] == '_'))
+                    hit = i;
+            }
+        if (hit < 0) {
+            *o++ = *c++;
+            continue;
+        }
+        const char *plain = hit % 3 == 2 ? "fwidth" : hit % 3 ? "dFdy" : "dFdx";
+        memcpy(o, plain, strlen(plain));
+        o += strlen(plain);
+        c += strlen(from[hit]);
+        changed = 1;
+    }
+    *o = 0;
+    if (!changed) {
+        free(out);
+        return text;
+    }
+    free(text);
+    return out;
+}
+
 static int xlate_once(const char *src[MGL_NUM_STAGES], mgl_xlate_result *r)
 {
     static int initialized;
@@ -681,7 +814,7 @@ static int xlate_once(const char *src[MGL_NUM_STAGES], mgl_xlate_result *r)
     for (int s = 0; s < MGL_NUM_STAGES; s++) {
         if (!src[s])
             continue;
-        char *patched = with_420pack(src[s]);
+        char *patched = plain_derivatives(with_420pack(src[s]), src[s]);
         glslang_input_t in = {
             .language = GLSLANG_SOURCE_GLSL,
             .stage = gl_stage[s],

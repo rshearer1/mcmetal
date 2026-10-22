@@ -78,7 +78,16 @@ void glGetIntegerv(GLenum pname, GLint *data)
 {
     if (limit(pname, data) || mgl_get_state_integer(pname, data))
         return;
-    mgl_log("glGetIntegerv: unknown pname 0x%04X, returning 0", pname);
+    static GLenum said[32]; /* once per pname: some callers ask every frame */
+    static int nsaid;
+    int known = 0;
+    for (int i = 0; i < nsaid; i++)
+        known |= said[i] == pname;
+    if (!known) {
+        if (nsaid < 32)
+            said[nsaid++] = pname;
+        mgl_log("glGetIntegerv: unknown pname 0x%04X, returning 0", pname);
+    }
     *data = 0;
 }
 
