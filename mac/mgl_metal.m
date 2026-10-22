@@ -6362,19 +6362,55 @@ static void frame_times_tick(void)
     start = t;
 }
 
+/* A swap of 50 ms or more logs where its time went (at most 40 times), to tell a stall waiting for the screen
+   (drawable) from one waiting for the GPU (fence) or in our own end-of-frame work. */
+enum { SW_RT, SW_GSC, SW_SHOT, SW_ENCODERS, SW_DRAWABLE, SW_PRESENT, SW_COMMIT, SW_AFTER, SW_FENCE, SW_N };
+static uint64_t sw_t[SW_N], sw_last;
+static void sw_mark(int stage)
+{
+    uint64_t t = now_ns();
+    sw_t[stage] += t - sw_last;
+    sw_last = t;
+}
+
+static void sw_report(uint64_t start)
+{
+    static const char *const names[SW_N] = {"ray-tracing scene", "geometry cache", "screenshots", "ending passes",
+                                            "waiting for a drawable", "presenting", "commit", "after commit", "waiting for the GPU"};
+    static int logged;
+    uint64_t total = now_ns() - start;
+    if (total >= 50000000ull && logged < 40) {
+        char buf[512];
+        int n = 0;
+        for (int i = 0; i < SW_N; i++)
+            if (sw_t[i] >= 1000000ull)
+                n += snprintf(buf + n, sizeof buf - (size_t)n, ", %s %.1f", names[i], (double)sw_t[i] * 1e-6);
+        mgl_log("slow swap: %.1f ms%s (ms; %d presents waiting)", (double)total * 1e-6, n ? buf : ", no single step over 1 ms",
+                atomic_load(&presents_waiting));
+        if (++logged == 40)
+            mgl_log("slow swap: no more of these logged");
+    }
+    memset(sw_t, 0, sizeof sw_t);
+}
+
 MGL_EXPORT void mgl_glfw_swap(void *ctx)
 {
     frame_times_tick();
+    uint64_t sw_start = sw_last = now_ns();
     mgl_ctx *c = ctx;
     update_size(c);
     mgl_rt_end_frame(); /* ray tracing: rebuild the scene from this frame's terrain sections */
+    sw_mark(SW_RT);
     gsc_end_frame();
+    sw_mark(SW_GSC);
     if (!mgl->window_color) {
         commit();
         return;
     }
     mgl_shot_tick(); /* MGL_SHOT_DIR test screenshots */
+    sw_mark(SW_SHOT);
     end_encoders();
+    sw_mark(SW_ENCODERS);
     /* Vsync off: like OpenGL, don't wait for the screen. When two finished frames are already waiting to be shown,
        this frame is drawn but not presented, instead of blocking in nextDrawable (which held the game at twice the
        refresh rate, 240 fps on a 120 Hz screen). Frames the GPU is still drawing don't count: when the GPU is
@@ -6388,6 +6424,7 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
     prof.wait_ns += now_ns() - t_draw;
     pace_wait_ns += now_ns() - t_draw;
     prof.skipped_presents += skip;
+    sw_mark(SW_DRAWABLE);
     if (drawable) {
         watch_drawable(drawable);
         /* Frame interpolation: the made-up frame, then the real one half a frame after it. deltaTime is the paced
@@ -6475,7 +6512,9 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
         if (!mid && fg_enabled())
             fg_time_stage(FG_SHOW_REAL);
     }
+    sw_mark(SW_PRESENT);
     commit();
+    sw_mark(SW_COMMIT);
     priv_promote();
     archive_maybe_save();
     frames_presented = c->frames + 1;
@@ -6495,6 +6534,9 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
     static uint64_t frame_end_serial[2];
     uint64_t before_last = frame_end_serial[c->frames & 1];
     frame_end_serial[c->frames & 1] = submitted_serial;
+    sw_mark(SW_AFTER);
     if (before_last)
         mglb_fence_wait(before_last, 100000000ull);
+    sw_mark(SW_FENCE);
+    sw_report(sw_start);
 }
