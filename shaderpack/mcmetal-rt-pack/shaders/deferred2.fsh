@@ -121,7 +121,9 @@ void main() {
             float skyOpen = smoothstep(0.3, 0.9, nl.w);
             vec3 refl = skyColor(rd, sunDir) * skyOpen;
   #ifdef PUDDLE_RT
-            if (f > 0.04) refl = traceReflection(p + pn * 0.02, rd, lightDir, sunCol, skyAmb, sunDir, skyOpen);
+            if (f > 0.04)   // faded in, so there's no ring where the rays start
+                refl = mix(refl, traceReflection(p + pn * 0.02, rd, lightDir, sunCol, skyAmb, sunDir, skyOpen),
+                           smoothstep(0.04, 0.06, f));
   #endif
             refl /= 1.0 + luma(refl) * 0.08;
             col = mix(col, refl, f * m.b);
