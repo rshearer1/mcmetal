@@ -13,6 +13,7 @@ const vec4 colortex13ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 #include "/lib/common.glsl"
 #include "/lib/uniforms.glsl"
 #include "/lib/sky.glsl"
+#include "/lib/style.glsl"
 
 uniform sampler2D colortex0, colortex1, colortex5, colortex8, colortex11, colortex13, depthtex0, depthtex1;
 
@@ -91,7 +92,12 @@ void main() {
     } else if (isEyeInWater == 3) {
         col = mix(col, vec3(0.6, 0.7, 0.8) * (skyAmb * 0.4), 1.0 - exp(-dist * 2.0));
     } else if (depth < 1.0) {
-        float haze = (1.0 - exp(-dist * 0.0012 * FOG_DENSITY * (1.0 + 5.0 * rainStrength)));
+        float haze = (1.0 - exp(-dist * 0.0012 * FOG_DENSITY * STYLE_FOG * (1.0 + 5.0 * rainStrength)));
+  #if STYLE == 2 || STYLE == 3
+        // low mist that sits in valleys and over water (thickest below about sea level + 4)
+        float low = smoothstep(10.0, -2.0, p.y + cameraPosition.y - 63.0);
+        haze = max(haze, STYLE_GROUND_MIST * 0.45 * low * (1.0 - exp(-dist * 0.025)));
+  #endif
         // hide the edge of the loaded world (chunks load in a column round the player: measured across, not up/down,
         // or high up the ground below would all count as past the edge)
         float edge = smoothstep(fogEnd * 0.8, fogEnd, length(p.xz));
@@ -100,7 +106,7 @@ void main() {
             // haze takes the sky's colour from a little above the view direction: right at the horizon the
             // atmosphere model is yellowed by ~100 km of air, real distant haze is blue-white
             vec3 hd = p / dist;
-            col = mix(col, skyColor(normalize(vec3(hd.x, max(hd.y, 0.0) + 0.12, hd.z)), sunDir), amount);
+            col = mix(col, skyColor(normalize(vec3(hd.x, max(hd.y, 0.0) + 0.12, hd.z)), sunDir) * STYLE_MIST, amount);
         }
     }
 #if defined USE_RT && defined LIGHT_SHAFTS
