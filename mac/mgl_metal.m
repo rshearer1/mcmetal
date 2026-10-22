@@ -239,7 +239,12 @@ static id<MTLCommandBuffer> current_cb(void)
 {
     if (!cb) {
         init_device();
-        cb = [queue commandBuffer];
+        /* the game's render thread has no autorelease pool between swaps: an autoreleased command buffer (and
+           every buffer it retains, e.g. one-off geometry-shader record buffers) was never freed. Same below for
+           encoders and pass descriptors. */
+        @autoreleasepool {
+            cb = [queue commandBuffer];
+        }
         prof.cbs++;
         pt_begin_cb(cb);
         uint64_t serial = cb_serial = ++submitted_serial;
@@ -405,14 +410,16 @@ static id<MTLBlitCommandEncoder> blit_encoder_at(int line)
     end_encoders_at(line);
     id<MTLCommandBuffer> c = current_cb();
     int k = pt_pass("blits");
-    if (k >= 0) {
-        MTLBlitPassDescriptor *d = [MTLBlitPassDescriptor blitPassDescriptor];
-        d.sampleBufferAttachments[0].sampleBuffer = pt_cur->sb;
-        d.sampleBufferAttachments[0].startOfEncoderSampleIndex = (NSUInteger)k * 2;
-        d.sampleBufferAttachments[0].endOfEncoderSampleIndex = (NSUInteger)k * 2 + 1;
-        benc = [c blitCommandEncoderWithDescriptor:d];
-    } else {
-        benc = [c blitCommandEncoder];
+    @autoreleasepool {
+        if (k >= 0) {
+            MTLBlitPassDescriptor *d = [MTLBlitPassDescriptor blitPassDescriptor];
+            d.sampleBufferAttachments[0].sampleBuffer = pt_cur->sb;
+            d.sampleBufferAttachments[0].startOfEncoderSampleIndex = (NSUInteger)k * 2;
+            d.sampleBufferAttachments[0].endOfEncoderSampleIndex = (NSUInteger)k * 2 + 1;
+            benc = [c blitCommandEncoderWithDescriptor:d];
+        } else {
+            benc = [c blitCommandEncoder];
+        }
     }
     prof.blits++;
     return benc;
@@ -447,14 +454,16 @@ static id<MTLComputeCommandEncoder> compute_encoder(void)
     end_encoders();
     id<MTLCommandBuffer> c = current_cb();
     int k = pt_pass("pass compute");
-    if (k >= 0) {
-        MTLComputePassDescriptor *d = [MTLComputePassDescriptor computePassDescriptor];
-        d.sampleBufferAttachments[0].sampleBuffer = pt_cur->sb;
-        d.sampleBufferAttachments[0].startOfEncoderSampleIndex = (NSUInteger)k * 2;
-        d.sampleBufferAttachments[0].endOfEncoderSampleIndex = (NSUInteger)k * 2 + 1;
-        cenc = [c computeCommandEncoderWithDescriptor:d];
-    } else {
-        cenc = [c computeCommandEncoder];
+    @autoreleasepool {
+        if (k >= 0) {
+            MTLComputePassDescriptor *d = [MTLComputePassDescriptor computePassDescriptor];
+            d.sampleBufferAttachments[0].sampleBuffer = pt_cur->sb;
+            d.sampleBufferAttachments[0].startOfEncoderSampleIndex = (NSUInteger)k * 2;
+            d.sampleBufferAttachments[0].endOfEncoderSampleIndex = (NSUInteger)k * 2 + 1;
+            cenc = [c computeCommandEncoderWithDescriptor:d];
+        } else {
+            cenc = [c computeCommandEncoder];
+        }
     }
     prof.computes++;
     return cenc;
@@ -485,6 +494,8 @@ static int size_class(size_t size)
     return c;
 }
 
+static size_t buf_live_bytes, buf_pooled_bytes; /* MGL_PROFILE: Metal buffer memory we hold, and of it in the pool */
+static unsigned long tr_oneoff;                 /* transient allocations that fell back to their own buffer */
 mglb_buffer *mglb_buffer_new(size_t size)
 {
     init_device();
@@ -498,6 +509,7 @@ mglb_buffer *mglb_buffer_new(size_t size)
         if (b->last_use <= done && b->cap >= size) {
             *pp = b->next_free;
             pool_count[c]--;
+            buf_pooled_bytes -= b->cap;
             b->next_free = NULL;
             b->size = size;
             return b;
@@ -514,6 +526,7 @@ mglb_buffer *mglb_buffer_new(size_t size)
     b->ptr = m.contents;
     b->size = size;
     b->cap = cap;
+    buf_live_bytes += cap;
     return b;
 }
 
@@ -529,8 +542,10 @@ void mglb_buffer_release(mglb_buffer *b)
         b->next_free = pool[c];
         pool[c] = b;
         pool_count[c]++;
+        buf_pooled_bytes += b->cap;
         return;
     }
+    buf_live_bytes -= b->cap;
     release_obj(b->mtl); /* Metal keeps it alive for command buffers still using it */
     free(b);
 }
@@ -562,6 +577,7 @@ static transient_t transient(size_t size)
     current_cb(); /* cb_serial is this command buffer's */
     size = (size + 255) & ~(size_t)255;
     if (size > TR_CHUNK) {
+        tr_oneoff++;
         mglb_buffer *b = mglb_buffer_new(size);
         if (!b)
             return (transient_t){nil, 0, NULL};
@@ -585,6 +601,7 @@ static transient_t transient(size_t size)
             }
         }
         if (k < 0) { /* all chunks busy: a one-off buffer */
+            tr_oneoff++;
             mglb_buffer *b = mglb_buffer_new(size);
             if (!b)
                 return (transient_t){nil, 0, NULL};
@@ -1999,48 +2016,50 @@ static id<MTLRenderCommandEncoder> begin_pass_at(int line, const mgl_target *t, 
     }
     prof_serialize();
     end_encoders();
-    MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
-    for (int i = 0; i < MGL_MAX_ATTACHMENTS; i++) {
-        if (!t->tex[i])
-            continue;
-        set_attachment(rp.colorAttachments[i], t->tex[i], t->level[i], t->layer[i]);
-        if (pass_dontcare & (1u << i))
-            rp.colorAttachments[i].loadAction = MTLLoadActionDontCare;
-        if (clear_colors & (1u << i)) {
-            rp.colorAttachments[i].loadAction = MTLLoadActionClear;
-            rp.colorAttachments[i].clearColor = MTLClearColorMake(rgba[0], rgba[1], rgba[2], rgba[3]);
-        } else if (take_colors & (1u << i)) {
-            rp.colorAttachments[i].loadAction = MTLLoadActionClear;
-            rp.colorAttachments[i].clearColor =
-                MTLClearColorMake(take_rgba[i][0], take_rgba[i][1], take_rgba[i][2], take_rgba[i][3]);
+    @autoreleasepool {
+        MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
+        for (int i = 0; i < MGL_MAX_ATTACHMENTS; i++) {
+            if (!t->tex[i])
+                continue;
+            set_attachment(rp.colorAttachments[i], t->tex[i], t->level[i], t->layer[i]);
+            if (pass_dontcare & (1u << i))
+                rp.colorAttachments[i].loadAction = MTLLoadActionDontCare;
+            if (clear_colors & (1u << i)) {
+                rp.colorAttachments[i].loadAction = MTLLoadActionClear;
+                rp.colorAttachments[i].clearColor = MTLClearColorMake(rgba[0], rgba[1], rgba[2], rgba[3]);
+            } else if (take_colors & (1u << i)) {
+                rp.colorAttachments[i].loadAction = MTLLoadActionClear;
+                rp.colorAttachments[i].clearColor =
+                    MTLClearColorMake(take_rgba[i][0], take_rgba[i][1], take_rgba[i][2], take_rgba[i][3]);
+            }
         }
-    }
-    if (t->depth) {
-        set_attachment(rp.depthAttachment, t->depth, t->depth_level, 0);
-        if (clear_depth || take_depth) {
-            rp.depthAttachment.loadAction = MTLLoadActionClear;
-            rp.depthAttachment.clearDepth = clear_depth ? depth : take_depth_value;
+        if (t->depth) {
+            set_attachment(rp.depthAttachment, t->depth, t->depth_level, 0);
+            if (clear_depth || take_depth) {
+                rp.depthAttachment.loadAction = MTLLoadActionClear;
+                rp.depthAttachment.clearDepth = clear_depth ? depth : take_depth_value;
+            }
+            if (t->depth->pf == MTLPixelFormatDepth32Float_Stencil8) {
+                set_attachment(rp.stencilAttachment, t->depth, t->depth_level, 0);
+                if (clear_depth || take_depth)
+                    rp.stencilAttachment.loadAction = MTLLoadActionClear;
+            }
         }
-        if (t->depth->pf == MTLPixelFormatDepth32Float_Stencil8) {
-            set_attachment(rp.stencilAttachment, t->depth, t->depth_level, 0);
-            if (clear_depth || take_depth)
-                rp.stencilAttachment.loadAction = MTLLoadActionClear;
+        rp.renderTargetWidth = (NSUInteger)t->width;
+        rp.renderTargetHeight = (NSUInteger)t->height;
+        id<MTLCommandBuffer> c = current_cb();
+        char name[40];
+        snprintf(name, sizeof name, "pass %dx%d", t->width, t->height);
+        int k = pt_pass(name);
+        if (k >= 0) {
+            rp.sampleBufferAttachments[0].sampleBuffer = pt_cur->sb;
+            rp.sampleBufferAttachments[0].startOfVertexSampleIndex = (NSUInteger)k * 2;
+            rp.sampleBufferAttachments[0].endOfVertexSampleIndex = MTLCounterDontSample;
+            rp.sampleBufferAttachments[0].startOfFragmentSampleIndex = MTLCounterDontSample;
+            rp.sampleBufferAttachments[0].endOfFragmentSampleIndex = (NSUInteger)k * 2 + 1;
         }
+        renc = [c renderCommandEncoderWithDescriptor:rp];
     }
-    rp.renderTargetWidth = (NSUInteger)t->width;
-    rp.renderTargetHeight = (NSUInteger)t->height;
-    id<MTLCommandBuffer> c = current_cb();
-    char name[40];
-    snprintf(name, sizeof name, "pass %dx%d", t->width, t->height);
-    int k = pt_pass(name);
-    if (k >= 0) {
-        rp.sampleBufferAttachments[0].sampleBuffer = pt_cur->sb;
-        rp.sampleBufferAttachments[0].startOfVertexSampleIndex = (NSUInteger)k * 2;
-        rp.sampleBufferAttachments[0].endOfVertexSampleIndex = MTLCounterDontSample;
-        rp.sampleBufferAttachments[0].startOfFragmentSampleIndex = MTLCounterDontSample;
-        rp.sampleBufferAttachments[0].endOfFragmentSampleIndex = (NSUInteger)k * 2 + 1;
-    }
-    renc = [c renderCommandEncoderWithDescriptor:rp];
     prof.passes++;
     if (same_target(t, &prof_last_target) && !clear_colors && !clear_depth && !take_colors && !take_depth)
         prof.reopened++;
@@ -3541,6 +3560,9 @@ static void profile_frame(unsigned long draws)
     if (prof.gs_draws)
         mgl_log("profile: geometry shaders %.0f draws, %.0fk input triangles, %.1f MB of records per frame", prof.gs_draws / f,
                 prof.gs_tris / f * 1e-3, prof.gs_bytes / f / 1048576.0);
+    mgl_log("profile: buffers %.0f MB held (%.0f MB pooled), %d of %d transient chunks, %.1f one-off transient "
+            "buffers per frame", buf_live_bytes / 1048576.0, buf_pooled_bytes / 1048576.0, tr_n, TR_MAX, tr_oneoff / f);
+    tr_oneoff = 0;
     if (pt_ok > 0)
         pt_report(f);
     memset(&prof, 0, sizeof prof);
