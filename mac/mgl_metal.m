@@ -385,6 +385,11 @@ static int pending_clear_clears(const mglb_texture *x)
     return 0;
 }
 
+/* GPU occlusion culling: the main view's depth texture once its opaque terrain is drawn, waiting for its render
+   pass to end so its depth can be reduced into the Hi-Z pyramid (hiz_build, with the culling code) */
+static mglb_texture *hiz_src;
+static void hiz_build(void);
+
 static void end_encoders_at(int line)
 {
     if (!gs_recording)
@@ -400,9 +405,12 @@ static void end_encoders_at(int line)
         static line_tally big = {"square shadow-map passes ended"};
         tally_line(&big, line);
     }
+    int hiz_now = renc && hiz_src && renc_target.depth == hiz_src;
     if (renc) { [renc endEncoding]; renc = nil; }
     if (benc) { [benc endEncoding]; benc = nil; }
     if (cenc) { [cenc endEncoding]; cenc = nil; }
+    if (hiz_now)
+        hiz_build();
 }
 #define end_encoders() end_encoders_at(__LINE__)
 
@@ -1714,10 +1722,37 @@ static const char *cull_msl =
     "#include <metal_stdlib>\n"
     "using namespace metal;\n"
     "struct Draw { uint count, first_index, base_vertex, region; packed_float3 mn; float pad; };\n"
-    "struct Params { float4 planes[6]; uint first, n, region_base, flags; };\n"
+    "struct Params { float4 planes[6]; uint first, n, region_base, flags; float4x4 prev; float4 delta; uint4 hiz; };\n"
     "struct Args { uint index_count, instance_count, index_start; int base_vertex; uint base_instance; };\n"
+    /* hidden behind last frame's depth: the box (moved into last frame's camera space) projected with last frame's
+       matrix, its nearest depth against the farthest depth under its screen rectangle. Anything not fully on last
+       frame's screen, or reaching behind its camera, is kept. */
+    "static bool occluded(float3 mn, constant Params &p, texture2d<float, access::read> hiz) {\n"
+    "    float zmin = 2.0; float2 lo = float2(1e9), hi = float2(-1e9);\n"
+    "    for (int c = 0; c < 8; c++) {\n"
+    "        float3 q = mn + p.delta.xyz + float3(c & 1 ? 16.0 : 0.0, c & 2 ? 16.0 : 0.0, c & 4 ? 16.0 : 0.0);\n"
+    "        float4 h = p.prev * float4(q, 1.0);\n"
+    "        if (h.w <= 1e-3) return false;\n"
+    "        float3 v = h.xyz / h.w;\n"
+    "        zmin = min(zmin, v.z * 0.5 + 0.5);\n"
+    "        lo = min(lo, v.xy); hi = max(hi, v.xy);\n"
+    "    }\n"
+    "    if (any(lo < -1.0) || any(hi > 1.0)) return false;\n"
+    "    float2 sz = float2(p.hiz.xy);\n"
+    "    uint2 a = uint2(max((lo * 0.5 + 0.5) * sz - 1.0, float2(0.0))), b = uint2(min((hi * 0.5 + 0.5) * sz + 1.0, sz - 1.0));\n"
+    "    uint l = 0;\n"
+    "    while (any((b >> (l + 1u)) - (a >> (l + 1u)) > uint2(1u))) {\n"
+    "        if (++l >= p.hiz.z) return false;\n"
+    "    }\n"
+    "    uint2 top = uint2(max(1u, (p.hiz.x / 2u) >> l), max(1u, (p.hiz.y / 2u) >> l)) - 1u;\n"
+    "    uint2 t0 = min(a >> (l + 1u), top), t1 = min(b >> (l + 1u), top);\n"
+    "    float m = max(max(hiz.read(t0, l).x, hiz.read(uint2(t1.x, t0.y), l).x),\n"
+    "                  max(hiz.read(uint2(t0.x, t1.y), l).x, hiz.read(t1, l).x));\n"
+    "    return zmin > m;\n"
+    "}\n"
     "kernel void mcm_cull(device const Draw *draws [[buffer(0)]], constant Params &p [[buffer(1)]],\n"
-    "                     device Args *args [[buffer(2)]], uint i [[thread_position_in_grid]]) {\n"
+    "                     device Args *args [[buffer(2)]], device atomic_uint *stats [[buffer(3)]],\n"
+    "                     texture2d<float, access::read> hiz [[texture(0)]], uint i [[thread_position_in_grid]]) {\n"
     "    if (i >= p.n) return;\n"
     "    uint k = p.first + i;\n"
     "    Draw d = draws[k];\n"
@@ -1727,21 +1762,67 @@ static const char *cull_msl =
     "        float3 c = float3(d.mn) + select(float3(0.0), float3(16.0), q.xyz > 0.0);\n"
     "        keep = keep && dot(q.xyz, c) + q.w >= 0.0;\n"
     "    }\n"
+    "    if (keep && (p.flags & 8u)) {\n"
+    "        atomic_fetch_add_explicit(&stats[0], 1u, memory_order_relaxed);\n"
+    "        if (occluded(float3(d.mn), p, hiz)) {\n"
+    "            keep = false;\n"
+    "            atomic_fetch_add_explicit(&stats[1], 1u, memory_order_relaxed);\n"
+    "        }\n"
+    "    }\n"
     "    args[k] = Args{d.count, keep ? 1u : 0u, d.first_index, int(d.base_vertex), 0u};\n"
+    "}\n"
+    /* the Hi-Z pyramid: level 0 is half the depth image, each texel the farthest depth of the 2x2 (3 wide at an odd
+       edge) below it; every level after halves again */
+    "static uint2 hiz_span(uint g, uint dn, uint sn) { return uint2(2u * g, g + 1u == dn ? sn - 1u : 2u * g + 1u); }\n"
+    "kernel void mcm_hiz0(depth2d<float, access::read> src [[texture(0)]], texture2d<float, access::write> dst [[texture(1)]],\n"
+    "                     uint2 g [[thread_position_in_grid]]) {\n"
+    "    uint dw = dst.get_width(), dh = dst.get_height();\n"
+    "    if (g.x >= dw || g.y >= dh) return;\n"
+    "    uint2 xs = hiz_span(g.x, dw, src.get_width()), ys = hiz_span(g.y, dh, src.get_height());\n"
+    "    float m = 0.0;\n"
+    "    for (uint y = ys.x; y <= ys.y; y++) for (uint x = xs.x; x <= xs.y; x++) m = max(m, src.read(uint2(x, y)));\n"
+    "    dst.write(float4(m), g);\n"
+    "}\n"
+    "kernel void mcm_hizn(texture2d<float, access::read> src [[texture(0)]], texture2d<float, access::write> dst [[texture(1)]],\n"
+    "                     uint2 g [[thread_position_in_grid]]) {\n"
+    "    uint dw = dst.get_width(), dh = dst.get_height();\n"
+    "    if (g.x >= dw || g.y >= dh) return;\n"
+    "    uint2 xs = hiz_span(g.x, dw, src.get_width()), ys = hiz_span(g.y, dh, src.get_height());\n"
+    "    float m = 0.0;\n"
+    "    for (uint y = ys.x; y <= ys.y; y++) for (uint x = xs.x; x <= xs.y; x++) m = max(m, src.read(uint2(x, y)).x);\n"
+    "    dst.write(float4(m), g);\n"
     "}\n";
 
 #define CULL_SLOTS 4          /* frames in flight that may each hold arguments */
 #define CULL_MAX_CMDS 65536   /* section draws per frame, all terrain passes together */
 #define CULL_SLOT_SHIFT 17    /* the slot rides above the draw index in what mglb_cull_run returns */
 typedef struct { uint32_t first, n, region_base, flags; } cull_params_tail;
+#define CULL_OCCLUDE 8u       /* params flag: test against the Hi-Z pyramid too */
 static struct cull_slot {
     id<MTLBuffer> draws, args;
+    id<MTLBuffer> stats;      /* occlusion: boxes tested, boxes hidden (shared, read once the slot comes round) */
     int used;                 /* draws handed out this frame */
     uint64_t serial;          /* last command buffer that draws from its arguments */
     unsigned long long frame;
 } cslot[CULL_SLOTS];
 static int cull_state = -1, cull_cur = -1;
-static id<MTLComputePipelineState> cull_pso;
+static id<MTLComputePipelineState> cull_pso, hiz0_pso, hizn_pso;
+
+/* GPU occlusion culling (MCMETAL_GPU_OCCLUSION): after the main view's opaque terrain, its depth is reduced into a
+   pyramid of farthest depths; the next frame's main-view culls skip sections whose box lies behind it. A section
+   that comes into view from behind a wall can appear one frame late. */
+static struct {
+    id<MTLTexture> tex;              /* R32Float, levels of half, quarter, ... the depth image */
+    id<MTLTexture> view[16];
+    int levels, w, h;                /* w, h: the depth image's size */
+    float mvp[16];                   /* the pass it was taken from */
+    double cam[3];
+    unsigned long long frame;        /* frames_presented when built */
+    int valid;
+    mgl_cull_pass pending;           /* the pass hiz_src belongs to */
+    id<MTLTexture> dummy;            /* bound when there is no pyramid */
+    unsigned long built, missed, used, skipped, tested, hidden;
+} hiz;
 
 static int cull_setup(void);
 int mglb_cull_supported(void)
@@ -1769,12 +1850,23 @@ static int cull_setup(void)
         mgl_log("GPU chunk culling: kernel failed: %s", e ? e.localizedDescription.UTF8String : "no function");
         return 0;
     }
+    id<MTLFunction> f0 = [lib newFunctionWithName:@"mcm_hiz0"], fn2 = [lib newFunctionWithName:@"mcm_hizn"];
+    hiz0_pso = f0 ? [dev newComputePipelineStateWithFunction:f0 error:&e] : nil;
+    hizn_pso = fn2 ? [dev newComputePipelineStateWithFunction:fn2 error:&e] : nil;
+    if (!hiz0_pso || !hizn_pso)
+        mgl_log("GPU occlusion culling: Hi-Z kernels failed: %s", e ? e.localizedDescription.UTF8String : "no function");
+    MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatR32Float
+                                                                                   width:1 height:1 mipmapped:NO];
+    td.usage = MTLTextureUsageShaderRead;
+    td.storageMode = MTLStorageModePrivate;
+    hiz.dummy = [dev newTextureWithDescriptor:td];
     for (int i = 0; i < CULL_SLOTS; i++) {
         struct cull_slot *c = &cslot[i];
         c->draws = [dev newBufferWithLength:CULL_MAX_CMDS * sizeof(mgl_cull_draw) options:MTLResourceStorageModeShared];
         c->args = [dev newBufferWithLength:CULL_MAX_CMDS * sizeof(MTLDrawIndexedPrimitivesIndirectArguments)
                                    options:MTLResourceStorageModePrivate];
-        if (!c->draws || !c->args) {
+        c->stats = [dev newBufferWithLength:16 options:MTLResourceStorageModeShared];
+        if (!c->draws || !c->args || !c->stats || !hiz.dummy) {
             mgl_log("GPU chunk culling: out of memory for the draw arguments");
             return 0;
         }
@@ -1796,14 +1888,39 @@ int mglb_cull_run(const mgl_cull_pass *p, const mgl_cull_draw *draws, int n, mgl
         cull_cur = next;
         cslot[next].frame = frames_presented;
         cslot[next].used = 0;
+        uint32_t *st = (uint32_t *)cslot[next].stats.contents; /* that frame's occlusion counts, done by now */
+        hiz.tested += st[0];
+        hiz.hidden += st[1];
+        st[0] = st[1] = 0;
+        if (hiz.tested && frames_presented % 1000 == 0) {
+            mgl_log("GPU occlusion culling: last 1000 frames: %lu pyramids built, %lu missed (translucent terrain "
+                    "drew first), %lu main-view culls used one, %lu could not (stale, camera jumped); hid %lu of "
+                    "%lu sections in view", hiz.built, hiz.missed, hiz.used, hiz.skipped, hiz.hidden, hiz.tested);
+            hiz.built = hiz.missed = hiz.used = hiz.skipped = hiz.tested = hiz.hidden = 0;
+        }
     }
     struct cull_slot *c = &cslot[cull_cur];
     if (c->used + n > CULL_MAX_CMDS)
         return -1;
     memcpy((mgl_cull_draw *)c->draws.contents + c->used, draws, sizeof *draws * (size_t)n);
-    struct { float planes[6][4]; cull_params_tail t; } params;
+    struct { float planes[6][4]; cull_params_tail t; float prev[16]; float delta[4]; uint32_t hiz[4]; } params;
+    memset(&params, 0, sizeof params);
     memcpy(params.planes, p->planes, sizeof params.planes);
     params.t = (cull_params_tail){(uint32_t)c->used, (uint32_t)n, 0, (uint32_t)p->flags};
+    if ((p->flags & MGL_CULL_OCCLUSION) && !(p->flags & MGL_CULL_SHADOW)) {
+        double d[3] = {p->cam[0] - hiz.cam[0], p->cam[1] - hiz.cam[1], p->cam[2] - hiz.cam[2]};
+        /* last frame's pyramid only, and not across a teleport or a respawn */
+        if (hiz.valid && hiz.frame + 1 == frames_presented && fabs(d[0]) < 8 && fabs(d[1]) < 8 && fabs(d[2]) < 8) {
+            params.t.flags |= CULL_OCCLUDE;
+            memcpy(params.prev, hiz.mvp, sizeof params.prev);
+            for (int i = 0; i < 3; i++)
+                params.delta[i] = (float)d[i];
+            params.hiz[0] = (uint32_t)hiz.w, params.hiz[1] = (uint32_t)hiz.h, params.hiz[2] = (uint32_t)hiz.levels;
+            hiz.used++;
+        } else {
+            hiz.skipped++;
+        }
+    }
     /* its own command buffer, committed now: it runs before the frame's draws (committed later), so it never
        splits the render pass the terrain is drawn into */
     id<MTLCommandBuffer> side = [queue commandBuffer];
@@ -1812,6 +1929,8 @@ int mglb_cull_run(const mgl_cull_pass *p, const mgl_cull_draw *draws, int n, mgl
     [enc setBuffer:c->draws offset:0 atIndex:0];
     [enc setBytes:&params length:sizeof params atIndex:1];
     [enc setBuffer:c->args offset:0 atIndex:2];
+    [enc setBuffer:c->stats offset:0 atIndex:3];
+    [enc setTexture:(params.t.flags & CULL_OCCLUDE) ? hiz.tex : hiz.dummy atIndex:0];
     NSUInteger tg = cull_pso.threadExecutionWidth;
     [enc dispatchThreads:MTLSizeMake((NSUInteger)n, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg, 1, 1)];
     [enc endEncoding];
@@ -1819,6 +1938,75 @@ int mglb_cull_run(const mgl_cull_pass *p, const mgl_cull_draw *draws, int n, mgl
     int first = c->used | (cull_cur << CULL_SLOT_SHIFT);
     c->used += n;
     return first;
+}
+
+void mglb_cull_mark(int op, const mgl_cull_pass *p)
+{
+    if (!(p->flags & MGL_CULL_OCCLUSION) || (p->flags & MGL_CULL_SHADOW) || !hiz0_pso || !hizn_pso)
+        return;
+    if (op == 1 && (p->flags & MGL_CULL_TRANSLUCENT)) {
+        /* water and glass write depth too, and would hide what is under them: too late for this frame's pyramid */
+        if (hiz_src)
+            hiz.missed++;
+        hiz_src = NULL;
+    } else if (op == 2 && !(p->flags & MGL_CULL_TRANSLUCENT)) {
+        /* the opaque terrain is in this pass's depth now; reduce it when the pass ends (ending it here would split
+           the render pass) */
+        mglb_texture *t = renc ? renc_target.depth : NULL;
+        if (t && renc_target.depth_level == 0 && t->d.type == MGLT_2D) {
+            hiz_src = t;
+            hiz.pending = *p;
+        }
+    }
+}
+
+static void hiz_build(void)
+{
+    mglb_texture *src = hiz_src;
+    hiz_src = NULL;
+    id<MTLTexture> d = OBJ(id<MTLTexture>, src->mtl);
+    int w = (int)d.width, h = (int)d.height;
+    if (w < 4 || h < 4)
+        return;
+    if (!hiz.tex || hiz.w != w || hiz.h != h) {
+        int lw = w / 2, lh = h / 2, levels = 1;
+        while ((lw >> levels) > 0 || (lh >> levels) > 0)
+            levels++;
+        if (levels > 16)
+            levels = 16;
+        MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatR32Float
+                                                                                       width:(NSUInteger)lw
+                                                                                      height:(NSUInteger)lh
+                                                                                   mipmapped:YES];
+        td.mipmapLevelCount = (NSUInteger)levels;
+        td.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
+        td.storageMode = MTLStorageModePrivate;
+        hiz.tex = [dev newTextureWithDescriptor:td];
+        hiz.valid = 0;
+        if (!hiz.tex)
+            return;
+        for (int i = 0; i < levels; i++)
+            hiz.view[i] = [hiz.tex newTextureViewWithPixelFormat:MTLPixelFormatR32Float
+                                                     textureType:MTLTextureType2D
+                                                          levels:NSMakeRange((NSUInteger)i, 1)
+                                                          slices:NSMakeRange(0, 1)];
+        hiz.w = w, hiz.h = h, hiz.levels = levels;
+        mgl_log("GPU occlusion culling: Hi-Z pyramid %dx%d, %d levels", lw, lh, levels);
+    }
+    id<MTLComputeCommandEncoder> enc = [current_cb() computeCommandEncoder];
+    for (int i = 0; i < hiz.levels; i++) {
+        id<MTLTexture> out = hiz.view[i];
+        [enc setComputePipelineState:i ? hizn_pso : hiz0_pso];
+        [enc setTexture:i ? hiz.view[i - 1] : d atIndex:0];
+        [enc setTexture:out atIndex:1];
+        [enc dispatchThreads:MTLSizeMake(out.width, out.height, 1) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
+    }
+    [enc endEncoding];
+    memcpy(hiz.mvp, hiz.pending.mvp, sizeof hiz.mvp);
+    memcpy(hiz.cam, hiz.pending.cam, sizeof hiz.cam);
+    hiz.frame = frames_presented;
+    hiz.valid = 1;
+    hiz.built++;
 }
 
 /* one multi-draw from its culled arguments: same sections, same order, culled ones draw no instances */

@@ -92,6 +92,7 @@ mglb_buffer *mglb_rt_lights(void) { return NULL; }
 /* GPU chunk culling: the same box test on the CPU, so the cloud rig checks the planes and the bookkeeping */
 static unsigned long cull_kept, cull_total, cull_runs;
 int mglb_cull_supported(void) { return 1; }
+void mglb_cull_mark(int op, const mgl_cull_pass *p) { (void)op, (void)p; }
 int mglb_cull_run(const mgl_cull_pass *p, const mgl_cull_draw *dr, int n, mglb_buffer *const *ib, int nr)
 {
     for (int i = 0; i < n; i++) {
