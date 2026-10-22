@@ -70,10 +70,10 @@ void main() {
         // thicker indoors (dusty air, and the eye adapts to the dark), so shafts through a roof hole show
         float indoors = 1.0 - float(eyeBrightnessSmooth.y) / 240.0;
         // clear air at midday, hazier with a low sun (morning, evening) and in rain
-        float density = 0.005 * LIGHT_SHAFTS_STRENGTH * mix(1.0, 0.25, smoothstep(0.25, 0.7, lightDir.y))
+        float density = 0.005 * (LIGHT_SHAFTS_STRENGTH * STYLE_SHAFTS) * mix(1.0, 0.25, smoothstep(0.25, 0.7, lightDir.y))
                       * (1.0 + 3.0 * rainStrength + 3.0 * indoors);
         // under water: much thicker (the beams you see from below the surface), and blue-green
-        if (underWater) { dist = min(dist, 32.0); density = 0.04 * LIGHT_SHAFTS_STRENGTH; }
+        if (underWater) { dist = min(dist, 32.0); density = 0.04 * (LIGHT_SHAFTS_STRENGTH * STYLE_SHAFTS); }
         float stepLen = dist / float(LIGHT_SHAFTS_STEPS);
         float jitter = ign(gl_FragCoord.xy, frameCounter);
         float lit = 0.0;
@@ -93,7 +93,7 @@ void main() {
         // (dust that only shows in a beam: 0.05 per block where the view ray is all in shade)
         float shade = 1.0 - lit / float(LIGHT_SHAFTS_STEPS);
         // (cubed: a view ray that starts in open sunlight and then enters a room shouldn't haze the whole room)
-        float beam = underWater ? 0.0 : 0.05 * LIGHT_SHAFTS_STRENGTH * shade * shade * shade;
+        float beam = underWater ? 0.0 : 0.05 * (LIGHT_SHAFTS_STRENGTH * STYLE_SHAFTS) * shade * shade * shade;
         scatter = sunCol * (underWater ? vec3(0.1, 0.26, 0.32) : vec3(1.0)) * phase * (density + beam) * stepLen * lit * 4.0 * PI;   // x 4pi: our lights skip the 1/pi of diffuse
         if (any(isnan(scatter)) || any(isinf(scatter))) scatter = vec3(0.0);
     }
