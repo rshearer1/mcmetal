@@ -2164,6 +2164,44 @@ static const char *dump_textures(const mgl_draw *d)
     return buf;
 }
 
+/* frame dump: the centre texel (and one 20% above it) of each texture a full-screen draw samples, read back from
+   the GPU (finishes all work so far; debug only) */
+static void dump_texels(const mgl_draw *d)
+{
+    for (int i = 0; i < d->num_textures[1]; i++) {
+        mglb_texture *t = d->textures[1][i].tex;
+        if (!t || t->d.type != MGLT_2D || is_depth_format(t->pf))
+            continue;
+        for (int k = 0; k < 2; k++) {
+            int x = t->d.width / 2, y = k ? t->d.height * 7 / 10 : t->d.height / 2;
+            unsigned char px[16] = {0};
+            float v[4] = {0};
+            int n = 4;
+            mglb_texture_read(t, 0, x, y, 1, 1, px);
+            switch (t->pf) {
+            case MTLPixelFormatRGBA16Unorm:
+                for (int c = 0; c < 4; c++) v[c] = ((uint16_t *)px)[c] / 65535.0f;
+                break;
+            case MTLPixelFormatRGBA16Float:
+                for (int c = 0; c < 4; c++) v[c] = (float)((_Float16 *)px)[c];
+                break;
+            case MTLPixelFormatRGBA8Unorm: case MTLPixelFormatBGRA8Unorm:
+                for (int c = 0; c < 4; c++) v[c] = px[c] / 255.0f;
+                break;
+            case MTLPixelFormatRGBA32Float:
+                memcpy(v, px, 16);
+                break;
+            default:
+                n = 0;
+            }
+            if (n)
+                mgl_log("frame dump:   texel %d:%p at %d,%d = %.5f %.5f %.5f %.5f", i, (void *)t, x, y, v[0], v[1], v[2], v[3]);
+            else
+                mgl_log("frame dump:   texel %d:%p format %d not decoded", i, (void *)t, (int)t->pf);
+        }
+    }
+}
+
 void mglb_clear(const mgl_target *t, unsigned mask_color, const float rgba[4], int clear_depth, float depth,
                 const int *scissor, uint8_t cmask)
 {
@@ -2387,6 +2425,8 @@ void mglb_draw(const mgl_draw *d)
         return;
     if (skip_program(d))
         return;
+    if (dump_this_frame() && getenv("MGL_FRAME_DUMP_TEXELS") && d->multi_n == 0 && d->count <= 6)
+        dump_texels(d);
     id<MTLRenderPipelineState> ps = get_pipeline(d, &d->target);
     if (!ps)
         return;
