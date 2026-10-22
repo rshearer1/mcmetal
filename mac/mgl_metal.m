@@ -3756,7 +3756,11 @@ static void fg_history_reset(void)
    camera motion, the same as frame interpolation), instead of sharpening one frame on its own. The HUD isn't
    in the snapshot: pixels where the finished frame differs from the world picture (and their neighbours) come
    from the spatial upscaler instead, so text and the hotbar don't smear. Needs a shader pack (Iris's camera
-   uniforms); without one, and in menus, frames use the spatial upscaler. No jitter: packs do their own TAA. */
+   uniforms); without one, and in menus, frames use the spatial upscaler. No jitter: packs do their own TAA.
+   Measured on an M3 Max (1728x965 -> 3456x1930, 2026-10-22): NOT worth it yet. ~2-4 ms more GPU (SEUS 25.4 ->
+   27.2 ms, Complementary 5.4 -> 9.8), so pacing drops a step (SEUS 40 -> 30, Complementary 118 -> 59), and the
+   picture is no sharper (very slightly softer on SEUS): without jitter there's no sub-pixel detail to gather.
+   Kept as an experiment for a jittered path. */
 static int tu_enabled(void)
 {
     static int on = -1;
