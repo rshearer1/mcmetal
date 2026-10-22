@@ -1,7 +1,7 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
 #   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-off ours-caustics ours-caustics-mask ours-underwater
-#   pack-NAME packnight-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
+#   pack-NAME packnight-NAME packshadow-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
 #   glcount-pack-NAME (the pack on Apple's OpenGL, draws counted by tools/glcount.c)
 #   ab-pack-NAME ab-packnight-NAME (the pack three times in one job: new, old = with GAME_AB_OFF's env, new)
 #   archive-NAME (pipeline binary archive: cold, warm, warm without archive)
@@ -306,8 +306,8 @@ bsl|MULTICOLORED_BLOCKLIGHT=true
 unbound|COLORED_LIGHTING=128
 complementary|COLORED_LIGHTING=128"
 
-third_party() { # pack-NAME / packnight-NAME [OUTNAME [VAR=value ...]]: one third-party pack in the pool scene, at
-                # noon (pack settings as shipped) or midnight (coloured block light on)
+third_party() { # pack-NAME / packnight-NAME / packshadow-NAME [OUTNAME [VAR=value ...]]: one third-party pack in the pool scene, at
+                # noon (pack settings as shipped) or midnight (coloured block light on); packshadow: the shadows room
     local p=$1 out=${2:-$1} name=${1#*-} file url sha extra=
     shift; [ $# -gt 0 ] && shift
     case $name in *@*) extra=${name#*@}; name=${name%%@*} ;; esac # pack-bliss@OPT=value,OPT2=value: extra options
@@ -324,7 +324,7 @@ third_party() { # pack-NAME / packnight-NAME [OUTNAME [VAR=value ...]]: one thir
     local opts=$G/shaderpacks/$file.txt
     rm -f "$opts"
     case $p in
-    packnight-*) scene midnight
+    packnight-*|packshadow-*) scene midnight clear "$([ "${p%%-*}" = packshadow ] && echo shadows || echo scene)"
         grep "^${name%%+*}|" <<< "$PACK_LIGHT" | cut -d'|' -f2 > "$opts"; [ -s "$opts" ] || rm -f "$opts" ;;
     *) scene noon ;;
     esac
@@ -413,7 +413,8 @@ for p in $PHASES; do
         third_party "$inner" "$p-new1"
         third_party "$inner" "$p-old" ${GAME_AB_OFF:-}
         third_party "$inner" "$p-new2" ;;
-    pack-*|packnight-*) third_party "$p" ;; # compatibility sweep: pack-photon, packnight-bsl, pack-complementary+euphoria, ...
+    pack-*|packnight-*|packshadow-*) third_party "$p" ;; # compatibility sweep: pack-photon, packnight-bsl, pack-complementary+euphoria, ...
+        # packshadow-NAME: night in the shadows room (shadows.mcfunction)
     archive-*) # Metal pipeline binary archive: the pack from an empty shader cache (archive written), again with the
                # archive, and again with the shader cache but no archive. Run with bench=true settle=0 so the fps
                # samples cover the first seconds in the world, where pipeline compiles show up as stalls

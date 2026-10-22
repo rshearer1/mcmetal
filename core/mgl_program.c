@@ -331,28 +331,28 @@ static void add_ray_tracing(mgl_shader *s)
         "  }\n"
         "#define MCM_MISSED(q) (rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionNoneEXT)\n"
         "float mcm_trace(vec3 origin, vec3 dir, float tmax) {\n"
-        "  rayQueryEXT q;\n"
-        "  MCM_QUERY(q, gl_RayFlagsTerminateOnFirstHitEXT, origin, dir, tmax)\n"
-        "  return MCM_MISSED(q) ? -1.0 : rayQueryGetIntersectionTEXT(q, true);\n"
+        "  rayQueryEXT mcm_q;\n"
+        "  MCM_QUERY(mcm_q, gl_RayFlagsTerminateOnFirstHitEXT, origin, dir, tmax)\n"
+        "  return MCM_MISSED(mcm_q) ? -1.0 : rayQueryGetIntersectionTEXT(mcm_q, true);\n"
         "}\n"
         "float mcm_trace_cut(vec3 origin, vec3 dir, float tmax, out uint cut) {\n"
-        "  rayQueryEXT q;\n"
-        "  MCM_QUERY(q, gl_RayFlagsTerminateOnFirstHitEXT, origin, dir, tmax)\n"
+        "  rayQueryEXT mcm_q;\n"
+        "  MCM_QUERY(mcm_q, gl_RayFlagsTerminateOnFirstHitEXT, origin, dir, tmax)\n"
         "  cut = 0u;\n"
-        "  if (MCM_MISSED(q)) return -1.0;\n"
-        "  McmTris t = mcm_tris[rayQueryGetIntersectionInstanceIdEXT(q, true)];\n"
-        "  cut = t.w[uint(rayQueryGetIntersectionPrimitiveIndexEXT(q, true)) * 12u + 3u] & 0xFFu;\n"
-        "  return rayQueryGetIntersectionTEXT(q, true);\n"
+        "  if (MCM_MISSED(mcm_q)) return -1.0;\n"
+        "  McmTris t = mcm_tris[rayQueryGetIntersectionInstanceIdEXT(mcm_q, true)];\n"
+        "  cut = t.w[uint(rayQueryGetIntersectionPrimitiveIndexEXT(mcm_q, true)) * 12u + 3u] & 0xFFu;\n"
+        "  return rayQueryGetIntersectionTEXT(mcm_q, true);\n"
         "}\n"
         "float mcm_trace_hit(vec3 origin, vec3 dir, float tmax, out vec3 normal, out vec4 albedo, out vec2 lightmap,\n"
         "                    out int blockId) {\n"
-        "  rayQueryEXT q;\n"
-        "  MCM_QUERY(q, gl_RayFlagsNoneEXT, origin, dir, tmax)\n"
+        "  rayQueryEXT mcm_q;\n"
+        "  MCM_QUERY(mcm_q, gl_RayFlagsNoneEXT, origin, dir, tmax)\n"
         "  normal = vec3(0.0); albedo = vec4(0.0); lightmap = vec2(0.0); blockId = -1;\n"
-        "  if (MCM_MISSED(q)) return -1.0;\n"
-        "  McmTris t = mcm_tris[rayQueryGetIntersectionInstanceIdEXT(q, true)];\n"
-        "  uint b = uint(rayQueryGetIntersectionPrimitiveIndexEXT(q, true)) * 12u;\n"
-        "  vec2 w = rayQueryGetIntersectionBarycentricsEXT(q, true);\n"
+        "  if (MCM_MISSED(mcm_q)) return -1.0;\n"
+        "  McmTris t = mcm_tris[rayQueryGetIntersectionInstanceIdEXT(mcm_q, true)];\n"
+        "  uint b = uint(rayQueryGetIntersectionPrimitiveIndexEXT(mcm_q, true)) * 12u;\n"
+        "  vec2 w = rayQueryGetIntersectionBarycentricsEXT(mcm_q, true);\n"
         "  vec2 on = unpackSnorm2x16(t.w[b + 7u]);\n"
         "  vec3 n = vec3(on, 1.0 - abs(on.x) - abs(on.y));\n"
         "  if (n.z < 0.0) n.xy = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);\n"
@@ -364,18 +364,18 @@ static void add_ray_tracing(mgl_shader *s)
         "  vec3 wv = vec3(1.0 - w.x - w.y, w.x, w.y);\n"
         "  lightmap = vec2(dot(vec3(l & 0xFFu), wv), dot(vec3((l >> 8u) & 0xFFu), wv)) / 256.0;\n"
         "  blockId = int(t.w[b + 11u]) - 1;\n"
-        "  return rayQueryGetIntersectionTEXT(q, true);\n"
+        "  return rayQueryGetIntersectionTEXT(mcm_q, true);\n"
         "}\n"
         "float mcm_trace_tinted(vec3 origin, vec3 dir, float tmax, out vec3 transmit) {\n"
         "  float hit = mcm_trace(origin, dir, tmax);\n"
         "  transmit = vec3(hit >= 0.0 ? 0.0 : 1.0);\n"
         "  if (hit >= 0.0) return hit;\n"
-        "  rayQueryEXT q; /* nothing solid on the way: filter through every translucent face (glass, water, ice) */\n"
-        "  rayQueryInitializeEXT(q, mcm_scene, gl_RayFlagsNoneEXT, 0x02, origin, 0.001, dir, tmax);\n"
-        "  while (rayQueryProceedEXT(q)) {\n"
-        "    McmTris t = mcm_tris[rayQueryGetIntersectionInstanceIdEXT(q, false)];\n"
-        "    uint b = uint(rayQueryGetIntersectionPrimitiveIndexEXT(q, false)) * 12u;\n"
-        "    vec2 w = rayQueryGetIntersectionBarycentricsEXT(q, false);\n"
+        "  rayQueryEXT mcm_q; /* nothing solid on the way: filter through every translucent face (glass, water, ice) */\n"
+        "  rayQueryInitializeEXT(mcm_q, mcm_scene, gl_RayFlagsNoneEXT, 0x02, origin, 0.001, dir, tmax);\n"
+        "  while (rayQueryProceedEXT(mcm_q)) {\n"
+        "    McmTris t = mcm_tris[rayQueryGetIntersectionInstanceIdEXT(mcm_q, false)];\n"
+        "    uint b = uint(rayQueryGetIntersectionPrimitiveIndexEXT(mcm_q, false)) * 12u;\n"
+        "    vec2 w = rayQueryGetIntersectionBarycentricsEXT(mcm_q, false);\n"
         "    vec4 tex = textureLod(mcm_atlas, mcm_uv(t, b, w), 0.0);\n"
         "    transmit *= mix(vec3(1.0), tex.rgb * mcm_colour(t, b, w).rgb, tex.a);\n"
         "  }\n"
@@ -413,6 +413,14 @@ static void add_ray_tracing(mgl_shader *s)
         mgl_rt_light_ids[0] = lo;
         mgl_rt_light_ids[1] = hi;
     }
+    /* MCMETAL_RT_RADIUS r: rays never go further than r blocks from the camera, so the scene can drop the rest
+       (the last program to say wins; packs that don't say get every section) */
+    const char *rr = strstr(s->source, "#define MCMETAL_RT_RADIUS");
+    float radius;
+    if (rr && sscanf(rr + 25, "%f", &radius) == 1 && radius != mgl_rt_radius) {
+        mgl_rt_radius = radius;
+        mgl_log("ray tracing: scene keeps sections within %.0f blocks of the camera", radius);
+    }
     size_t pre = (size_t)(v - s->source), rest = strlen(eol + 1);
     char *n = malloc(pre + sizeof head + rest + sizeof body);
     memcpy(n, s->source, pre);
@@ -427,9 +435,9 @@ static void add_ray_tracing(mgl_shader *s)
 }
 
 /* MCMETAL_PHOTON_RT=1: ray-traced shadows for Photon's coloured block light (the job its Photonics slot leaves to
-   the Photonics mod). Photon's light comes from a flood-filled light volume that bends round corners and has no
+   the Photonics mod; =2 shows the shadow factor instead of the light). Photon's light comes from a flood-filled light volume that bends round corners and has no
    sharp shadows. We keep that light (its brightness and colour are Photon's own), and scale it by what the four
-   nearest light blocks (Photon's ids 32-79, its own colour table) can actually see: one shadow ray each from the
+   nearest light blocks (Photon's ids 10032-10079, its own colour table) can actually see: one shadow ray each from the
    surface to the light's centre. Where every light is hidden, a quarter stays as bounce light. A light in view
    but another of a different colour hidden shifts the tint towards the one in view. Photon's licence allows this
    kind of derivative; nothing of the pack is changed on disk. */
@@ -438,7 +446,7 @@ static void add_photon_rt(mgl_shader *s)
     static int on = -1;
     if (on < 0) {
         const char *e = getenv("MCMETAL_PHOTON_RT");
-        on = e && *e && *e != '0';
+        on = e && *e >= '1' && *e <= '4' ? *e - '0' : 0;
     }
     char *f = on && s->type == GL_FRAGMENT_SHADER ? strstr(s->source, "vec3 get_lpv_blocklight(") : NULL;
     if (!f || !strstr(s->source, "vec3 get_block_lighting(") || strstr(s->source, "mcm_photon_lpv"))
@@ -458,7 +466,8 @@ static void add_photon_rt(mgl_shader *s)
     if (!end)
         return;
     static const char wrap[] =
-        "\n#define MCMETAL_LIGHT_IDS 32 79\n"
+        "\n#define MCMETAL_LIGHT_IDS 10032 10079\n"
+        "#define MCMETAL_RT_RADIUS 72\n" /* the furthest light the list keeps (grid corner 55 + 16 of reach) */
         "int mcm_lights_near(vec3 p, int slot, out vec3 pos, out int blockId);\n"
         "float mcm_trace(vec3 origin, vec3 dir, float tmax);\n"
         "const vec3 mcm_photon_light[48] = vec3[48](\n"
@@ -476,41 +485,70 @@ static void add_photon_rt(mgl_shader *s)
         "  vec3(0.55,0.15,1.0)*10.0, vec3(1.0,0.2,0.9)*10.0, vec3(1.0,0.55,0.85)*10.0);\n"
         "vec3 get_lpv_blocklight(vec3 scene_pos, vec3 normal, vec3 mc_blocklight, float ao) {\n"
         "  vec3 lpv = mcm_photon_lpv(scene_pos, normal, mc_blocklight, ao);\n"
-        "  vec3 seen = vec3(0.0), all_ = vec3(0.0);\n"
+        "#ifdef MCM_PHOTON_RT_NOLIGHTS\n" /* cost split: the scene is still built, but nothing is looked up or traced */
+        "  if (lpv.x < -1e30) return vec3(mcm_trace(scene_pos, normal, 1.0));\n"
+        "  return lpv;\n"
+        "#endif\n"
+        /* no block light here worth shadowing: skip the rays */
+        "#ifndef MCM_PHOTON_RT_DEBUG\n"
+        "  if (dot(lpv, vec3(0.2126, 0.7152, 0.0722)) < 0.002) return lpv;\n"
+        "#endif\n"
         "  vec3 o = scene_pos + normal * 0.02;\n"
+        "  vec3 c[4], dir[4]; float dist[4]; float w[4];\n"
+        "  vec3 all_ = vec3(0.0); float total = 0.0; int n = 0;\n"
         "  for (int i = 0; i < 4; i++) {\n"
         "    vec3 lp; int id;\n"
         "    if (mcm_lights_near(scene_pos, i, lp, id) < 0) break;\n"
         "    vec3 d = lp - o;\n"
-        "    float dist = length(d);\n"
-        "    vec3 dir = d / max(dist, 1e-4);\n"
-        "    float fade = clamp(1.0 - dist / 15.0, 0.0, 1.0);\n"
-        "    float ndl = dist < 0.9 ? 1.0 : max(dot(normal, dir), 0.0);\n"
-        "    vec3 c = mcm_photon_light[clamp(id - 32, 0, 47)] * fade * fade * ndl / (0.25 * dist * dist + 1.0);\n"
-        "    if (dot(c, vec3(1.0)) <= 0.0) continue;\n"
-        "    all_ += c;\n"
-        /* stop short of the light block itself (a full block's faces are 0.5 from its centre, corners up to 0.87) */
-        "    if (dist <= 0.9 || mcm_trace(o + dir * 0.01, dir, dist - 0.9) < 0.0) seen += c;\n"
+        "    dist[n] = length(d);\n"
+        "    dir[n] = d / max(dist[n], 1e-4);\n"
+        "    float fade = clamp(1.0 - dist[n] / 15.0, 0.0, 1.0);\n"
+        "    float ndl = dist[n] < 0.9 ? 1.0 : max(dot(normal, dir[n]), 0.0);\n"
+        "    c[n] = mcm_photon_light[clamp(id - 10032, 0, 47)] * fade * fade * ndl / (0.25 * dist[n] * dist[n] + 1.0);\n"
+        "    w[n] = dot(c[n], vec3(0.2126, 0.7152, 0.0722));\n"
+        "    if (w[n] <= 0.0) continue;\n"
+        "    all_ += c[n]; total += w[n]; n++;\n"
         "  }\n"
-        "  if (dot(all_, vec3(1.0)) <= 1e-4) return lpv;\n"
+        "#ifdef MCM_PHOTON_RT_DEBUG\n"
+        "  if (total <= 1e-4) return vec3(0.0); /* no light in reach: black */\n"
+        "#endif\n"
+        "  if (total <= 1e-4) return lpv;\n"
+        /* shadow rays only for lights that give at least a tenth of the light here; the faint ones count as seen */
+        "  vec3 seen = vec3(0.0);\n"
+        "  for (int i = 0; i < n; i++) {\n"
+        /* stop short of the light block itself (a full block's faces are 0.5 from its centre, corners up to 0.87) */
+        "#ifdef MCM_PHOTON_RT_NORAYS\n" /* cost split: lights looked up, no rays */
+        "    if (w[i] >= 0.0 || mcm_trace(o, dir[i], 1.0) < 0.0)\n" /* the dead trace keeps the scene bound and built */
+        "#else\n"
+        "    if (w[i] < 0.1 * total || dist[i] <= 0.9 || mcm_trace(o + dir[i] * 0.01, dir[i], dist[i] - 0.9) < 0.0)\n"
+        "#endif\n"
+        "      seen += c[i];\n"
+        "  }\n"
+        "#ifdef MCM_PHOTON_RT_DEBUG\n"
+        "  return 8.0 * mix(vec3(0.25), min(seen / max(all_, vec3(1e-4)), vec3(2.0)), 0.75); /* the shadow factor alone */\n"
+        "#endif\n"
         "  return lpv * mix(vec3(0.25), min(seen / max(all_, vec3(1e-4)), vec3(2.0)), 0.75);\n"
         "}\n";
     size_t pre = (size_t)(f - s->source);
     const char *nm = "vec3 mcm_photon_lpv(";
     size_t oldnm = strlen("vec3 get_lpv_blocklight(");
     size_t head = (size_t)(end - (f + oldnm)), rest = strlen(end);
-    char *n = malloc(pre + strlen(nm) + head + sizeof wrap + rest);
+    char *n = malloc(pre + strlen(nm) + head + 32 + sizeof wrap + rest);
     char *o = n;
     memcpy(o, s->source, pre); o += pre;
     memcpy(o, nm, strlen(nm)); o += strlen(nm);
     memcpy(o, f + oldnm, head); o += head;
+    /* MCMETAL_PHOTON_RT=2: show the shadow factor instead of the light (white = every light in view);
+       3: look the lights up but cast no rays; 4: build the scene only (3 and 4 split the cost) */
+    static const char *const mode[5] = {"", "", "\n#define MCM_PHOTON_RT_DEBUG", "\n#define MCM_PHOTON_RT_NORAYS",
+                                        "\n#define MCM_PHOTON_RT_NOLIGHTS"};
+    memcpy(o, mode[on], strlen(mode[on])); o += strlen(mode[on]);
     memcpy(o, wrap, sizeof wrap - 1); o += sizeof wrap - 1;
     memcpy(o, end, rest + 1);
     free(s->source);
     s->source = n;
-    static int noted;
-    if (!noted++)
-        mgl_log("Photon: ray-traced shadows for its coloured block light (MCMETAL_PHOTON_RT)");
+    static int patched;
+    mgl_log("Photon: ray-traced shadows for its coloured block light (MCMETAL_PHOTON_RT), shader %d", ++patched);
 }
 
 void glShaderSource(GLuint name, GLsizei count, const GLchar *const *strings, const GLint *lengths)
