@@ -2817,6 +2817,74 @@ static void rt_build_lights(const mgl_rt_geom *g, RtSection *__strong *secs, con
     rt_lights_buf = lb;
 }
 
+/* Entities (mgl_rt.c): one acceleration structure rebuilt every frame, since they move. Their triangles carry no
+   atlas texture (entity skins live elsewhere): flag 0x200 makes mcm_trace_hit use the colour alone, a mid grey. */
+static float *rt_ent;
+static int rt_ent_n, rt_ent_cap;
+static mglb_buffer *rt_ent_tris; /* the record buffer in use by the current scene */
+
+void mglb_rt_dynamic(const float *tris, int n)
+{
+    if (n > rt_ent_cap) {
+        rt_ent_cap = n * 2;
+        rt_ent = realloc(rt_ent, sizeof(float) * 9 * (size_t)rt_ent_cap);
+    }
+    if (n)
+        memcpy(rt_ent, tris, sizeof(float) * 9 * (size_t)n);
+    rt_ent_n = n;
+}
+
+static id<MTLAccelerationStructure> entity_as(mglb_buffer **tris_out)
+{
+    int n = rt_ent_n;
+    mglb_buffer *pos = mglb_buffer_new((size_t)n * 36), *rec = mglb_buffer_new((size_t)n * 48);
+    if (!pos || !rec) {
+        mglb_buffer_release(pos);
+        mglb_buffer_release(rec);
+        return nil;
+    }
+    memcpy(pos->ptr, rt_ent, (size_t)n * 36);
+    uint32_t *r = rec->ptr;
+    for (int t = 0; t < n; t++, r += 12) {
+        const float *p = rt_ent + (size_t)t * 9;
+        float e1[3] = {p[3] - p[0], p[4] - p[1], p[5] - p[2]}, e2[3] = {p[6] - p[0], p[7] - p[1], p[8] - p[2]};
+        float c[3] = {e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]};
+        float l1 = fabsf(c[0]) + fabsf(c[1]) + fabsf(c[2]), o[2];
+        if (l1 > 0) {
+            c[0] /= l1, c[1] /= l1, c[2] /= l1;
+        } else
+            c[0] = 0, c[1] = 1, c[2] = 0;
+        if (c[2] >= 0)
+            o[0] = c[0], o[1] = c[1];
+        else
+            o[0] = (1 - fabsf(c[1])) * (c[0] >= 0 ? 1 : -1), o[1] = (1 - fabsf(c[0])) * (c[1] >= 0 ? 1 : -1);
+        memset(r, 0, 48);
+        r[3] = 0x200; /* solid, untextured */
+        r[4] = r[5] = r[6] = 0xFF999999u;
+        r[7] = (uint32_t)(uint16_t)(int16_t)lrintf(o[0] * 32767.0f) | (uint32_t)(uint16_t)(int16_t)lrintf(o[1] * 32767.0f) << 16;
+        r[8] = r[9] = r[10] = 0xF000u; /* full sky light, no block light */
+    }
+    MTLAccelerationStructureTriangleGeometryDescriptor *tg = [MTLAccelerationStructureTriangleGeometryDescriptor descriptor];
+    tg.vertexBuffer = OBJ(id<MTLBuffer>, pos->mtl);
+    tg.vertexStride = 12;
+    tg.vertexFormat = MTLAttributeFormatFloat3;
+    tg.triangleCount = (NSUInteger)n;
+    tg.opaque = YES;
+    MTLPrimitiveAccelerationStructureDescriptor *pd = [MTLPrimitiveAccelerationStructureDescriptor descriptor];
+    pd.geometryDescriptors = @[ tg ];
+    pd.usage = MTLAccelerationStructureUsagePreferFastBuild;
+    use_buffer(pos);
+    id<MTLAccelerationStructure> as = build_as(pd);
+    mglb_buffer_release(pos);
+    if (!as) {
+        mglb_buffer_release(rec);
+        return nil;
+    }
+    use_buffer(rec);
+    *tris_out = rec;
+    return as;
+}
+
 static void rt_update(const mgl_rt_geom *g, int n);
 void mglb_rt_update(const mgl_rt_geom *g, int n)
 {
@@ -2836,14 +2904,15 @@ static void rt_update(const mgl_rt_geom *g, int n)
     }
     rt_frame++;
     NSMutableArray<id<MTLAccelerationStructure>> *parts = [NSMutableArray arrayWithCapacity:(NSUInteger)n];
-    mglb_buffer *inst = mglb_buffer_new(sizeof(MTLAccelerationStructureUserIDInstanceDescriptor) * (size_t)(n ? n : 1));
+    size_t slots = (size_t)n + 1; /* + the entities */
+    mglb_buffer *inst = mglb_buffer_new(sizeof(MTLAccelerationStructureUserIDInstanceDescriptor) * slots);
     if (!inst)
         return;
     MTLAccelerationStructureUserIDInstanceDescriptor *descs = inst->ptr;
-    mglb_buffer *table = mglb_buffer_new(8 * (size_t)(n ? n : 1));
+    mglb_buffer *table = mglb_buffer_new(8 * slots);
     uint64_t *addr = table->ptr;
     free(rt_tris_c);
-    rt_tris_c = (__unsafe_unretained id<MTLResource> *)calloc((size_t)(n ? n : 1), sizeof(id));
+    rt_tris_c = (__unsafe_unretained id<MTLResource> *)calloc(slots, sizeof(id));
     int count = 0;
     RtSection *__strong *secs = (RtSection *__strong *)calloc((size_t)(n ? n : 1), sizeof(RtSection *));
     int *sec_geom = calloc((size_t)(n ? n : 1), sizeof(int));
@@ -2885,6 +2954,25 @@ static void rt_update(const mgl_rt_geom *g, int n)
         secs[i] = nil;
     free(secs);
     free(sec_geom);
+    mglb_buffer *ent_tris = NULL;
+    id<MTLAccelerationStructure> ent = count && rt_ent_n ? entity_as(&ent_tris) : nil;
+    if (ent) { /* already camera-relative: identity transform; solid, so mask 1 like opaque terrain */
+        addr[count] = OBJ(id<MTLBuffer>, ent_tris->mtl).gpuAddress;
+        rt_tris_c[count] = OBJ(id<MTLBuffer>, ent_tris->mtl);
+        MTLAccelerationStructureUserIDInstanceDescriptor *d = &descs[count];
+        memset(d, 0, sizeof *d);
+        d->transformationMatrix.columns[0] = MTLPackedFloat3Make(1, 0, 0);
+        d->transformationMatrix.columns[1] = MTLPackedFloat3Make(0, 1, 0);
+        d->transformationMatrix.columns[2] = MTLPackedFloat3Make(0, 0, 1);
+        d->mask = 0x01;
+        d->accelerationStructureIndex = (uint32_t)count;
+        d->userID = 0xFFFFFFFFu;
+        [parts addObject:ent];
+        count++;
+    }
+    use_buffer(rt_ent_tris); /* last frame's draws read it: the pool keeps it until they are done */
+    mglb_buffer_release(rt_ent_tris);
+    rt_ent_tris = ent_tris;
     if (!count) {
         mglb_buffer_release(table);
         rt_tris_n = 0;
@@ -2914,8 +3002,8 @@ static void rt_update(const mgl_rt_geom *g, int n)
     if (debug < 0)
         debug = getenv("MGL_RT_DEBUG") && atoi(getenv("MGL_RT_DEBUG"));
     if (!logged++ || (debug && rt_frame % 120 == 0))
-        mgl_log("ray tracing: scene built from %d of %d terrain sections (%lu cached)", count, n,
-                (unsigned long)rt_sections.count);
+        mgl_log("ray tracing: scene built from %d of %d terrain sections (%lu cached), %d entity triangles",
+                count - (ent ? 1 : 0), n, (unsigned long)rt_sections.count, ent ? rt_ent_n : 0);
 }
 
 static void bind_scene(id<MTLRenderCommandEncoder> e, id<MTLComputeCommandEncoder> c)

@@ -29,6 +29,10 @@ static int num_draws, cap_draws;
 static double scene_wanted;  /* last time a program that casts rays was drawn; capture runs only around it */
 static float view_proj[16];
 static int have_view;
+static float terrain_mv[16]; /* the terrain pass's model-view (camera rotation; positions are camera-relative) */
+static int have_terrain_mv;
+static float *ent_tris;      /* this frame's entity triangles, camera-relative, 9 floats each */
+static int ent_n, ent_cap;
 
 static double now_s(void)
 {
@@ -63,6 +67,75 @@ void mgl_rt_link(mgl_program *p)
     }
     if (p->rt_pos_loc < 0 || p->rt_region_off < 0)
         p->rt_pos_loc = -1; /* not a terrain program */
+    /* entities: a float3 position (vanilla's Position, or Iris's / OptiFine-style core names) and a model-view */
+    p->rt_epos_loc = p->rt_emv_off = -1;
+    for (int i = 0; i < p->x.num_attribs; i++)
+        if ((!strcmp(p->x.attribs[i].name, "Position") || !strcmp(p->x.attribs[i].name, "iris_Position") ||
+             !strcmp(p->x.attribs[i].name, "vaPosition")) && !p->x.attribs[i].is_int && p->x.attribs[i].vecsize == 3)
+            p->rt_epos_loc = p->x.attribs[i].location;
+    static const char *const mv_names[] = {"iris_ModelViewMat", "ModelViewMat", "modelViewMatrix", "iris_ModelViewMatrix"};
+    for (int i = 0; i < 4 && p->rt_emv_off < 0; i++)
+        p->rt_emv_off = uniform_offset(p, mv_names[i]);
+}
+
+static void mat_mul(float *o, const float *a, const float *b);
+
+/* Entity programs by Iris's names for them (gbuffers_entities*, gbuffers_block: block entities like chests and
+   signs). Not gbuffers_hand: the held item isn't in the world. Not the shadow pass: the same entities again. */
+static int entity_program(const mgl_program *p)
+{
+    return p->rt_epos_loc >= 0 && p->rt_emv_off >= 0 &&
+           (!strncmp(p->debug_name, "gbuffers_entities", 17) || !strncmp(p->debug_name, "gbuffers_block", 14));
+}
+
+static void rigid_inverse(const float *m, float *o) /* rotation + translation, column-major */
+{
+    for (int r = 0; r < 3; r++)
+        for (int c = 0; c < 3; c++)
+            o[c * 4 + r] = m[r * 4 + c];
+    for (int r = 0; r < 3; r++)
+        o[12 + r] = -(o[r] * m[12] + o[4 + r] * m[13] + o[8 + r] * m[14]);
+    o[3] = o[7] = o[11] = 0;
+    o[15] = 1;
+}
+
+/* An entity draw: its triangles, moved into the terrain's camera-relative space, appended to this frame's list.
+   Entity buffers are rewritten every frame, so the corners are copied now. */
+static void record_entity(const mgl_program *p, const mgl_draw *d)
+{
+    if (!have_terrain_mv || d->primitive != GL_TRIANGLES || d->instances > 1)
+        return;
+    const mgl_vertex_attr *a = &d->attrs[p->rt_epos_loc];
+    if (!a->enabled || a->type != MGLV_FLOAT || a->size < 3 || a->buffer < 0 || a->buffer >= d->num_vbufs)
+        return;
+    const mgl_vertex_buf *vb = &d->vbufs[a->buffer];
+    const unsigned char *base = mglb_buffer_ptr(vb->buf);
+    const unsigned char *ib = d->index_buf ? mglb_buffer_ptr(d->index_buf) : NULL;
+    if (!base || (d->index_buf && !ib) || vb->stride < 12)
+        return;
+    float inv[16], m[16];
+    rigid_inverse(terrain_mv, inv);
+    mat_mul(m, inv, (const float *)(p->ublock[MGL_VERTEX] + p->rt_emv_off));
+    int tris = d->count / 3;
+    if (ent_n + tris > 262144) /* plenty for a busy farm; past that, skip */
+        return;
+    if (ent_n + tris > ent_cap) {
+        ent_cap = (ent_n + tris) * 2;
+        ent_tris = realloc(ent_tris, sizeof(float) * 9 * (size_t)ent_cap);
+    }
+    float *o = ent_tris + (size_t)ent_n * 9;
+    for (int k = 0; k < tris * 3; k++) {
+        uint32_t idx;
+        if (ib) {
+            size_t at = d->index_offset + (size_t)k * (d->index_type == GL_UNSIGNED_SHORT ? 2 : 4);
+            idx = d->index_type == GL_UNSIGNED_SHORT ? *(const uint16_t *)(ib + at) : *(const uint32_t *)(ib + at);
+        } else
+            idx = (uint32_t)(d->first + k);
+        const float *v = (const float *)(base + vb->offset + a->offset + (size_t)((int64_t)idx + d->base_vertex) * (size_t)vb->stride);
+        for (int r = 0; r < 3; r++)
+            o[k * 3 + r] = m[r] * v[0] + m[4 + r] * v[1] + m[8 + r] * v[2] + m[12 + r];
+    }
+    ent_n += tris;
 }
 
 static void mat_mul(float *o, const float *a, const float *b) /* column-major o = a * b */
@@ -141,6 +214,10 @@ void mgl_rt_record(mgl_program *p, const mgl_draw *d)
         rtd.idle++;
         return; /* no ray-tracing shader in use: capture costs nothing */
     }
+    if (p && p->ublock[MGL_VERTEX] && entity_program(p)) {
+        record_entity(p, d);
+        return;
+    }
     if (!p || p->rt_pos_loc < 0 || !p->ublock[MGL_VERTEX]) {
         rtd.not_terrain++;
         if (p && rt_debug())
@@ -186,7 +263,8 @@ void mgl_rt_record(mgl_program *p, const mgl_draw *d)
     if (p->rt_mv_off >= 0 && p->rt_proj_off >= 0 && d->target.width == ww && d->target.height == wh) {
         mat_mul(view_proj, (const float *)(p->ublock[MGL_VERTEX] + p->rt_proj_off),
                 (const float *)(p->ublock[MGL_VERTEX] + p->rt_mv_off));
-        have_view = 1;
+        memcpy(terrain_mv, p->ublock[MGL_VERTEX] + p->rt_mv_off, sizeof terrain_mv);
+        have_view = have_terrain_mv = 1;
     }
 
     rt_draw key = {{vb->buf, d->index_buf, vb->offset + (size_t)a->offset, vb->stride, d->index_offset,
@@ -263,6 +341,15 @@ void mgl_rt_end_frame(void)
     }
     for (int i = 0; i < num_draws; i++)
         list[i] = draws[i].g;
+    if (rt_debug() && ent_n) {
+        static double last;
+        if (now_s() - last > 1.0) {
+            mgl_log("rt debug: %d entity triangles this frame", ent_n);
+            last = now_s();
+        }
+    }
+    mglb_rt_dynamic(ent_tris, ent_n);
+    ent_n = 0;
     mglb_rt_update(list, num_draws);
 }
 

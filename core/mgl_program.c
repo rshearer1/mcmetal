@@ -282,7 +282,8 @@ static void add_ray_tracing(mgl_shader *s)
                                "layout(std430, binding = 14) readonly buffer McmLights { uint mcm_lcount; uint mcm_lpad[3];\n"
                                "  vec4 mcm_light[2048]; uint mcm_lcell[]; };\n";
     /* McmTris: 12 words per triangle, written by rt_decode (mac/mgl_metal.m): 0-2 uv, 3 cutoff | 0x100 translucent,
-       4-6 colour, 7 octahedral normal, 8-10 light, 11 Iris block id + 1. Candidates (every triangle is non-opaque)
+       4-6 colour, 7 octahedral normal, 8-10 light, 11 Iris block id + 1; 0x200 in word 3 = untextured (entities,
+       mglb_rt_dynamic). Candidates (every triangle is non-opaque)
        pass Sodium's alpha test against the block atlas before they count. */
     static const char body[] =
         "\nvec2 mcm_uv(McmTris t, uint b, vec2 w) {\n"
@@ -334,7 +335,8 @@ static void add_ray_tracing(mgl_shader *s)
         "  if (n.z < 0.0) n.xy = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);\n"
         "  normal = normalize(n);\n"
         "  if (dot(normal, dir) > 0.0) normal = -normal; /* the face the ray hit */\n"
-        "  albedo = textureLod(mcm_atlas, mcm_uv(t, b, w), 0.0) * vec4(mcm_colour(t, b, w).rgb, 1.0);\n"
+        "  albedo = ((t.w[b + 3u] & 0x200u) != 0u ? vec4(1.0) : textureLod(mcm_atlas, mcm_uv(t, b, w), 0.0))\n"
+        "         * vec4(mcm_colour(t, b, w).rgb, 1.0);\n"
         "  uvec3 l = uvec3(t.w[b + 8u], t.w[b + 9u], t.w[b + 10u]);\n"
         "  vec3 wv = vec3(1.0 - w.x - w.y, w.x, w.y);\n"
         "  lightmap = vec2(dot(vec3(l & 0xFFu), wv), dot(vec3((l >> 8u) & 0xFFu), wv)) / 256.0;\n"
