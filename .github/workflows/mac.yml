@@ -23,6 +23,10 @@ on:
       settle:
         description: 'bench: seconds to wait after joining before measuring (heavy packs keep compiling for 30 s or more)'
         default: '10'
+      profile:
+        description: 'bench: also profile every GL call (glprof: calls, CPU time per frame) and the Java side (JFR); see glprof-report.txt, jfr-report.txt'
+        type: boolean
+        default: false
 defaults:
   run:
     shell: bash  # bash -eo pipefail: a failing build isn't hidden by `| tee`
@@ -93,6 +97,7 @@ jobs:
           path: |
             build/libmcmetal.dylib
             build/libglfw.dylib
+            build/libglprof-mcmetal.dylib
             build/gl_smoke
       - uses: actions/upload-artifact@v4
         if: always()
@@ -136,6 +141,7 @@ jobs:
           GAME_BENCH: ${{ github.event.inputs.bench }}
           GAME_BENCH_SETTLE: ${{ github.event.inputs.settle || 10 }}
           GAME_LONG: ${{ github.event.inputs.long }}
+          GAME_PROFILE: ${{ github.event.inputs.profile }}
           GAME_ENV: ${{ github.event.inputs.env }}
           PHASE: ${{ matrix.phase }}
         run: bash tests/game/ci_game.sh ~/mcgame game-out "$PHASE"
