@@ -265,6 +265,8 @@ static void gather_uniforms(mgl_draw *d, mgl_program *p)
         d->uniforms[s] = p->ublock[s];
         d->uniform_size[s] = p->x.default_block_size[s];
     }
+    d->uniform_used = p->x.used_ranges[MGL_COMPUTE];
+    d->num_uniform_used = p->x.num_used_ranges[MGL_COMPUTE];
     for (int i = 0; i < p->x.num_ubos && i < 12; i++) {
         int b = p->ubo_binding[i];
         if (b < 0 || b >= MGL_MAX_UBO_BINDINGS)
