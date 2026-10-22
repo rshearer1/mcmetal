@@ -405,7 +405,7 @@ static void add_ray_tracing(mgl_shader *s)
 /* MCMETAL_PHOTON_RT=1: ray-traced shadows for Photon's coloured block light (the job its Photonics slot leaves to
    the Photonics mod; =2 shows the shadow factor instead of the light). Photon's light comes from a flood-filled light volume that bends round corners and has no
    sharp shadows. We keep that light (its brightness and colour are Photon's own), and scale it by what the four
-   nearest light blocks (Photon's ids 32-79, its own colour table) can actually see: one shadow ray each from the
+   nearest light blocks (Photon's ids 10032-10079, its own colour table) can actually see: one shadow ray each from the
    surface to the light's centre. Where every light is hidden, a quarter stays as bounce light. A light in view
    but another of a different colour hidden shifts the tint towards the one in view. Photon's licence allows this
    kind of derivative; nothing of the pack is changed on disk. */
@@ -434,7 +434,7 @@ static void add_photon_rt(mgl_shader *s)
     if (!end)
         return;
     static const char wrap[] =
-        "\n#define MCMETAL_LIGHT_IDS 32 79\n"
+        "\n#define MCMETAL_LIGHT_IDS 10032 10079\n"
         "int mcm_lights_near(vec3 p, int slot, out vec3 pos, out int blockId);\n"
         "float mcm_trace(vec3 origin, vec3 dir, float tmax);\n"
         "const vec3 mcm_photon_light[48] = vec3[48](\n"
@@ -467,7 +467,7 @@ static void add_photon_rt(mgl_shader *s)
         "    dir[n] = d / max(dist[n], 1e-4);\n"
         "    float fade = clamp(1.0 - dist[n] / 15.0, 0.0, 1.0);\n"
         "    float ndl = dist[n] < 0.9 ? 1.0 : max(dot(normal, dir[n]), 0.0);\n"
-        "    c[n] = mcm_photon_light[clamp(id - 32, 0, 47)] * fade * fade * ndl / (0.25 * dist[n] * dist[n] + 1.0);\n"
+        "    c[n] = mcm_photon_light[clamp(id - 10032, 0, 47)] * fade * fade * ndl / (0.25 * dist[n] * dist[n] + 1.0);\n"
         "    w[n] = dot(c[n], vec3(0.2126, 0.7152, 0.0722));\n"
         "    if (w[n] <= 0.0) continue;\n"
         "    all_ += c[n]; total += w[n]; n++;\n"
