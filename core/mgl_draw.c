@@ -505,6 +505,24 @@ static void submit(mgl_draw *d)
     mglb_draw_gs(d, tris, p->x.gs_max_vertices, p->x.gs_record_floats);
 }
 
+/* a geometry-shader multi-draw as one job over a table of sections (already recorded for ray tracing) */
+static void submit_gs_sections(mgl_draw *d, int32_t (*sec)[4], int nsec, int slots)
+{
+    mgl_program *p = mgl_current_program();
+    GLint info[4] = {slots, d->index_type == GL_UNSIGNED_SHORT ? 1 : 2, 0, 0};
+    for (int i = 0; i < p->x.num_uniforms; i++)
+        if (!strcmp(p->x.uniforms[i].name, "mgl_draw_info") && p->x.uniforms[i].offset[MGL_COMPUTE] >= 0 &&
+            p->ublock[MGL_COMPUTE])
+            memcpy(p->ublock[MGL_COMPUTE] + p->x.uniforms[i].offset[MGL_COMPUTE], info, sizeof info);
+    memcpy(d->local_size, p->x.local_size, sizeof d->local_size);
+    d->count = slots * 3;
+    d->gs_sec = (const int32_t (*)[4])sec;
+    d->gs_sec_n = nsec;
+    mglb_draw_gs(d, slots, p->x.gs_max_vertices, p->x.gs_record_floats);
+    d->gs_sec = NULL;
+    d->gs_sec_n = 0;
+}
+
 static void draw(GLenum mode, GLsizei count, GLenum type, const void *indices, GLint first, GLint basevertex,
                  GLsizei instances)
 {
@@ -613,6 +631,14 @@ void glMultiDrawElementsBaseVertex(GLenum mode, const GLsizei *count, GLenum typ
         /* GPU chunk culling: sections out of the pass's view are skipped (still recorded for ray tracing) */
         unsigned char keep_small[256], *keep = drawcount <= 256 ? keep_small : malloc((size_t)drawcount);
         int culled = keep && type == GL_UNSIGNED_INT && mgl_cull_take_cpu(count, drawcount, ib->mem, keep);
+        /* MGL_GS_BATCH_SECTIONS=0: one job per section. Default: one job per call, the sections packed as a table
+           (SEUS's shadow pass: ~1700 jobs a frame -> ~100) */
+        static int one_job = -1;
+        if (one_job < 0)
+            one_job = !getenv("MGL_GS_BATCH_SECTIONS") || atoi(getenv("MGL_GS_BATCH_SECTIONS")) != 0;
+        int esize = type == GL_UNSIGNED_SHORT ? 2 : 4;
+        int32_t (*sec)[4] = one_job ? malloc(sizeof *sec * (size_t)(drawcount + 1)) : NULL;
+        int nsec = 0, slots = 0;
         for (GLsizei i = 0; i < drawcount; i++) {
             if (count[i] <= 0)
                 continue;
@@ -621,9 +647,24 @@ void glMultiDrawElementsBaseVertex(GLenum mode, const GLsizei *count, GLenum typ
             d.base_vertex = bv[i];
             if (culled && !keep[i])
                 mgl_rt_record(p, &d);
-            else
+            else if (!sec || count[i] < 3)
                 submit(&d);
+            else {
+                mgl_rt_record(p, &d);
+                int tris = count[i] / 3;
+                if (slots > INT32_MAX - tris - 2)
+                    break;
+                sec[nsec][0] = slots;
+                sec[nsec][1] = tris;
+                sec[nsec][2] = bv[i];
+                sec[nsec][3] = (int32_t)((size_t)ind[i] / (size_t)esize);
+                nsec++;
+                slots += (tris + 1) & ~1; /* sections start on an even slot: the vertex sharing pairs triangles */
+            }
         }
+        if (nsec)
+            submit_gs_sections(&d, sec, nsec, slots);
+        free(sec);
         if (keep != keep_small)
             free(keep);
         return;

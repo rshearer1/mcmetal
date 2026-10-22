@@ -3463,6 +3463,9 @@ static int gsc_key(const mgl_draw *d, const int32_t desc[16][4], int triangles, 
     gsc_hash h = {0x243F6A8885A308D3ull, 0x13198A2E03707344ull}, hb = h, hu = h;
     GSC_MIX(&h, d->program->id); /* never reused, unlike a freed program's address */
     GSC_MIX(&h, triangles);
+    GSC_MIX(&h, d->gs_sec_n);
+    if (d->gs_sec_n)
+        gsc_mix(&h, d->gs_sec, sizeof(int32_t) * 4 * (size_t)d->gs_sec_n);
     gsc_mix(&h, desc, sizeof(int32_t) * 16 * 4);
     for (int i = 0; i < d->num_vbufs && i < 4; i++) {
         const mglb_buffer *b = d->vbufs[i].buf;
@@ -3653,6 +3656,25 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
         use_buffer(d->index_buf);
         [c setBuffer:ovb offset:ovo atIndex:MGL_BUF_INTERNAL_BASE + 6];
         [c setBuffer:ocb offset:oco atIndex:MGL_BUF_INTERNAL_BASE + 7];
+        { /* the section table (mgl_sec): [0].x = count, then 4 ints per section; a single draw gets count 0 */
+            size_t tb = 16 * ((size_t)d->gs_sec_n + 1);
+            if (tb <= 4096) {
+                int32_t t[1024];
+                memset(t, 0, 16);
+                t[0] = d->gs_sec_n;
+                if (d->gs_sec_n)
+                    memcpy(t + 4, d->gs_sec, tb - 16);
+                [c setBytes:t length:tb atIndex:MGL_BUF_INTERNAL_BASE + 8];
+            } else {
+                transient_t tt = transient(tb);
+                if (tt.buf) {
+                    int32_t head[4] = {d->gs_sec_n, 0, 0, 0};
+                    memcpy(tt.ptr, head, 16);
+                    memcpy((char *)tt.ptr + 16, d->gs_sec, tb - 16);
+                }
+                [c setBuffer:tt.buf ? tt.buf : ovb offset:tt.buf ? tt.off : 0 atIndex:MGL_BUF_INTERNAL_BASE + 8];
+            }
+        }
         NSUInteger lx = (NSUInteger)(d->local_size[0] > 0 ? d->local_size[0] : 64);
         [c dispatchThreadgroups:MTLSizeMake(((NSUInteger)triangles + lx - 1) / lx, 1, 1)
           threadsPerThreadgroup:MTLSizeMake(lx, 1, 1)];
