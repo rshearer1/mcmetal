@@ -4010,6 +4010,7 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
         if (gs_concurrent < 0)
             gs_concurrent = !getenv("MGL_GS_CONCURRENT") || atoi(getenv("MGL_GS_CONCURRENT")) != 0;
         id<MTLComputeCommandEncoder> c = compute_encoder_kind(gs_concurrent);
+        pt_label("geometry-shader compute"); /* MGL_PROFILE=2/3: name its pass (it holds every GS job until the strips) */
         keep_clears = 0;
         gs_recording = 0;
         [c setComputePipelineState:OBJ(id<MTLComputePipelineState>, d->program->compute)];
