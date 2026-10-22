@@ -543,6 +543,7 @@ recorded:;
    their generation, so a range reused for other vertices never matches an acceleration structure built before. */
 void mgl_rt_note_write(mglb_buffer *m, size_t offset, size_t size)
 {
+    mgl_draw_note_write(m);
     write_epoch++;
     int n = 0;
     for (int i = 0; i < num_draws; i++) {
