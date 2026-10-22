@@ -3841,16 +3841,24 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
             }
             double half = 0.5 / fps;
             draw_to_drawable(c, mid, drawable);
-            [current_cb() presentDrawable:drawable afterMinimumDuration:half];
-            commit(); /* send the made-up frame on its way before waiting for the second drawable */
-            uint64_t t_d2 = now_ns();
-            drawable = [c->layer nextDrawable];
-            prof.wait_ns += now_ns() - t_d2;
-            pace_wait_ns += now_ns() - t_d2;
-            if (drawable) {
-                watch_drawable(drawable);
-                draw_to_drawable(c, OBJ(id<MTLTexture>, mgl->window_color->mtl), drawable);
+            static int show_mid = -1;
+            if (show_mid < 0)
+                show_mid = opt("MCMETAL_FG_SHOW_MID");
+            if (show_mid) { /* test: show only made-up frames (test screenshots of the upscaled frame then see them) */
+                [current_cb() presentDrawable:drawable afterMinimumDuration:2 * half];
+                drawable = nil;
+            } else {
                 [current_cb() presentDrawable:drawable afterMinimumDuration:half];
+                commit(); /* send the made-up frame on its way before waiting for the second drawable */
+                uint64_t t_d2 = now_ns();
+                drawable = [c->layer nextDrawable];
+                prof.wait_ns += now_ns() - t_d2;
+                pace_wait_ns += now_ns() - t_d2;
+                if (drawable) {
+                    watch_drawable(drawable);
+                    draw_to_drawable(c, OBJ(id<MTLTexture>, mgl->window_color->mtl), drawable);
+                    [current_cb() presentDrawable:drawable afterMinimumDuration:half];
+                }
             }
         } else
             draw_to_drawable(c, OBJ(id<MTLTexture>, mgl->window_color->mtl), drawable);
