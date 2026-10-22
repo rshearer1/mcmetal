@@ -37,6 +37,14 @@ else
     bash "$SRC/mod/build_mod.sh" "$WORK/mc/libraries" "$G/mods/mcmetal.jar" "$SRC/build" || exit 1
     LIBARGS=()
 fi
+# GAME_PROFILE=true (with GAME_BENCH): every GL call goes through glprof (tools/glprof.h: calls and CPU time per
+# function, frames, time in swap) and Java Flight Recorder samples the Java side; the measured window ends up in
+# glprof-report.txt and jfr-report.txt. The recording itself is deleted (it holds the environment).
+JFR_TOOL=${JAVA_HOME:+$JAVA_HOME/bin/}jfr
+if [ "${GAME_PROFILE:-}" = true ]; then
+    LIBARGS=(--gl "$SRC/build/libglprof-mcmetal.dylib" --glfw "$SRC/build/libglfw.dylib")
+    export MCMETAL_LIB="$SRC/build/libglprof-mcmetal.dylib" GLPROF_REAL="$SRC/build/libmcmetal.dylib"
+fi
 
 shots_in_world() { # screenshots taken after the first frame that drew terrain (any frame for the title screen)
     [ -f "$1" ] || { echo 0; return; }
@@ -58,9 +66,12 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     echo "=== phase $name: ${secs}s, world=${world:-none}, shaders=$shaders"
     MCMETAL_BACKGROUND=${MCMETAL_BACKGROUND-behind} \
     MGL_LOG="$OUT/$name/mgl.log" MGL_SHOT_DIR="$OUT/$name" MGL_SHOT_EVERY=${MGL_SHOT_EVERY-10} \
-    MGL_CACHE_DIR="$WORK/cache" MGL_DUMP_DIR="$OUT/$name/glsl" env ${GAME_ENV:-} "$@" \
+    local jvmx=()
+    [ "${GAME_PROFILE:-}" = true ] && jvmx=(-- -XX:FlightRecorderOptions=stackdepth=128
+        "-XX:StartFlightRecording=name=mcm,settings=profile,dumponexit=true,filename=$WORK/rec.jfr,jdk.ExecutionSample#period=10ms,jdk.NativeMethodSample#period=10ms")
+    MGL_CACHE_DIR="$WORK/cache" MGL_DUMP_DIR="$OUT/$name/glsl" GLPROF_OUT="$OUT/$name/glprof.txt" env ${GAME_ENV:-} "$@" \
         python3 -I "$SRC/tools/bare_mc.py" launch "$WORK" --java "$JAVA" "${wargs[@]}" \
-        ${LIBARGS[@]+"${LIBARGS[@]}"} > "$OUT/$name/launch.out" 2>&1 &
+        ${LIBARGS[@]+"${LIBARGS[@]}"} ${jvmx[@]+"${jvmx[@]}"} > "$OUT/$name/launch.out" 2>&1 &
     local t=0
     while [ $t -lt "$secs" ]; do
         sleep 5; t=$((t + 5))
@@ -72,7 +83,15 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
                 sleep "${GAME_BENCH_SETTLE:-10}"; t=$((t + ${GAME_BENCH_SETTLE:-10}))
                 bench_from=$(grep -c '\] fps ' "$WORK/client.log" 2>/dev/null)
                 echo "world on screen, measuring ${GAME_BENCH_SECS:-30}s"
+                cp "$OUT/$name/glprof.txt" "$OUT/$name/glprof-start.txt" 2>/dev/null; local from_s; from_s=$(date +%s)
                 sleep "${GAME_BENCH_SECS:-30}"
+                if [ "${GAME_PROFILE:-}" = true ]; then
+                    cp "$OUT/$name/glprof.txt" "$OUT/$name/glprof-end.txt" 2>/dev/null
+                    python3 -I "$SRC/tools/glprof_report.py" "$OUT/$name/glprof-start.txt" "$OUT/$name/glprof-end.txt" 60 \
+                        > "$OUT/$name/glprof-report.txt" 2>&1
+                    head -4 "$OUT/$name/glprof-report.txt"
+                    jfr_window="$from_s $((from_s + ${GAME_BENCH_SECS:-30}))" # the recording is written when the game exits
+                fi
                 # after measuring: where the CPU goes (native stacks, mcmetal symbolised) and what the Java render
                 # thread is doing, for phases whose frame time isn't GPU time
                 pid=$(cat "$WORK/client.pid" 2>/dev/null)
@@ -99,7 +118,16 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
         fi
     done
     pid=$(cat "$WORK/client.pid" 2>/dev/null); [ -n "$pid" ] && kill "$pid" 2>/dev/null; sleep 5
+    if [ "${GAME_PROFILE:-}" = true ]; then # give the JVM time to write the flight recording on its way out
+        for _ in 1 2 3 4 5; do [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && sleep 3; done
+    fi
     [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null
+    if [ -n "${jfr_window:-}" ] && [ -f "$WORK/rec.jfr" ]; then
+        # where the render thread's time went in the measured window
+        python3 -I "$SRC/tools/jfr_report.py" "$JFR_TOOL" "$WORK/rec.jfr" $jfr_window > "$OUT/$name/jfr-report.txt" 2>&1
+        head -12 "$OUT/$name/jfr-report.txt"
+    fi
+    rm -f "$WORK/rec.jfr"; jfr_window=
     cp "$WORK/client.log" "$OUT/$name/client.log" 2>/dev/null
     # mcmetal clears the mod's start marker once real screens are drawn; left behind, the next launch would
     # fall back to Apple's OpenGL, so report it and clear it for the next phase

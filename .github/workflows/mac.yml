@@ -29,6 +29,10 @@ on:
       look:
         description: 'camera, as tp rotation "yaw pitch" each tick (e.g. "~2 7" turns 2 degrees a tick); empty = scene default'
         default: ''
+      profile:
+        description: 'bench: also profile every GL call (glprof: calls, CPU time per frame) and the Java side (JFR); see glprof-report.txt, jfr-report.txt'
+        type: boolean
+        default: false
 defaults:
   run:
     shell: bash  # bash -eo pipefail: a failing build isn't hidden by `| tee`
@@ -99,6 +103,7 @@ jobs:
           path: |
             build/libmcmetal.dylib
             build/libglfw.dylib
+            build/libglprof-mcmetal.dylib
             build/gl_smoke
       - uses: actions/upload-artifact@v4
         if: always()
@@ -142,6 +147,7 @@ jobs:
           GAME_BENCH: ${{ github.event.inputs.bench }}
           GAME_BENCH_SETTLE: ${{ github.event.inputs.settle || 10 }}
           GAME_LONG: ${{ github.event.inputs.long }}
+          GAME_PROFILE: ${{ github.event.inputs.profile }}
           GAME_ENV: ${{ github.event.inputs.env }}
           GAME_LOOK: ${{ github.event.inputs.look }}
           GAME_AB_OFF: ${{ github.event.inputs.ab_off }}
