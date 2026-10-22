@@ -390,6 +390,28 @@ static int pending_clear_clears(const mglb_texture *x)
 static mglb_texture *hiz_src;
 static void hiz_build(void);
 
+/* MGL_GS_UNTRACKED=1: the transient chunks (geometry-shader records, upload staging) are made without Metal's
+   hazard tracking. With tracking, the next batch's compute job waits for the previous batch's strips pass to stop
+   reading the same 32 MB chunk, even though they touch different ranges of it. The one real dependency, the strips
+   reading the records their compute job wrote, is kept with a fence. Chunks are only reused once their command
+   buffer has finished (last_use), so the CPU side needs nothing more. */
+static int gs_untracked = -1;
+static id<MTLFence> gs_fence;
+static int gs_fence_due;   /* the open compute encoder wrote untracked records */
+static int gs_fence_armed; /* gs_fence was updated: the next strips pass waits for it */
+static void end_compute_encoder(void)
+{
+    if (!cenc)
+        return;
+    if (gs_fence_due) {
+        [cenc updateFence:gs_fence];
+        gs_fence_due = 0;
+        gs_fence_armed = 1;
+    }
+    [cenc endEncoding];
+    cenc = nil;
+}
+
 static void end_encoders_at(int line)
 {
     if (!gs_recording)
@@ -408,7 +430,7 @@ static void end_encoders_at(int line)
     int hiz_now = renc && hiz_src && renc_target.depth == hiz_src;
     if (renc) { [renc endEncoding]; renc = nil; }
     if (benc) { [benc endEncoding]; benc = nil; }
-    if (cenc) { [cenc endEncoding]; cenc = nil; }
+    end_compute_encoder();
     if (hiz_now)
         hiz_build();
 }
@@ -497,7 +519,7 @@ static id<MTLComputeCommandEncoder> compute_encoder_kind(int concurrent)
         gs_flush();
     if (cenc && cenc_concurrent == concurrent)
         return cenc;
-    if (cenc) { [cenc endEncoding]; cenc = nil; }
+    end_compute_encoder();
     prof_serialize();
     end_encoders();
     id<MTLCommandBuffer> c = current_cb();
@@ -517,6 +539,8 @@ static id<MTLComputeCommandEncoder> compute_encoder_kind(int concurrent)
         }
     }
     cenc_concurrent = concurrent;
+    if (gs_fence_armed) /* a compute encoder between a GS job and its strips: keep the chain ordered */
+        [cenc waitForFence:gs_fence];
     prof.computes++;
     return cenc;
 }
@@ -667,6 +691,22 @@ static int tr_n, tr_cur = -1;
 
 typedef struct { id<MTLBuffer> buf; NSUInteger off; void *ptr; } transient_t;
 
+static mglb_buffer *tr_chunk_untracked(void)
+{
+    id<MTLBuffer> m = [dev newBufferWithLength:TR_CHUNK
+                                       options:MTLResourceStorageModeShared | MTLResourceHazardTrackingModeUntracked];
+    if (!m)
+        return mglb_buffer_new(TR_CHUNK);
+    if (!gs_fence)
+        gs_fence = [dev newFence];
+    struct mglb_buffer *b = calloc(1, sizeof *b);
+    b->mtl = retain_obj(m);
+    b->ptr = m.contents;
+    b->size = b->cap = TR_CHUNK;
+    buf_live_bytes += TR_CHUNK;
+    return b;
+}
+
 static transient_t transient(size_t size)
 {
     current_cb(); /* cb_serial is this command buffer's */
@@ -689,7 +729,9 @@ static transient_t transient(size_t size)
             if (tr_chunk[i].b->last_use <= done)
                 k = i;
         if (k < 0 && tr_n < TR_MAX) {
-            mglb_buffer *b = mglb_buffer_new(TR_CHUNK);
+            if (gs_untracked < 0)
+                gs_untracked = getenv("MGL_GS_UNTRACKED") && atoi(getenv("MGL_GS_UNTRACKED")) != 0;
+            mglb_buffer *b = gs_untracked ? tr_chunk_untracked() : mglb_buffer_new(TR_CHUNK);
             if (b) {
                 k = tr_n++;
                 tr_chunk[k].b = b;
@@ -3784,6 +3826,7 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
         ce->frame = gsc_frame;
         ce->serial = cb_serial;
     }
+    int rec_transient = !ovb;
     if (!ovb) {
         transient_t ov = transient(out_bytes), oc = transient((size_t)triangles * 4);
         if (!ov.buf || !oc.buf)
@@ -3866,6 +3909,8 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
         NSUInteger lx = (NSUInteger)(d->local_size[0] > 0 ? d->local_size[0] : 64);
         [c dispatchThreadgroups:MTLSizeMake(((NSUInteger)triangles + lx - 1) / lx, 1, 1)
           threadsPerThreadgroup:MTLSizeMake(lx, 1, 1)];
+        if (rec_transient && gs_untracked > 0 && gs_fence)
+            gs_fence_due = 1;
     }
 
     /* 2. draw the emitted strips: no vertex fetch, records come from buffers 27/28. Kept for gs_flush, with its
@@ -3970,6 +4015,10 @@ static void gs_flush_at(int line)
     NSArray<gs_play> *list = gs_pending;
     gs_pending = [NSMutableArray new];
     id<MTLRenderCommandEncoder> e = pass_for(&gs_target);
+    if (gs_fence_armed) { /* the records' compute job ended when this pass began */
+        [e waitForFence:gs_fence beforeStages:MTLRenderStageVertex];
+        gs_fence_armed = 0;
+    }
     for (gs_play f in list)
         f(e);
     flushing = 0;
