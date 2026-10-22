@@ -2,6 +2,7 @@
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
 #   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders
 #   pack-NAME packnight-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
+#   glcount-pack-NAME (the pack on Apple's OpenGL, draws counted by tools/glcount.c)
 #   ab-pack-NAME ab-packnight-NAME (the pack three times in one job: new, old = with GAME_AB_OFF's env, new)
 #   archive-NAME (pipeline binary archive: cold, warm, warm without archive)
 #   (default: the first three)
@@ -235,6 +236,14 @@ for p in $PHASES; do
     nether-shaders) scene noon clear nether; run_phase nether-shaders 240 metal true ;;      # Nether room, Complementary
     dh) dh_phase dh false ;;                    # Distant Horizons, Sodium
     dh-shaders) dh_phase dh-shaders true ;;     # Distant Horizons + Complementary
+    glcount-*) # the pack on Apple's OpenGL through tools/glcount.c, which logs draws and triangles per second (all,
+               # and into shadow-map-sized viewports) to glcount.log: what Iris and Sodium draw on real OpenGL
+        clang -dynamiclib -o "$WORK/libglcount.dylib" "$SRC/tools/glcount.c" -framework OpenGL -Wl,-reexport_framework,OpenGL
+        inner=${p#glcount-}
+        LIBARGS=(--gl "$WORK/libglcount.dylib")
+        third_party "$inner" "$p" MCMETAL_DISABLE=1 GLCOUNT_LOG="$OUT/$p/glcount.log"
+        LIBARGS=()
+        tail -5 "$OUT/$p/glcount.log" 2>/dev/null ;;
     ab-*) # A/B in one job (separate jobs run on machines up to ~30% apart): ab-pack-NAME runs the pack with this
           # change (new), with GAME_AB_OFF's env (old, e.g. MGL_TEX_COMPRESS=0), then new again; compare in fps.txt
         inner=${p#ab-}

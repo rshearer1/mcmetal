@@ -58,6 +58,7 @@ static int opt_profile = -1;
 static struct {
     unsigned long draws, passes, reopened, dontcare, blits, computes, cbs, finishes, skipped_presents;
     unsigned long gs_draws, gs_tris, gs_bytes; /* geometry-shader draws, their input triangles and record bytes */
+    unsigned long sh_draws, sh_tris; /* draws and triangles into square targets of 1024+ (shadow maps), as tools/glcount.c counts */
     unsigned long tex_views, pipe_lookups, big_uniforms; /* per-draw texture views made, pipeline dictionary lookups, >4 KB uniform copies */
     uint64_t wait_ns, start_ns, frames;
 } prof;
@@ -2907,6 +2908,16 @@ void mglb_draw(const mgl_draw *d)
     if (probe || log_program(d))
         log_probe_draw(d);
     frame_sections += d->multi_n > 0 ? d->multi_n : 0;
+    if (opt_profile > 0 && d->primitive == GL_TRIANGLES && d->viewport[2] == d->viewport[3] && d->viewport[2] >= 1024) {
+        long n = 0;
+        if (d->multi_n > 0)
+            for (int i = 0; i < d->multi_n; i++)
+                n += d->multi_count[i];
+        else
+            n = (long)d->count * (d->instances > 0 ? d->instances : 1);
+        prof.sh_draws += d->multi_n > 0 ? (unsigned long)d->multi_n : 1;
+        prof.sh_tris += (unsigned long)(n / 3);
+    }
     if (d->multi_n > 0) {
         id<MTLBuffer> ib = OBJ(id<MTLBuffer>, d->index_buf->mtl);
         MTLIndexType it = d->index_type == GL_UNSIGNED_SHORT ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32;
@@ -4631,6 +4642,9 @@ static void profile_frame(unsigned long draws)
             f * 1000.0 / ((double)(t - prof.start_ns) * 1e-6), ms, (double)prof.wait_ns * 1e-6 / f,
             (double)atomic_load(&prof_gpu_ns) * 1e-6 / f, prof.draws / f, prof.passes / f, prof.reopened / f, prof.dontcare / f,
             prof.blits / f, prof.computes / f, prof.cbs / f, prof.finishes / f, 100.0 * prof.skipped_presents / f);
+    if (prof.sh_draws)
+        mgl_log("profile: shadow-sized viewports (without geometry shaders) %.0f draws, %.0fk triangles per frame",
+                prof.sh_draws / f, prof.sh_tris / f * 1e-3);
     if (prof.gs_draws)
         mgl_log("profile: geometry shaders %.0f draws, %.0fk input triangles, %.1f MB of records per frame", prof.gs_draws / f,
                 prof.gs_tris / f * 1e-3, prof.gs_bytes / f / 1048576.0);
