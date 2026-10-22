@@ -99,8 +99,9 @@ static void *worker(void *arg)
 
 /* at exit: let queued and running compiles finish. exit() otherwise tears down glslang's and Metal's globals
    under a worker that is still using them (gl_smoke crashed with exit code 139 after its last check; a game
-   quit while a shader pack compiles can too). */
-static void drain_jobs(void)
+   quit while a shader pack compiles can too). The binary archive's exit save calls it too, so pipelines these
+   jobs add are saved. */
+void mgl_program_drain(void)
 {
     pthread_mutex_lock(&job_lock);
     while (queue_head || jobs_running)
@@ -115,19 +116,22 @@ static int async_link(void)
         const char *e = getenv("MGL_ASYNC_LINK");
         long n = sysconf(_SC_NPROCESSORS_ONLN) - 1; /* leave the render thread its core */
         workers = e && *e == '0' ? 0 : n < 1 ? 1 : n > 15 ? 15 : (int)n;
-        for (int i = 0; i < workers; i++) {
+        /* without a way to drain them at exit, link on the caller's thread */
+        int want = workers > 0 && atexit(mgl_program_drain) == 0 ? workers : 0;
+        workers = 0;
+        for (int i = 0; i < want; i++) {
             pthread_t t;
             pthread_attr_t a;
             pthread_attr_init(&a);
             pthread_attr_setstacksize(&a, 16u << 20); /* glslang/SPIRV-Cross recurse deeply on big shaders */
-            if (pthread_create(&t, &a, worker, NULL) == 0)
+            if (pthread_create(&t, &a, worker, NULL) == 0) {
                 pthread_detach(t);
+                workers++; /* only threads that exist take jobs */
+            }
             pthread_attr_destroy(&a);
         }
-        if (workers) {
-            atexit(drain_jobs);
+        if (workers)
             mgl_log("compiling programs on %d background threads", workers);
-        }
     }
     return workers;
 }

@@ -217,6 +217,7 @@ void mgl_rt_note_write(mglb_buffer *m, size_t offset, size_t size);
 void mgl_rt_end_frame(void); /* called by the backend before present */
 /* Waits for a program's background compile and applies it; draws and dispatches call this before using p->gpu. */
 void mgl_program_wait(mgl_program *p);
+void mgl_program_drain(void); /* waits for every background link job */
 /* mgl_readback.c: timed window screenshots (MGL_SHOT_DIR), called by the backend before each present */
 void mgl_shot_tick(void);
 int mgl_write_png(const char *path, const unsigned char *rgba_bottom_up, int w, int h);
