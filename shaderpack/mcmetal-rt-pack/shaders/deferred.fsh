@@ -70,9 +70,16 @@ void main() {
     vec4 h = texture(colortex3, puv * GI_SCALE);
     bool valid = all(greaterThan(puv, vec2(0.0))) && all(lessThan(puv, vec2(1.0)))
               && abs(h.b - length(prevPlayer)) < 0.05 * dist + 0.1;
-#if defined USE_RT && defined GI_CHECKERBOARD
-    // half the pixels each frame trace a new ray; the other half keep their running average (where it's still valid)
-    if (valid && ((int(gl_FragCoord.x) + int(gl_FragCoord.y) + frameCounter) & 1) == 1) {
+#if defined USE_RT && GI_RATE > 1
+    // 1 in GI_RATE pixels each frame trace a new ray (a checkerboard for 2, one pixel of each 2x2 for 4); the
+    // rest keep their running average (where it's still valid)
+    ivec2 q = ivec2(gl_FragCoord.xy);
+  #if GI_RATE == 2
+    bool skip = ((q.x + q.y + frameCounter) & 1) == 1;
+  #else
+    bool skip = ((q.x & 1) + 2 * (q.y & 1)) != (frameCounter & 3);
+  #endif
+    if (valid && skip) {
         outAO = vec4(h.r, h.g, dist, 1.0);
         outGI = vec4(texture(colortex4, puv * GI_SCALE).rgb, 1.0);
         return;
