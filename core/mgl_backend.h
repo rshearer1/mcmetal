@@ -219,9 +219,17 @@ typedef struct mgl_cull_draw {
 } mgl_cull_draw;
 typedef struct mgl_cull_pass {
     float planes[6][4];    /* keep a box unless it is fully outside one of these (x, y, z, d: dot + d < 0 outside) */
-    int flags;
+    int flags;             /* MGL_CULL_SHADOW, MGL_CULL_TRANSLUCENT, MGL_CULL_OCCLUSION */
+    float mvp[16];         /* the pass's projection * modelView (column-major, camera-relative) */
+    double cam[3];         /* camera position, blocks */
 } mgl_cull_pass;
+#define MGL_CULL_SHADOW 1
+#define MGL_CULL_TRANSLUCENT 2
+#define MGL_CULL_OCCLUSION 4 /* MCMETAL_GPU_OCCLUSION: also test main-view boxes against last frame's depth */
 int mglb_cull_supported(void);
+/* A terrain pass begins (op 1, before mglb_cull_run, even when nothing is prepared) or has drawn (op 2). The
+   backend keeps the main view's depth after its opaque terrain for the next frame's occlusion test. */
+void mglb_cull_mark(int op, const mgl_cull_pass *p);
 /* Culls `n` section draws of `nregions` regions (index buffers in ibufs[], 32-bit indices) and writes the
    indirect draw arguments. Returns a base that, added to a draw's index, names its entry (opaque to the front end),
    or -1 when culling can't run now (draw normally). */

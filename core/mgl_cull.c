@@ -8,16 +8,17 @@
 #include <string.h>
 #include "mgl_state.h"
 
-#define CULL_VERSION 1
+#define CULL_VERSION 2 /* 1: no camera position (no occlusion culling) */
 #define CULL_HEADER 128 /* bytes before the first region record */
 
 /* Layouts written by CullHooks.java (little-endian, native memory). */
 typedef struct cull_header {
     int32_t op;         /* 1 = prepare a pass, 2 = pass finished */
-    int32_t flags;      /* bit 0: shadow pass */
+    int32_t flags;      /* bit 0: shadow pass, bit 1: translucent pass */
     int32_t nregions;
     int32_t version;
     float mvp[16];      /* column-major projection * modelView of the pass (camera-relative positions) */
+    double cam[3];      /* camera position, blocks (version 2) */
 } cull_header;
 typedef struct cull_region_rec {
     int64_t count, offset, base;   /* Sodium's MultiDrawBatch arrays: GLsizei[n], index byte offsets[n], GLint[n] */
@@ -42,6 +43,7 @@ typedef struct cull_region {
 
 static struct {
     int on;             /* -1 unknown, 0 off, 1 on */
+    int occlusion;      /* MCMETAL_GPU_OCCLUSION: also skip main-view sections hidden behind last frame's depth */
     int active;
     cull_region *regions;
     int nregions, cap_regions, next;
@@ -59,6 +61,10 @@ static int cull_enabled(void)
         const char *e = getenv("MCMETAL_GPU_CULL");
         cull.on = e && *e && *e != '0' && mglb_cull_supported();
         mgl_log("GPU chunk culling %s", cull.on ? "on" : e && *e && *e != '0' ? "requested, but this GPU can't" : "off");
+        const char *o = getenv("MCMETAL_GPU_OCCLUSION");
+        cull.occlusion = cull.on && o && *o && *o != '0';
+        if (cull.on)
+            mgl_log("GPU occlusion culling %s", cull.occlusion ? "on" : "off");
     }
     return cull.on;
 }
@@ -108,11 +114,26 @@ GLAPI int64_t mcmGpuCull(const void *cmd)
     if (!h)
         return 0;
     if (h->op == 2) {
+        if (cull.active)
+            mglb_cull_mark(2, &cull.pass);
         cull.active = 0;
         return 0;
     }
     cull.active = 0;
-    if (h->op != 1 || h->version != CULL_VERSION || !cull_enabled() || h->nregions <= 0)
+    if (h->op != 1 || h->version < 1 || h->version > CULL_VERSION || !cull_enabled())
+        return 0;
+    mgl_cull_pass p;
+    planes_from(h->mvp, p.planes);
+    p.flags = h->flags & 3;
+    memcpy(p.mvp, h->mvp, sizeof p.mvp);
+    p.cam[0] = p.cam[1] = p.cam[2] = 0.0;
+    if (h->version >= 2) {
+        memcpy(p.cam, h->cam, sizeof p.cam);
+        if (cull.occlusion)
+            p.flags |= MGL_CULL_OCCLUSION;
+    }
+    mglb_cull_mark(1, &p); /* even with nothing to prepare: a translucent pass is about to draw */
+    if (h->nregions <= 0)
         return 0;
     cull.passes++;
     log_stats();
@@ -169,9 +190,6 @@ GLAPI int64_t mcmGpuCull(const void *cmd)
     }
     if (!nr)
         return 0;
-    mgl_cull_pass p;
-    planes_from(h->mvp, p.planes);
-    p.flags = h->flags;
     /* MGL_CULL_PROBE (timing only, pictures are wrong): 1 drops every section of the main view's terrain passes,
        2 of the shadow passes, so the GPU time they cost shows; it bounds what finer culling could save */
     static int probe = -1;

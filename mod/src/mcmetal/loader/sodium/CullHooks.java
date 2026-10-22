@@ -89,19 +89,22 @@ public final class CullHooks {
             MemoryUtil.memPutFloat(r + 56, (float) (region.getOriginZ() - camera.intZ) - camera.fracZ);
             n++;
         }
-        if (n == 0)
-            return;
+        // sent even with nothing to prepare: mcmetal needs to know a translucent pass is about to draw
         boolean shadow = false;
         if (iris == 0)
             iris = present("net.irisshaders.iris.shadows.ShadowRenderingState") ? 1 : 2;
         if (iris == 1)
             shadow = net.irisshaders.iris.shadows.ShadowRenderingState.areShadowsCurrentlyBeingRendered();
         MemoryUtil.memPutInt(buf, 1);
-        MemoryUtil.memPutInt(buf + 4, shadow ? 1 : 0);
+        MemoryUtil.memPutInt(buf + 4, (shadow ? 1 : 0) | (pass.isTranslucent() ? 2 : 0));
         MemoryUtil.memPutInt(buf + 8, n);
-        MemoryUtil.memPutInt(buf + 12, 1);
+        MemoryUtil.memPutInt(buf + 12, 2);
         Matrix4f mvp = new Matrix4f(matrices.projection()).mul(matrices.modelView());
         putMatrix(buf + 16, mvp);
+        // camera position, for the next frame's occlusion test against this frame's depth
+        MemoryUtil.memPutDouble(buf + 80, camera.intX + (double) camera.fracX);
+        MemoryUtil.memPutDouble(buf + 88, camera.intY + (double) camera.fracY);
+        MemoryUtil.memPutDouble(buf + 96, camera.intZ + (double) camera.fracZ);
         prepared = JNI.invokePP(buf, fn) > 0;
     }
 
@@ -124,7 +127,7 @@ public final class CullHooks {
         }
         endCmd = MemoryUtil.nmemCalloc(1, HEADER);
         MemoryUtil.memPutInt(endCmd, 2);
-        MemoryUtil.memPutInt(endCmd + 12, 1);
+        MemoryUtil.memPutInt(endCmd + 12, 2);
         tables = new WeakHashMap<>();
         grow(HEADER + 256 * REGION);
         fn = f;
