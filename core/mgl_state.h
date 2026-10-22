@@ -134,6 +134,7 @@ typedef struct mgl_program {
     char debug_name[64];        /* glObjectLabel (Iris names its programs, e.g. "gbuffers_water") */
     int *name_hash;             /* glGetUniformLocation: open-addressed table of x.uniforms/x.textures indices + 1, built on first use */
     unsigned name_hash_mask;
+    int jitter_loc;             /* mcm_jitter's location + 1 (MCMETAL_UPSCALE=2), 0 = not looked up yet, -1 = none */
 } mgl_program;
 
 typedef struct mgl_query {
@@ -212,6 +213,7 @@ void mgl_window_resize(int w, int h);
 
 /* mgl_rt.c */
 void mgl_rt_link(mgl_program *p);
+void mgl_program_jitter(mgl_program *p, GLuint name, const mgl_target *t, int world); /* MCMETAL_UPSCALE=2, see mgl_program.c */
 void mgl_rt_record(mgl_program *p, const mgl_draw *d);
 void mgl_rt_note_write(mglb_buffer *m, size_t offset, size_t size);
 void mgl_rt_end_frame(void); /* called by the backend before present */

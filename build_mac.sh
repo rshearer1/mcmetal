@@ -76,6 +76,30 @@ w = w.replace("    window->ns.scaleFramebuffer = wndconfig->scaleFramebuffer;\n"
               "    if (retina && !strcmp(retina, \"0\")) window->ns.scaleFramebuffer = GLFW_FALSE;\n", 1)
 open(g + "/cocoa_window.m", "w").write(w)
 PY
+# MCMETAL_UPSCALE + MCMETAL_UPSCALE_SCALE=N: the framebuffer GLFW reports is N% of the Retina size each way
+# (default 50 = the point size), matching what libmcmetal renders (update_size in mac/mgl_metal.m).
+grep -q MCMETAL_UPSCALE_SCALE $G/cocoa_window.m || python3 - "$G" <<'PY'
+import sys
+g = sys.argv[1]
+w = open(g + "/cocoa_window.m").read()
+w = w.replace(": contentRect)", ": mcmetalFramebufferRect(window, contentRect))")
+w = w.replace("#include <string.h>\n",
+              "#include <string.h>\n#include <stdlib.h>\n#include <math.h>\n\n"
+              "static NSRect mcmetalFramebufferRect(_GLFWwindow* window, NSRect r)\n"
+              "{\n"
+              "    const char* up = getenv(\"MCMETAL_UPSCALE\");\n"
+              "    if (!up || atoi(up) <= 0) return r;\n"
+              "    const char* e = getenv(\"MCMETAL_UPSCALE_SCALE\");\n"
+              "    int pct = e ? atoi(e) : 50;\n"
+              "    pct = pct < 34 ? 34 : pct > 100 ? 100 : pct;\n"
+              "    const double s = [window->ns.object backingScaleFactor];\n"
+              "    if (s <= 1) return r; // no Retina: no upscaler (libmcmetal does the same)\n"
+              "    r.size.width = floor(r.size.width * s * pct / 100.0);\n"
+              "    r.size.height = floor(r.size.height * s * pct / 100.0);\n"
+              "    return r;\n"
+              "}\n", 1)
+open(g + "/cocoa_window.m", "w").write(w)
+PY
 GLFW_SRC=(context.c init.c input.c monitor.c platform.c vulkan.c window.c egl_context.c osmesa_context.c
           null_init.c null_monitor.c null_window.c null_joystick.c cocoa_time.c posix_module.c posix_thread.c
           cocoa_init.m cocoa_joystick.m cocoa_monitor.m cocoa_window.m nsgl_context.m)

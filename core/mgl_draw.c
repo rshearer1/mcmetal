@@ -425,6 +425,8 @@ static int build_draw(mgl_draw *d)
         o->type = k == 2 ? as_unsigned[o->type] : as_signed[o->type];
     }
 
+    if (mgl_tu_jitter_on()) /* world geometry (depth tested or written) moves with the temporal upscaler's jitter */
+        mgl_program_jitter(p, mgl->current_program, &d->target, d->depth_test || d->depth_write);
     gather_uniforms(d, p);
     d->uses_scene = p->x.uses_scene;
     gather_textures(d, p, 0);
