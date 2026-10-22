@@ -1939,6 +1939,12 @@ static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_targ
         return ps;
     }
 
+    if (!d->program->vfn) { /* a compute-only program: GL_INVALID_OPERATION, not a Metal assertion */
+        static int warned;
+        if (!warned++)
+            mgl_log("%s: draw with a program that has no vertex stage", d->program->label);
+        return nil;
+    }
     MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
     pd.vertexFunction = OBJ(id<MTLFunction>, d->program->vfn);
     if (d->program->vlib) {

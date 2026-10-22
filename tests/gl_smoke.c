@@ -814,6 +814,7 @@ int main(int argc, char **argv)
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof tri_idx, tri_idx, GL_STATIC_DRAW);
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
         glClear(GL_COLOR_BUFFER_BIT);
+        glUseProgram(p); /* read_texture left its compute program bound */
         const GLsizei counts[2] = {3, 3};
         const void *offs[2] = {(void *)0, (void *)(3 * sizeof(GLushort))};
         const GLint bases[2] = {0, 0};
