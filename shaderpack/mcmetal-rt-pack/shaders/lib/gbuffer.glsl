@@ -28,6 +28,10 @@ out vec4 tint;
 out vec3 normalW;
 out vec3 playerPos;
 flat out int mat;
+#if defined OPAQUE && defined LABPBR
+in vec4 at_tangent;
+out vec4 tangentW;   // xyz tangent in player space, w handedness
+#endif
 #if defined FORWARD && !defined UNLIT
 flat out vec3 sunCol, skyAmb;
 #endif
@@ -51,6 +55,9 @@ void main() {
     vec3 viewPos = (gl_ModelViewMatrix * gl_Vertex).xyz;
     playerPos = mat3(gbufferModelViewInverse) * viewPos + gbufferModelViewInverse[3].xyz;
     normalW = mat3(gbufferModelViewInverse) * normalize(gl_NormalMatrix * gl_Normal);
+#if defined OPAQUE && defined LABPBR
+    tangentW = vec4(mat3(gbufferModelViewInverse) * normalize(gl_NormalMatrix * at_tangent.xyz), at_tangent.w);
+#endif
     mat = MATERIAL;
 #ifdef TERRAIN
     int id = int(mc_Entity.x + 0.5);
@@ -84,15 +91,20 @@ in vec4 tint;
 in vec3 normalW;
 in vec3 playerPos;
 flat in int mat;
+#if defined OPAQUE && defined LABPBR
+in vec4 tangentW;
+uniform sampler2D normals, specular;   // LabPBR resource packs (Iris binds flat defaults without one)
+#endif
 #if defined FORWARD && !defined UNLIT
 flat in vec3 sunCol, skyAmb;
 #endif
 
 #if defined OPAQUE
-/* RENDERTARGETS: 0,1,2 */
+/* RENDERTARGETS: 0,1,2,10 */
 layout(location = 0) out vec4 outAlbedo;
 layout(location = 1) out vec4 outNormalLight;
 layout(location = 2) out vec4 outMaterial;
+layout(location = 3) out vec4 outPBR;   // colortex10: xy normal with the normal map, z smoothness, w F0/metal (LabPBR)
 #elif defined KEEP_MATERIAL
 /* RENDERTARGETS: 0,2 */
 layout(location = 0) out vec4 outColor;
@@ -141,7 +153,29 @@ void main() {
   #endif
     outAlbedo = vec4(c.rgb, 1.0);
     outNormalLight = vec4(octEncode(n), lmcoord);
-    outMaterial = vec4(float(mat) / 255.0, ao, puddle, 1.0);
+    // LabPBR: normal map (tangent space xy, AO in b), smoothness / F0 / emission from the specular map
+    vec3 nm = n;
+    vec4 spec = vec4(0.0);
+  #ifdef LABPBR
+    {
+        vec4 nt = texture(normals, texcoord);
+        vec2 xy = nt.xy * 2.0 - 1.0;
+        vec3 tn = vec3(xy, sqrt(max(1.0 - dot(xy, xy), 0.0)));
+        vec3 t = tangentW.xyz - n * dot(tangentW.xyz, n);
+        if (dot(t, t) > 1e-6 && nt.a > 0.0) {
+            t = normalize(t);
+            vec3 b = cross(n, t) * (tangentW.w < 0.0 ? -1.0 : 1.0);
+            nm = normalize(t * tn.x + b * tn.y + n * tn.z);
+            ao *= nt.b;
+        }
+        spec = texture(specular, texcoord);
+        if (spec.a > 254.5 / 255.0) spec.a = 0.0;   // LabPBR: 255 = no emission
+    }
+  #endif
+    // puddles are flat and mirror-smooth
+    spec.r = max(spec.r, puddle);
+    outMaterial = vec4(float(mat) / 255.0, ao, puddle, spec.a);
+    outPBR = vec4(octEncode(nm), spec.r, spec.g);
 #else
     vec3 albedo = toLinear(c.rgb);
   #ifdef UNLIT
@@ -193,7 +227,7 @@ void main() {
   #endif
     outColor = vec4(col, c.a);
   #ifdef KEEP_MATERIAL
-    outMaterial = vec4(float(MAT_LIT) / 255.0, 1.0, 0.0, 1.0);
+    outMaterial = vec4(float(MAT_LIT) / 255.0, 1.0, 0.0, 0.0);
   #endif
 #endif
 }

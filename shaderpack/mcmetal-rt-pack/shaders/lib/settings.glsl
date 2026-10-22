@@ -34,6 +34,7 @@
 #define LIGHT_SHAFTS_STEPS 6 // [4 6 8 12 16]
 #define LIGHT_SHAFTS_SCALE 0.5
 
+#define LABPBR // LabPBR resource packs: normal maps, shiny and metal blocks, glowing texels
 #define TAA // temporal anti-aliasing: smooth edges, no shimmering plants and fences
 #define CLOUDS // our own soft cloud layer (replaces Minecraft's blocky clouds)
 #define CLOUD_AMOUNT 1.0 // [0.0 0.5 1.0 1.5 2.0]
@@ -90,4 +91,6 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef CLOUDS
 #endif
 #ifdef TAA
+#endif
+#ifdef LABPBR
 #endif

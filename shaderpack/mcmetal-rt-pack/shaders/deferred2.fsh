@@ -8,6 +8,9 @@ const bool colortex1Clear = true;
 const bool colortex2Clear = true;
 const vec4 colortex1ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 const vec4 colortex2ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
+const int colortex10Format = RGBA16;   // xy normal with the normal map, z smoothness, w F0/metal (LabPBR)
+const bool colortex10Clear = true;
+const vec4 colortex10ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 */
 #include "/lib/settings.glsl"
 #include "/lib/common.glsl"
@@ -17,16 +20,17 @@ const vec4 colortex2ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 #ifdef CLOUDS
     #include "/lib/clouds.glsl"
 #endif
-#if !defined USE_RT || (defined RAIN_PUDDLES && defined RT_REFLECTIONS)
-    // (the ray-traced shadow comes from deferred1.fsh; with RT this is only for what puddles reflect)
+#if !defined USE_RT || defined RT_REFLECTIONS
+    // (the ray-traced shadow comes from deferred1.fsh; with RT this is only for what reflections see)
     #include "/lib/shadow.glsl"
 #endif
-#if defined USE_RT && defined RAIN_PUDDLES && defined RT_REFLECTIONS
-    #define PUDDLE_RT
+#if defined USE_RT && defined RT_REFLECTIONS
+    // reflections on puddles and on smooth LabPBR surfaces
+    #define SURFACE_RT
     #include "/lib/reflect.glsl"
 #endif
 
-uniform sampler2D colortex0, colortex1, colortex2, colortex3, colortex4, colortex5, depthtex0;
+uniform sampler2D colortex0, colortex1, colortex2, colortex3, colortex4, colortex5, colortex10, depthtex0;
 
 in vec2 texcoord;
 flat in vec3 sunCol, skyAmb, lightDir, sunDir;
@@ -86,6 +90,12 @@ void main() {
         vec4 nl = texture(colortex1, texcoord);
         vec3 n = octDecode(nl.xy);
         vec3 a = toLinear(albedo.rgb);
+        // LabPBR (colortex10): the normal-mapped normal lights the surface; the block's own normal stays for rays
+        vec4 pbr = texture(colortex10, texcoord);
+        vec3 nm = dot(pbr.xy, pbr.xy) > 0.0 ? octDecode(pbr.xy) : n;
+        float smoothness = pbr.z;
+        bool metal = pbr.w > 229.5 / 255.0;
+        vec3 f0 = metal ? a : vec3(max(pbr.w, 0.02));
         vec3 sh = vec3(0.0);
 #ifdef USE_RT
         sh = mat == MAT_HAND ? vec3(1.0) : texture(colortex5, texcoord).rgb;   // traced and averaged in deferred1.fsh
@@ -103,13 +113,48 @@ void main() {
         vec3 gi = mat == MAT_HAND ? skyAmb * (nl.w * nl.w) * (0.7 + 0.3 * n.y) : filteredGI(n, length(p));
   #ifdef USE_LIGHTS
         // coloured block light (in the GI, deferred.fsh) replaces the lightmap's block light; the held light stays
-        col = a * (surfaceLight(p, n, vec2(mat == MAT_HAND ? nl.z : 0.0, nl.w), ao, mat, lightDir, sunCol, vec3(0.0), sh) + gi)
+        col = a * (surfaceLight(p, nm, vec2(mat == MAT_HAND ? nl.z : 0.0, nl.w), ao, mat, lightDir, sunCol, vec3(0.0), sh) + gi)
             + emission(a, mat);
   #else
-        col = a * (surfaceLight(p, n, nl.zw, ao, mat, lightDir, sunCol, vec3(0.0), sh) + gi) + emission(a, mat);
+        col = a * (surfaceLight(p, nm, nl.zw, ao, mat, lightDir, sunCol, vec3(0.0), sh) + gi) + emission(a, mat);
   #endif
 #else
-        col = a * surfaceLight(p, n, nl.zw, ao, mat, lightDir, sunCol, skyAmb, sh) + emission(a, mat);
+        col = a * surfaceLight(p, nm, nl.zw, ao, mat, lightDir, sunCol, skyAmb, sh) + emission(a, mat);
+#endif
+        // metals have no diffuse light of their own: their colour is in what they reflect
+        if (metal) col = emission(a, mat) + (col - emission(a, mat)) * 0.08;
+        // LabPBR emission (specular map alpha)
+        col += a * m.a * (4.0 * EMISSIVE_STRENGTH);
+#ifdef LABPBR
+        // shiny surfaces: the sun's highlight (GGX), and ray-traced reflections where smooth enough
+        if ((smoothness > 0.01 || metal) && m.b < 0.01 && mat != MAT_HAND) {
+            vec3 v = normalize(p);
+            float alpha = max((1.0 - smoothness) * (1.0 - smoothness), 0.003);
+            float nv = clamp(dot(nm, -v), 1e-3, 1.0);
+            vec3 hv = normalize(lightDir - v);
+            float nl2 = max(dot(nm, lightDir), 0.0), nh = max(dot(nm, hv), 0.0), a2 = alpha * alpha;
+            float dd = nh * nh * (a2 - 1.0) + 1.0;
+            float D = a2 / (PI * dd * dd);
+            float k = alpha * 0.5, G = nv / (nv * (1.0 - k) + k) * nl2 / (nl2 * (1.0 - k) + k);
+            vec3 F = f0 + (1.0 - f0) * pow(1.0 - max(dot(hv, -v), 0.0), 5.0);
+            col += sunCol * sh * D * G * F / max(4.0 * nv, 1e-3) * PI;   // x pi: our lights skip diffuse's 1/pi
+            vec3 Fv = f0 + (1.0 - f0) * pow(1.0 - nv, 5.0) * smoothness;
+            float w = smoothstep(0.45, 0.75, smoothness);
+            if (w > 0.0 && (metal || luma(Fv) > 0.03)) {
+                // a little scatter around the mirror direction for rough-ish surfaces (TAA smooths the noise)
+                vec3 jit = vec3(ign(gl_FragCoord.xy, frameCounter), ign(gl_FragCoord.xy + 17.0, frameCounter + 3),
+                                ign(gl_FragCoord.xy + 41.0, frameCounter + 7)) - 0.5;
+                vec3 rd = normalize(reflect(v, nm) + jit * alpha * 2.0);
+                if (dot(rd, n) < 0.02) rd = reflect(v, n);
+                float skyOpen = smoothstep(0.3, 0.9, nl.w);
+                vec3 refl = skyColor(rd, sunDir) * skyOpen;
+  #ifdef SURFACE_RT
+                refl = traceReflection(p + n * 0.02, rd, lightDir, sunCol, skyAmb, sunDir, skyOpen);
+  #endif
+                refl /= 1.0 + luma(refl) * 0.08;
+                col = mix(col, refl * (metal ? a : vec3(1.0)), w * (metal ? 0.9 : luma(Fv)));
+            }
+        }
 #endif
 #ifdef RAIN_PUDDLES
         // puddles: a flat water surface on top, mirroring what's above it (ray traced, or the sky without RT)
@@ -121,7 +166,7 @@ void main() {
             float f = max(0.02 + 0.98 * pow(1.0 - clamp(-v.y, 0.0, 1.0), 5.0), 0.15);
             float skyOpen = smoothstep(0.3, 0.9, nl.w);
             vec3 refl = skyColor(rd, sunDir) * skyOpen;
-  #ifdef PUDDLE_RT
+  #ifdef SURFACE_RT
             if (f > 0.04)   // faded in, so there's no ring where the rays start
                 refl = mix(refl, traceReflection(p + pn * 0.02, rd, lightDir, sunCol, skyAmb, sunDir, skyOpen),
                            smoothstep(0.04, 0.06, f));
