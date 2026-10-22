@@ -761,13 +761,27 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
     }
 
     /* ---- compute shader ---- */
-    sb_puts(&comp, compute_prelude);
+    /* MGL_GS_PROBE (timing experiments only, the picture is wrong): 1 = no geometry stage (nothing emitted),
+       2 = no vertex stage (attributes straight to the geometry stage), 3 = no record writes. MGL_GS_LOCAL = threads
+       per threadgroup (default 64). Both change the generated shader: run with MGL_CACHE_DIR unset. */
+    int probe = getenv("MGL_GS_PROBE") ? atoi(getenv("MGL_GS_PROBE")) : 0;
+    int local = getenv("MGL_GS_LOCAL") ? atoi(getenv("MGL_GS_LOCAL")) : 64;
+    if (local < 1 || local > 1024)
+        local = 64;
+    const char *prelude = strstr(compute_prelude, "\n") + 1; /* past "#version 450" */
+    prelude = strstr(prelude, "\n") + 1;                     /* past the default local size */
+    sb_printf(&comp, "#version 450\nlayout(local_size_x = %d) in;\n", local);
+    sb_puts(&comp, prelude);
     sb_add(&comp, vs.s, vs.n);
     sb_puts(&comp, "void mgl_v_init() {\n");
     if (vinit.n)
         sb_add(&comp, vinit.s, vinit.n);
     sb_puts(&comp, "}\n");
     sb_add(&comp, gs.s, gs.n);
+    if (probe == 3)
+        sb_printf(&comp, "void mgl_emit() {\n  if (mgl_emitted < %du) mgl_emitted++;\n}\nvoid mgl_emit_unused() {\n"
+                         "  uint rec = 0u;\n", max_vertices);
+    else
     sb_printf(&comp, "void mgl_emit() {\n  if (mgl_emitted >= %du) return;\n"
                      "  uint rec = (uint(mgl_prim_id) * %du + mgl_emitted) * %du;\n"
                      "  mgl_ov[rec] = mgl_g_Position.x;\n  mgl_ov[rec + 1u] = mgl_g_Position.y;\n"
@@ -787,7 +801,7 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
         const char *fetch = a->is_int || a->is_uint ? "mgl_fetchi" : "mgl_fetchf";
         sb_printf(&comp, "    %s = %s(%s(%d, vtx)%s);\n", a->renamed, a->type, fetch, a->location, swz[a->comps]);
     }
-    sb_puts(&comp, "    mgl_v_Position = vec4(0.0, 0.0, 0.0, 1.0);\n    mgl_v_PointSize = 1.0;\n    mgl_v_init();\n    mgl_v_main();\n"
+    sb_puts(&comp, probe == 2 ? "    mgl_v_Position = vec4(0.0, 0.0, 0.0, 1.0);\n    mgl_v_PointSize = 1.0;\n" : "    mgl_v_Position = vec4(0.0, 0.0, 0.0, 1.0);\n    mgl_v_PointSize = 1.0;\n    mgl_v_init();\n    mgl_v_main();\n"
                    "    mgl_gin[c].pos = mgl_v_Position;\n    mgl_gin[c].pointSize = mgl_v_PointSize;\n");
     for (int i = 0; i < ngin; i++) { /* only inputs the vertex shader writes; the rest stay zero */
         tok t = {T_ID, gin[i].name, (int)strlen(gin[i].name)};
@@ -795,7 +809,7 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
         if (v)
             sb_printf(&comp, "    %s[c] = %s;\n", gin[i].name, v);
     }
-    sb_puts(&comp, "  }\n  mgl_g_main();\n  mgl_oc[prim] = mgl_emitted;\n}\n");
+    sb_puts(&comp, probe == 1 ? "  }\n  mgl_oc[prim] = mgl_emitted;\n}\n" : "  }\n  mgl_g_main();\n  mgl_oc[prim] = mgl_emitted;\n}\n");
 
     /* ---- passthrough vertex shader: strip -> triangle list ---- */
     sb_puts(&pass, "#version 450\n"
