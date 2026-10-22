@@ -63,12 +63,13 @@ void main() {
     if (d < far * 0.85 + 8.0 * ign(gl_FragCoord.xy, frameCounter) - 4.0) discard;
     vec3 n = normalize(normalW);
 #ifdef DH_WATER
-    vec3 a = toLinear(tint.rgb);
+    vec3 a = toLinear(tint.rgb) * 1.6;   // the real water nearby is lighter: it shows the lit bottom through it
     vec3 L = lightDirection();
     vec3 col = a * surfaceLight(playerPos, n, lmcoord, 1.0, MAT_NONE, L, sunCol, skyAmb,
                                 vec3(smoothstep(0.85, 0.97, lmcoord.y)));
     vec3 v = normalize(playerPos);
-    float f = 0.02 + 0.98 * pow(1.0 - clamp(dot(-v, n), 0.0, 1.0), 5.0);
+    // (at least 10%: far water is seen at a grazing angle through haze, and reads mostly as reflected sky)
+    float f = max(0.02 + 0.98 * pow(1.0 - clamp(dot(-v, n), 0.0, 1.0), 5.0), 0.1);
     vec3 refl = skyColor(reflect(v, n), sunDirection()) * smoothstep(0.3, 0.9, lmcoord.y);
     outColor = vec4(mix(col, refl, f), mix(0.6, 1.0, f));
 #else

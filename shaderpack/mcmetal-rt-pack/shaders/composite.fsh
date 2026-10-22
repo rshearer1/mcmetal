@@ -83,7 +83,12 @@ void main() {
         // or high up the ground below would all count as past the edge)
         float edge = smoothstep(fogEnd * 0.8, fogEnd, length(p.xz));
         float amount = max(haze, edge) * smoothstep(0.0, 0.2, float(eyeBrightnessSmooth.y) / 240.0 + edge);
-        if (amount > 0.001) col = mix(col, skyColor(p / dist, sunDir), amount);
+        if (amount > 0.001) {
+            // haze takes the sky's colour from a little above the view direction: right at the horizon the
+            // atmosphere model is yellowed by ~100 km of air, real distant haze is blue-white
+            vec3 hd = p / dist;
+            col = mix(col, skyColor(normalize(vec3(hd.x, max(hd.y, 0.0) + 0.12, hd.z)), sunDir), amount);
+        }
     }
 #if defined USE_RT && defined LIGHT_SHAFTS
     if (isEyeInWater <= 1) col += texture(colortex8, texcoord * LIGHT_SHAFTS_SCALE).rgb;   // deferred3.fsh
