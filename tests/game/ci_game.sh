@@ -2,6 +2,7 @@
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
 #   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders
 #   pack-NAME packnight-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
+#   ab-pack-NAME ab-packnight-NAME (the pack three times in one job: new, old = with GAME_AB_OFF's env, new)
 #   archive-NAME (pipeline binary archive: cold, warm, warm without archive)
 #   (default: the first three)
 # WORK holds the game install (cacheable), OUT gets screenshots and logs. Needs Java 21 as `java` or $JAVA.
@@ -234,6 +235,12 @@ for p in $PHASES; do
     nether-shaders) scene noon clear nether; run_phase nether-shaders 240 metal true ;;      # Nether room, Complementary
     dh) dh_phase dh false ;;                    # Distant Horizons, Sodium
     dh-shaders) dh_phase dh-shaders true ;;     # Distant Horizons + Complementary
+    ab-*) # A/B in one job (separate jobs run on machines up to ~30% apart): ab-pack-NAME runs the pack with this
+          # change (new), with GAME_AB_OFF's env (old, e.g. MGL_TEX_COMPRESS=0), then new again; compare in fps.txt
+        inner=${p#ab-}
+        third_party "$inner" "$p-new1"
+        third_party "$inner" "$p-old" ${GAME_AB_OFF:-}
+        third_party "$inner" "$p-new2" ;;
     pack-*|packnight-*) third_party "$p" ;; # compatibility sweep: pack-photon, packnight-bsl, pack-complementary+euphoria, ...
     archive-*) # Metal pipeline binary archive: the pack from an empty shader cache (archive written), again with the
                # archive, and again with the shader cache but no archive. Run with bench=true settle=0 so the fps
