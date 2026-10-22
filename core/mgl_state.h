@@ -117,6 +117,7 @@ typedef struct mgl_program {
     int rt_pos_loc, rt_ent_loc, rt_region_off, rt_mv_off, rt_proj_off; /* terrain capture (mgl_rt.c); rt_pos_loc -1 = not terrain */
     int rt_epos_loc, rt_emv_off, rt_eproj_off; /* entity capture (mgl_rt.c): float3 position, model-view, projection */
     int rt_entity;              /* 1 = draws entities (by Iris program name or the entity vertex format's overlay input) */
+    int rt_atlas_slot;          /* x.textures[] entry holding the block atlas (u_BlockTex, gtexture...), or -1 */
     unsigned char *ublock[3];   /* default-block shadow per stage (vertex, fragment, compute) */
     int unit_of[MGL_MAX_TEXTURES * 3]; /* GL texture unit per x.textures[] entry (glUniform1i on a sampler) */
     int image_unit_of[MGL_MAX_TEXTURES * 3];
@@ -134,6 +135,7 @@ typedef struct mgl_program {
     char debug_name[64];        /* glObjectLabel (Iris names its programs, e.g. "gbuffers_water") */
     int *name_hash;             /* glGetUniformLocation: open-addressed table of x.uniforms/x.textures indices + 1, built on first use */
     unsigned name_hash_mask;
+    int jitter_loc;             /* mcm_jitter's location + 1 (MCMETAL_UPSCALE=2), 0 = not looked up yet, -1 = none */
 } mgl_program;
 
 typedef struct mgl_query {
@@ -212,6 +214,7 @@ void mgl_window_resize(int w, int h);
 
 /* mgl_rt.c */
 void mgl_rt_link(mgl_program *p);
+void mgl_program_jitter(mgl_program *p, GLuint name, const mgl_target *t, int world); /* MCMETAL_UPSCALE=2, see mgl_program.c */
 void mgl_rt_record(mgl_program *p, const mgl_draw *d);
 void mgl_rt_note_write(mglb_buffer *m, size_t offset, size_t size);
 void mgl_rt_end_frame(void); /* called by the backend before present */

@@ -78,6 +78,12 @@ public final class MetalBootstrap implements GraphicsBootstrapper {
                     # softer than native.
                     #MCMETAL_UPSCALE=1
                     #
+                    # Experimental: MetalFX's temporal upscaler instead (with a shader pack; rebuilds detail from
+                    # several frames). Works best with the shader pack's own TAA turned off.
+                    #MCMETAL_UPSCALE=2
+                    # How big the game renders before upscaling, in % of the Retina size each way (34-100).
+                    #MCMETAL_UPSCALE_SCALE=50
+                    #
                     # Draw at half resolution on a Retina screen without the upscaler (fastest, softest).
                     #MCMETAL_RETINA=0
                     """);

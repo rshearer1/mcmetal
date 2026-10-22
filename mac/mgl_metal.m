@@ -2096,6 +2096,12 @@ static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_targ
         return ps;
     }
 
+    if (!d->program->vfn) { /* a compute-only program: GL_INVALID_OPERATION, not a Metal assertion */
+        static int warned;
+        if (!warned++)
+            mgl_log("%s: draw with a program that has no vertex stage", d->program->label);
+        return nil;
+    }
     MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
     pd.vertexFunction = OBJ(id<MTLFunction>, d->program->vfn);
     if (d->program->vlib) {
@@ -2507,16 +2513,20 @@ static const char *builtin_msl =
 "fragment CO clear_fs(constant float4 &c [[buffer(0)]]) { CO o; o.c0 = o.c1 = o.c2 = o.c3 = o.c4 = o.c5 = o.c6 = o.c7 = c; return o; }\n"
     /* ray tracing: Sodium/Iris terrain vertices -> region-local float3 triangle list (see mgl_rt.c for the layout) */
     "struct RtInfo { uint vbase, stride, ioff, itype, count; int base_vertex; int ent_off; uint translucent;\n"
-    "  int lmin, lmax; uint lcap; };\n"
+    "  int lmin, lmax; uint lcap; uint tw, th, aw, ah, split, flags; };\n"
     /* per triangle, 12 words, for mcm_trace (core/mgl_program.c reads the same layout):
          0-2 packed texture coordinates (Sodium's 15-bit u/v)   3 alpha cutoff index (0 = solid) | 0x100 translucent
          4-6 vertex colours RGBA8   7 face normal (octahedral snorm16x2)   8-10 light (block, sky bytes)
          11 Iris block id + 1 (0 = unknown)
-       Iris's extended vertex format keeps no material bits, so its triangles all get the 0.1 alpha test (solid
-       textures are opaque, so this only costs time). */
+       Iris's extended vertex format keeps no material bits, so its triangles all get the 0.1 alpha test; the
+       atlas alpha map (rt_alpha_tiles) tells which of them always pass it (solid: built opaque, see RtSection).
+       flags 1: write that data and the light candidates (a section's first build); 2: count solid / cutout
+       triangles into cnt. split n: positions of solid triangles go to the first n, cutout ones to the next n,
+       each collapsed to a point in the other list. */
     "kernel void rt_decode(device const uchar *vb [[buffer(0)]], device const uchar *ib [[buffer(1)]],\n"
     "    device packed_float3 *out [[buffer(2)]], constant RtInfo &n [[buffer(3)]], device uint *tri [[buffer(4)]],\n"
-    "    device atomic_uint *lc [[buffer(5)]], uint t [[thread_position_in_grid]]) {\n"
+    "    device atomic_uint *lc [[buffer(5)]], device atomic_uint *cnt [[buffer(6)]],\n"
+    "    device const uchar *tiles [[buffer(7)]], uint t [[thread_position_in_grid]]) {\n"
     "  if (t * 3 >= n.count) return;\n"
     "  float3 p[3]; uint r[12];\n"
     "  for (uint k = 0; k < 3; k++) {\n"
@@ -2527,12 +2537,36 @@ static const char *builtin_msl =
     "    uint hi = w[0], lo = w[1], sec = w[4] >> 24;\n"
     "    uint3 q = (((uint3(hi) >> uint3(0, 10, 20)) & 0x3FF) << 10) | ((uint3(lo) >> uint3(0, 10, 20)) & 0x3FF);\n"
     "    p[k] = float3(q) * (32.0 / 1048576.0) - 8.0 + 16.0 * float3((sec >> 5) & 7, sec & 3, (sec >> 2) & 7);\n"
-    "    out[i] = p[k];\n"
     "    r[k] = w[3] & 0x7FFF7FFFu; r[4 + k] = w[2]; r[8 + k] = w[4] & 0xFFFFu;\n"
     "    if (k == 0) {\n"
     "      r[3] = (n.stride > 20 ? 1u : (w[4] >> 17) & 3u) | (n.translucent ? 0x100u : 0u);\n"
     "      r[11] = n.ent_off >= 0 ? (*(device const uint *)(v + n.ent_off)) >> 1 : 0u; }\n"
     "  }\n"
+    /* solid: no cutoff, or the lowest alpha under the triangle's texture rectangle passes mcm_opaque_at's test */
+    "  uint cut = r[3] & 0xFFu;\n"
+    "  bool solid = false;\n"
+    "  if (!n.translucent) {\n"
+    "    solid = cut == 0u;\n"
+    "    if (!solid && n.tw > 0u) {\n"
+    "      float2 lo = float2(1e9), hi = float2(-1e9);\n"
+    "      for (uint k = 0; k < 3; k++) {\n"
+    "        float2 uv = float2(r[k] & 0x7FFFu, (r[k] >> 16) & 0x7FFFu) * (1.0 / 32768.0) * float2(n.aw, n.ah);\n"
+    "        lo = min(lo, uv); hi = max(hi, uv); }\n"
+    "      int2 t0 = int2(floor(lo + 0.01)) / 8, t1 = max(int2(ceil(hi - 0.01)) - 1, int2(0)) / 8;\n"
+    "      t1 = max(t1, t0);\n"
+    "      if (t1.x < int(n.tw) && t1.y < int(n.th) && t1.x - t0.x < 8 && t1.y - t0.y < 8) {\n"
+    "        uint m = 255u, need = cut == 3u ? 255u : 26u;\n"
+    "        for (int y = t0.y; y <= t1.y; y++) for (int x = t0.x; x <= t1.x; x++)\n"
+    "          m = min(m, uint(tiles[uint(y) * n.tw + uint(x)]));\n"
+    "        solid = m >= need; } } }\n"
+    "  if (n.flags & 2u) atomic_fetch_add_explicit(&cnt[solid ? 0 : 1], 1u, memory_order_relaxed);\n"
+    "  if (n.split > 0u) {\n"
+    "    uint in = solid ? t : n.split + t, other = solid ? n.split + t : t;\n"
+    "    for (uint k = 0; k < 3; k++) { out[in * 3 + k] = p[k]; out[other * 3 + k] = p[0]; }\n"
+    "  } else {\n"
+    "    for (uint k = 0; k < 3; k++) out[t * 3 + k] = p[k];\n"
+    "  }\n"
+    "  if (!(n.flags & 1u)) return;\n"
     "  float3 c = cross(p[1] - p[0], p[2] - p[0]);\n"
     "  float3 nn = length(c) > 0.0 ? c / (abs(c.x) + abs(c.y) + abs(c.z)) : float3(0, 1, 0);\n"
     "  float2 o = nn.z >= 0.0 ? nn.xy : (1.0 - abs(nn.yx)) * select(float2(-1.0), float2(1.0), nn.xy >= 0.0);\n"
@@ -2547,6 +2581,17 @@ static const char *builtin_msl =
     "      float3 in = (p[0] + p[1] + p[2]) / 3.0 - (length(c) > 0.0 ? normalize(c) : float3(0)) * 0.01;\n"
     "      device uint *e = (device uint *)(lc + 4 + k * 4);\n"
     "      e[0] = as_type<uint>(in.x); e[1] = as_type<uint>(in.y); e[2] = as_type<uint>(in.z); e[3] = uint(id); } } }\n"
+    /* lowest alpha per 8x8 atlas texels, as a byte (rt_decode's solid test) */
+    "kernel void rt_alpha_tiles(texture2d<float, access::read> atlas [[texture(0)]], device uchar *out [[buffer(0)]],\n"
+    "    constant uint2 &tiles [[buffer(1)]], uint2 t [[thread_position_in_grid]]) {\n"
+    "  if (t.x >= tiles.x || t.y >= tiles.y) return;\n"
+    "  uint w = atlas.get_width(), h = atlas.get_height();\n"
+    "  float m = 1.0;\n"
+    "  for (uint y = 0; y < 8; y++) for (uint x = 0; x < 8; x++) {\n"
+    "    uint2 q = t * 8 + uint2(x, y);\n"
+    "    if (q.x < w && q.y < h) m = min(m, atlas.read(q).a); }\n"
+    "  out[t.y * tiles.x + t.x] = uchar(clamp(m, 0.0, 1.0) * 255.0 + 0.5);\n"
+    "}\n"
     /* per section, per frame: light candidates -> one light per block (hash on the block position) */
     "struct RtLightSec { int3 off; float3 region; uint cap; };\n"
     "kernel void rt_lights(device const uint *lc [[buffer(0)]], constant RtLightSec &s [[buffer(1)]],\n"
@@ -2976,10 +3021,12 @@ static void bind_stage_resources(id<MTLRenderCommandEncoder> e, id<MTLComputeCom
                 tex = OBJ(id<MTLTexture>, x->swz_view);
             else {
                 prof.tex_views++;
-                tex = swizzled_view(tex, bt->swizzle);
-                if (!bt->is_image && tex) {
+                id<MTLTexture> v = swizzled_view(tex, bt->swizzle); /* nil if the view can't be made: keep the texture */
+                if (v)
+                    tex = v;
+                if (!bt->is_image && v) {
                     release_obj(x->swz_view);
-                    x->swz_view = retain_obj(tex);
+                    x->swz_view = retain_obj(v);
                     memcpy(x->swz, bt->swizzle, sizeof x->swz);
                 }
             }
@@ -3488,6 +3535,15 @@ static int gsc_key(const mgl_draw *d, const int32_t desc[16][4], int triangles, 
 /* Geometry-shader emulation (mgl_gs.c). The compute stage gets: 21 attribute descriptors, 22..25 raw vertex
    buffers, 26 index buffer, 27 emitted vertex records, 28 per-primitive vertex counts. The passthrough vertex
    stage reads 27/28 and turns each strip into a triangle list. */
+/* MGL_GS_PROBE=6 (timing only): no passthrough draws and no cache hits, the compute stage alone */
+static int gs_probe_no_pass(void)
+{
+    static int on = -1;
+    if (on < 0)
+        on = getenv("MGL_GS_PROBE") && atoi(getenv("MGL_GS_PROBE")) == 6;
+    return on;
+}
+
 void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record_floats)
 {
     if (!d->program->compute || !d->program->vfn || max_vertices < 3 || triangles <= 0)
@@ -3519,7 +3575,7 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
     id<MTLBuffer> ovb = nil, ocb = nil;
     NSUInteger ovo = 0, oco = 0;
     uint64_t k0, k1;
-    int keyed = gsc_key(d, desc, triangles, &k0, &k1);
+    int keyed = !gs_probe_no_pass() && gsc_key(d, desc, triangles, &k0, &k1);
     gsc_entry *ce = keyed ? gsc_find(k0, k1) : NULL;
     if (keyed && !ce)
         ce = gsc_add(k0, k1);
@@ -3654,7 +3710,7 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
             else
                 sr = (MTLScissorRect){(NSUInteger)x0, (NSUInteger)y0, (NSUInteger)(x1 - x0), (NSUInteger)(y1 - y0)};
         }
-        if (visible) {
+        if (visible && !gs_probe_no_pass()) {
             [e setScissorRect:sr];
             [e setCullMode:!p->cull ? MTLCullModeNone : p->cull_face == GL_FRONT ? MTLCullModeFront : MTLCullModeBack];
             [e setFrontFacingWinding:p->front_face == GL_CW ? MTLWindingCounterClockwise : MTLWindingClockwise];
@@ -3722,19 +3778,36 @@ static void gs_flush_at(int line)
 
 /* ================================================================ ray tracing (step 2) */
 
-/* One primitive acceleration structure per terrain section, cached by (buffer, range, generation). */
+/* One primitive acceleration structure per terrain section, cached by (buffer, range, block-id offset) until the
+   bytes it was built from are written (mglb_rt_forget).
+
+   A new section is built for a fast build (PreferFastBuild), every triangle non-opaque, so turning, which keeps
+   bringing sections into view, costs as little as it can. Once a section has stayed ~1.5 s it is built again for
+   fast tracing (PreferFastIntersection when built with the macOS 26 SDK), with its solid triangles in an opaque geometry: rays then
+   take those hits in the ray hardware, and only cutout triangles (grass, leaves, flowers) come back to mcm_trace's
+   alpha test. Solid means the triangle's whole texture rectangle passes that test, read from a map of the block
+   atlas's lowest alpha per 8x8 texels (rt_alpha_tiles). Both geometries hold every triangle in the same order
+   (each triangle collapsed to a point in the geometry it is not in), so primitive ids still index the per-triangle
+   data. Sections that are all solid or all cutout keep one geometry. */
 @interface RtSection : NSObject
 @property(nonatomic, strong) id<MTLAccelerationStructure> as;
 @property(nonatomic) uint64_t last_frame;
-@property(nonatomic) mglb_buffer *tris; /* per-triangle texture coordinates + alpha cutoff (rt_decode) */
+@property(nonatomic) mglb_buffer *tris; /* per-triangle texture coordinates + alpha cutoff (rt_decode); then 2 counts */
 @property(nonatomic) mglb_buffer *lights; /* light candidates: count, then (position, id) per face */
 @property(nonatomic) uint32_t lcap;
+@property(nonatomic) int ntris;
+@property(nonatomic) uint64_t built_frame;
+@property(nonatomic) int state; /* 0 fast build, not counted; 1 fast build, solid/cutout counted; 2 built for tracing */
+/* this frame's build, between the decode pass and the build pass */
+@property(nonatomic) mglb_buffer *pos;
+@property(nonatomic, strong) MTLPrimitiveAccelerationStructureDescriptor *desc;
 @end
 @implementation RtSection
 - (void)dealloc
 {
     mglb_buffer_release(_tris);
     mglb_buffer_release(_lights);
+    mglb_buffer_release(_pos);
 }
 @end
 static mglb_buffer *rt_inst;                    /* GPU address of each scene instance's triangle data */
@@ -3753,49 +3826,243 @@ typedef struct rt_key {
     int32_t lmin, lmax;
 } rt_key;
 
-static NSMutableDictionary<NSData *, RtSection *> *rt_sections;
 static id<MTLAccelerationStructure> rt_scene;
 static NSMutableArray<id<MTLAccelerationStructure>> *rt_scene_parts; /* must be resident wherever the scene is used */
 static __unsafe_unretained id<MTLResource> *rt_parts_c;               /* same objects as a C array for useResources */
 static NSUInteger rt_parts_n;
 static uint64_t rt_frame;
 
-static id<MTLComputePipelineState> rt_decode_pipeline(void)
+/* Objects the last few frames' GPU work may still use (a section forgotten or rebuilt): kept 8 frames */
+static NSMutableArray *rt_retired[8];
+static void rt_retire(id o)
 {
-    static id<MTLComputePipelineState> ps;
-    if (!ps) {
-        NSError *e = nil;
-        id<MTLFunction> f = builtin(@"rt_decode");
-        ps = f ? [dev newComputePipelineStateWithFunction:f error:&e] : nil;
-        if (!ps)
-            mgl_log("rt_decode pipeline: %s", e ? e.localizedDescription.UTF8String : "no function");
-    }
-    return ps;
+    if (!o)
+        return;
+    NSMutableArray *a = rt_retired[rt_frame % 8];
+    if (!a)
+        a = rt_retired[rt_frame % 8] = [NSMutableArray new]; /* no autorelease: may run outside any pool */
+    [a addObject:o];
 }
 
-static id<MTLAccelerationStructure> build_as(MTLAccelerationStructureDescriptor *desc)
+/* The section cache: open addressing on the key bytes (an NSDictionary with an NSData key per lookup cost
+   ~0.5 us a section, every frame). Slots: h 0 = empty, sec NULL with h set = deleted. */
+typedef struct rt_slot {
+    rt_key k;
+    uint64_t h;
+    void *sec; /* RtSection, retained */
+} rt_slot;
+static rt_slot *rt_tab;
+static size_t rt_tab_cap, rt_tab_live, rt_tab_dead;
+static uint64_t rt_buf_seen[64]; /* buffers some cached section was built from (hashed bits), for mglb_rt_forget */
+
+static uint64_t rt_key_hash(const rt_key *k)
+{
+    const unsigned char *p = (const unsigned char *)k;
+    uint64_t h = 1469598103934665603ull;
+    for (size_t i = 0; i < sizeof *k; i++)
+        h = (h ^ p[i]) * 1099511628211ull;
+    return h ? h : 1;
+}
+
+static unsigned rt_buf_bit(const void *b) { return (unsigned)(((uintptr_t)b >> 4) * 2654435761u >> 20) & 4095u; }
+
+static void rt_tab_insert(const rt_key *k, uint64_t h, RtSection *s);
+static void rt_tab_grow(void)
+{
+    rt_slot *old = rt_tab;
+    size_t oc = rt_tab_cap;
+    rt_tab_cap = oc ? (rt_tab_live * 4 > oc ? oc * 2 : oc) : 4096;
+    rt_tab = calloc(rt_tab_cap, sizeof *rt_tab);
+    rt_tab_live = rt_tab_dead = 0;
+    memset(rt_buf_seen, 0, sizeof rt_buf_seen);
+    for (size_t i = 0; i < oc; i++)
+        if (old[i].sec) {
+            RtSection *s = (__bridge_transfer RtSection *)old[i].sec;
+            rt_tab_insert(&old[i].k, old[i].h, s);
+        }
+    free(old);
+}
+
+static void rt_tab_insert(const rt_key *k, uint64_t h, RtSection *s)
+{
+    if (!rt_tab_cap || (rt_tab_live + rt_tab_dead + 1) * 10 > rt_tab_cap * 7)
+        rt_tab_grow();
+    size_t m = rt_tab_cap - 1, at = (size_t)h & m;
+    while (rt_tab[at].h)
+        at = (at + 1) & m;
+    rt_tab[at].k = *k;
+    rt_tab[at].h = h;
+    rt_tab[at].sec = (__bridge_retained void *)s;
+    rt_tab_live++;
+    unsigned a = rt_buf_bit(k->vbuf), b = rt_buf_bit(k->ibuf);
+    rt_buf_seen[a >> 6] |= 1ull << (a & 63);
+    rt_buf_seen[b >> 6] |= 1ull << (b & 63);
+}
+
+static RtSection *rt_tab_find(const rt_key *k, uint64_t h)
+{
+    if (!rt_tab_cap)
+        return nil;
+    size_t m = rt_tab_cap - 1;
+    for (size_t at = (size_t)h & m; rt_tab[at].h; at = (at + 1) & m)
+        if (rt_tab[at].h == h && rt_tab[at].sec && !memcmp(&rt_tab[at].k, k, sizeof *k))
+            return (__bridge RtSection *)rt_tab[at].sec;
+    return nil;
+}
+
+static void rt_tab_drop(size_t at)
+{
+    RtSection *s = (__bridge_transfer RtSection *)rt_tab[at].sec;
+    rt_tab[at].sec = NULL; /* h stays: probes keep going past it */
+    rt_tab_live--;
+    rt_tab_dead++;
+    rt_retire(s);
+}
+
+void mglb_rt_forget(mglb_buffer *b, size_t offset, size_t size)
+{
+    unsigned bit = rt_buf_bit(b);
+    if (!rt_tab_live || !(rt_buf_seen[bit >> 6] >> (bit & 63) & 1))
+        return;
+    uint64_t lo = offset, hi = size == (size_t)-1 ? UINT64_MAX : offset + size;
+    for (size_t i = 0; i < rt_tab_cap; i++) {
+        const rt_key *k = &rt_tab[i].k;
+        if (!rt_tab[i].sec || (k->vbuf != b && k->ibuf != b))
+            continue;
+        int hit = 0;
+        if (k->vbuf == b) { /* Sodium draws quads: 4 vertices per 6 indices, from the base vertex */
+            int64_t vlo = (int64_t)k->vbase + (int64_t)k->base_vertex * k->stride;
+            int64_t vhi = vlo + (int64_t)k->count * 2 / 3 * k->stride;
+            hit |= (int64_t)lo < vhi && (hi == UINT64_MAX || (int64_t)hi > vlo);
+        }
+        if (k->ibuf == b) {
+            uint64_t ilo = k->ioff, ihi = ilo + (uint64_t)k->count * (k->itype == GL_UNSIGNED_SHORT ? 2 : 4);
+            hit |= lo < ihi && hi > ilo;
+        }
+        if (hit)
+            rt_tab_drop(i);
+    }
+}
+
+static id<MTLComputePipelineState> builtin_compute(NSString *name);
+
+/* Acceleration-structure passes, timed and named for MGL_PROFILE=2/3 like the others */
+static id<MTLAccelerationStructureCommandEncoder> as_encoder(const char *label)
+{
+    prof_serialize();
+    end_encoders();
+    id<MTLCommandBuffer> c = current_cb();
+    int k = pt_pass(label);
+    id<MTLAccelerationStructureCommandEncoder> e;
+    @autoreleasepool {
+        if (k >= 0) {
+            MTLAccelerationStructurePassDescriptor *d = [MTLAccelerationStructurePassDescriptor accelerationStructurePassDescriptor];
+            d.sampleBufferAttachments[0].sampleBuffer = pt_cur->sb;
+            d.sampleBufferAttachments[0].startOfEncoderSampleIndex = (NSUInteger)k * 2;
+            d.sampleBufferAttachments[0].endOfEncoderSampleIndex = (NSUInteger)k * 2 + 1;
+            e = [c accelerationStructureCommandEncoderWithDescriptor:d];
+        } else {
+            e = [c accelerationStructureCommandEncoder];
+        }
+    }
+    return e;
+}
+
+static id<MTLAccelerationStructure> new_as(MTLAccelerationStructureDescriptor *desc)
 {
     MTLAccelerationStructureSizes sz = [dev accelerationStructureSizesWithDescriptor:desc];
-    id<MTLAccelerationStructure> as = [dev newAccelerationStructureWithSize:sz.accelerationStructureSize];
+    return [dev newAccelerationStructureWithSize:sz.accelerationStructureSize];
+}
+
+/* encode a build of as (made by new_as from the same descriptor) */
+static void encode_build(id<MTLAccelerationStructureCommandEncoder> e, id<MTLAccelerationStructure> as,
+                         MTLAccelerationStructureDescriptor *desc)
+{
+    MTLAccelerationStructureSizes sz = [dev accelerationStructureSizesWithDescriptor:desc];
     mglb_buffer *scratch = mglb_buffer_new(sz.buildScratchBufferSize ? sz.buildScratchBufferSize : 16);
-    if (!as || !scratch) {
-        mglb_buffer_release(scratch);
-        return nil;
-    }
-    end_encoders();
-    id<MTLAccelerationStructureCommandEncoder> e = [current_cb() accelerationStructureCommandEncoder];
+    if (!scratch)
+        return;
     [e buildAccelerationStructure:as descriptor:desc scratchBuffer:OBJ(id<MTLBuffer>, scratch->mtl) scratchBufferOffset:0];
-    [e endEncoding];
     use_buffer(scratch);
     mglb_buffer_release(scratch);
+}
+
+static id<MTLAccelerationStructure> build_as(MTLAccelerationStructureDescriptor *desc, const char *label)
+{
+    id<MTLAccelerationStructure> as = new_as(desc);
+    if (!as)
+        return nil;
+    id<MTLAccelerationStructureCommandEncoder> e = as_encoder(label);
+    encode_build(e, as, desc);
+    [e endEncoding];
     return as;
 }
 
 static unsigned long rt_built, rt_built_tris; /* section structures built since the last MGL_RT_DEBUG line */
 static unsigned long rt_rebuilt; /* of those, ranges built before (vertex data rewritten, or another block-id offset) */
+static unsigned long rt_upgraded, rt_upgraded_tris, rt_split, rt_solid; /* rebuilt for tracing; of them split / all solid */
 static NSMutableSet<NSData *> *rt_ranges; /* MGL_RT_DEBUG=1: every range built, without generation and offsets */
 
-static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer **tris_out, RtSection **sec_out)
+/* Lowest atlas alpha per 8x8 texels (one byte each), for rt_decode's solid test; remade when the atlas changes */
+static mglb_buffer *rt_tiles;
+static uint32_t rt_tiles_w, rt_tiles_h, rt_tiles_aw, rt_tiles_ah;
+static const void *rt_tiles_of; /* the MTLTexture it was made from */
+
+static void rt_alpha_tiles(void)
+{
+    mglb_texture *t = mgl_rt_atlas;
+    if (!t || t->d.type != MGLT_2D || is_int_format(t->pf) || is_depth_format(t->pf) || t->d.width < 8 || t->d.height < 8)
+        return;
+    if (rt_tiles && rt_tiles_of == t->mtl && rt_tiles_aw == (uint32_t)t->d.width && rt_tiles_ah == (uint32_t)t->d.height)
+        return;
+    id<MTLComputePipelineState> ps = builtin_compute(@"rt_alpha_tiles");
+    uint32_t tw = ((uint32_t)t->d.width + 7) / 8, th = ((uint32_t)t->d.height + 7) / 8;
+    mglb_buffer *b = ps ? mglb_buffer_new((size_t)tw * th) : NULL;
+    if (!b)
+        return;
+    uint32_t dims[2] = {tw, th};
+    id<MTLComputeCommandEncoder> c = compute_encoder();
+    pt_label("rt alpha map");
+    [c setComputePipelineState:ps];
+    [c setTexture:OBJ(id<MTLTexture>, t->mtl) atIndex:0];
+    [c setBuffer:OBJ(id<MTLBuffer>, b->mtl) offset:0 atIndex:0];
+    [c setBytes:dims length:sizeof dims atIndex:1];
+    [c dispatchThreads:MTLSizeMake(tw, th, 1) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
+    [c memoryBarrierWithScope:MTLBarrierScopeBuffers];
+    use_buffer(b);
+    mglb_buffer_release(rt_tiles); /* the pool keeps it until the GPU is done with it */
+    rt_tiles = b;
+    rt_tiles_w = tw;
+    rt_tiles_h = th;
+    rt_tiles_aw = (uint32_t)t->d.width;
+    rt_tiles_ah = (uint32_t)t->d.height;
+    rt_tiles_of = t->mtl;
+    mgl_log("ray tracing: atlas %dx%d alpha map made (solid triangles become opaque for rays)", t->d.width, t->d.height);
+}
+
+/* A/B switches for the M3: MGL_RT_UPGRADE=0 builds sections once, default build, all non-opaque (as before);
+   MGL_RT_OPAQUE=0 still rebuilds settled sections for tracing but keeps every triangle non-opaque */
+static int rt_opt(const char *name)
+{
+    const char *v = getenv(name);
+    return !v || atoi(v) != 0;
+}
+static int rt_upgrade_on(void)
+{
+    static int on = -1;
+    if (on < 0)
+        on = rt_opt("MGL_RT_UPGRADE");
+    return on;
+}
+static int rt_opaque_on(void)
+{
+    static int on = -1;
+    if (on < 0)
+        on = rt_opt("MGL_RT_OPAQUE");
+    return on;
+}
+
+static rt_key make_key(const mgl_rt_geom *g)
 {
     rt_key k;
     memset(&k, 0, sizeof k);
@@ -3812,18 +4079,74 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer
     k.translucent = (uint32_t)g->translucent;
     k.lmin = mgl_rt_light_ids[0];
     k.lmax = mgl_rt_light_ids[1];
-    NSData *key = [[NSData alloc] initWithBytes:&k length:sizeof k];
-    RtSection *s = rt_sections[key];
-    if (s) {
-        s.last_frame = rt_frame;
-        *tris_out = s.tris;
-        *sec_out = s;
-        return s.as;
-    }
+    return k;
+}
+
+/* rt_decode's arguments (RtInfo in the built-in MSL) */
+typedef struct rt_info {
+    uint32_t vbase, stride, ioff, itype, count;
+    int32_t base_vertex, ent_off;
+    uint32_t translucent;
+    int32_t lmin, lmax;
+    uint32_t lcap;
+    uint32_t tw, th, aw, ah; /* alpha map (tw 0 = none) */
+    uint32_t split;          /* positions: 0 one list; n = solid triangles' list, then cutout's, n each */
+    uint32_t flags;          /* 1 write per-triangle data + light candidates, 2 count solid / cutout */
+} rt_info;
+
+/* decode a section's vertices into a position list for its build (and, with records, its per-triangle data) */
+static void encode_decode(id<MTLComputeCommandEncoder> c, const mgl_rt_geom *g, RtSection *s, uint32_t split, int records)
+{
+    id<MTLComputePipelineState> ps = builtin_compute(@"rt_decode");
+    int tris = s.ntris;
+    uint32_t *counts = (uint32_t *)((char *)s.tris->ptr + (size_t)tris * 48);
+    counts[0] = counts[1] = 0;
+    rt_info info = {(uint32_t)g->vbase, (uint32_t)g->stride, (uint32_t)g->ioff, g->itype == GL_UNSIGNED_SHORT ? 2u : 4u,
+                    (uint32_t)(tris * 3), g->base_vertex, g->ent_off, g->translucent ? 1u : 0u,
+                    mgl_rt_light_ids[0], mgl_rt_light_ids[1], records ? s.lcap : 0,
+                    rt_tiles ? rt_tiles_w : 0, rt_tiles_h, rt_tiles_aw, rt_tiles_ah, split,
+                    (records ? 1u : 0u) | (rt_tiles ? 2u : 0u)};
+    [c setComputePipelineState:ps];
+    [c setBuffer:OBJ(id<MTLBuffer>, g->vbuf->mtl) offset:0 atIndex:0];
+    [c setBuffer:OBJ(id<MTLBuffer>, g->ibuf->mtl) offset:0 atIndex:1];
+    [c setBuffer:OBJ(id<MTLBuffer>, s.pos->mtl) offset:0 atIndex:2];
+    [c setBytes:&info length:sizeof info atIndex:3];
+    [c setBuffer:OBJ(id<MTLBuffer>, s.tris->mtl) offset:0 atIndex:4];
+    [c setBuffer:OBJ(id<MTLBuffer>, (s.lights ? s.lights : s.tris)->mtl) offset:0 atIndex:5];
+    [c setBuffer:OBJ(id<MTLBuffer>, s.tris->mtl) offset:(NSUInteger)tris * 48 atIndex:6];
+    [c setBuffer:OBJ(id<MTLBuffer>, (rt_tiles ? rt_tiles : s.tris)->mtl) offset:0 atIndex:7];
+    [c dispatchThreads:MTLSizeMake((NSUInteger)tris, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+    use_buffer(s.tris);
+    use_buffer(s.lights);
+    use_buffer(rt_tiles);
+    use_buffer(g->vbuf);
+    use_buffer(g->ibuf);
+    use_buffer(s.pos);
+}
+
+static MTLAccelerationStructureTriangleGeometryDescriptor *tri_geometry(mglb_buffer *pos, size_t first, int tris, BOOL opaque)
+{
+    MTLAccelerationStructureTriangleGeometryDescriptor *tg = [MTLAccelerationStructureTriangleGeometryDescriptor descriptor];
+    tg.vertexBuffer = OBJ(id<MTLBuffer>, pos->mtl);
+    tg.vertexBufferOffset = first * 36;
+    tg.vertexStride = 12;
+    tg.vertexFormat = MTLAttributeFormatFloat3;
+    tg.triangleCount = (NSUInteger)tris;
+    tg.opaque = opaque; /* NO: mcm_trace runs the alpha test on the hit */
+    return tg;
+}
+
+/* A section seen for the first time: its structure object now (the scene this frame refers to it), its decode and
+   build encoded later in this frame's batches */
+static RtSection *section_new(const mgl_rt_geom *g, const rt_key *k, uint64_t h)
+{
+    int tris = g->count / 3;
+    if (tris <= 0 || !builtin_compute(@"rt_decode"))
+        return nil;
     rt_built++;
-    rt_built_tris += (unsigned long)(g->count / 3);
+    rt_built_tris += (unsigned long)tris;
     if (getenv("MGL_RT_DEBUG") && atoi(getenv("MGL_RT_DEBUG"))) {
-        rt_key r = k;
+        rt_key r = *k;
         r.gen = 0;
         r.ent_off = 0;
         r.lmin = r.lmax = 0;
@@ -3835,71 +4158,69 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer
         else
             [rt_ranges addObject:rk];
     }
-    id<MTLComputePipelineState> ps = rt_decode_pipeline();
-    int tris = g->count / 3;
-    if (!ps || tris <= 0)
-        return nil;
-    /* 1. decode the section's vertices into a float3 triangle list */
-    mglb_buffer *pos = mglb_buffer_new((size_t)tris * 3 * 12);
-    mglb_buffer *tri = mglb_buffer_new((size_t)tris * 48);
-    if (!pos || !tri) {
-        mglb_buffer_release(pos);
-        mglb_buffer_release(tri);
-        return nil;
-    }
+    RtSection *s = [RtSection new];
+    s.ntris = tris;
+    s.tris = mglb_buffer_new((size_t)tris * 48 + 16); /* + solid / cutout counts */
     uint32_t lcap = mgl_rt_light_ids[0] >= 0 && g->ent_off >= 0 ? (uint32_t)(tris < 1024 ? tris : 1024) : 0;
-    mglb_buffer *lights = lcap ? mglb_buffer_new(16 + (size_t)lcap * 16) : NULL;
-    if (!lights)
+    s.lights = lcap ? mglb_buffer_new(16 + (size_t)lcap * 16) : NULL;
+    if (!s.lights)
         lcap = 0;
     else
-        *(uint32_t *)lights->ptr = 0; /* candidate count */
-    struct { uint32_t vbase, stride, ioff, itype, count; int32_t base_vertex, ent_off; uint32_t translucent;
-             int32_t lmin, lmax; uint32_t lcap; } info = {
-        (uint32_t)g->vbase, (uint32_t)g->stride, (uint32_t)g->ioff, g->itype == GL_UNSIGNED_SHORT ? 2u : 4u,
-        (uint32_t)(tris * 3), g->base_vertex, g->ent_off, g->translucent ? 1u : 0u,
-        mgl_rt_light_ids[0], mgl_rt_light_ids[1], lcap};
-    id<MTLComputeCommandEncoder> c = compute_encoder();
-    [c setComputePipelineState:ps];
-    [c setBuffer:OBJ(id<MTLBuffer>, g->vbuf->mtl) offset:0 atIndex:0];
-    [c setBuffer:OBJ(id<MTLBuffer>, g->ibuf->mtl) offset:0 atIndex:1];
-    [c setBuffer:OBJ(id<MTLBuffer>, pos->mtl) offset:0 atIndex:2];
-    [c setBytes:&info length:sizeof info atIndex:3];
-    [c setBuffer:OBJ(id<MTLBuffer>, tri->mtl) offset:0 atIndex:4];
-    [c setBuffer:OBJ(id<MTLBuffer>, (lights ? lights : tri)->mtl) offset:0 atIndex:5];
-    use_buffer(tri);
-    use_buffer(lights);
-    [c dispatchThreads:MTLSizeMake((NSUInteger)tris, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
-    use_buffer(g->vbuf);
-    use_buffer(g->ibuf);
-    /* 2. build its acceleration structure (the position buffer is only needed during the build) */
-    MTLAccelerationStructureTriangleGeometryDescriptor *tg = [MTLAccelerationStructureTriangleGeometryDescriptor descriptor];
-    tg.vertexBuffer = OBJ(id<MTLBuffer>, pos->mtl);
-    tg.vertexStride = 12;
-    tg.vertexFormat = MTLAttributeFormatFloat3;
-    tg.triangleCount = (NSUInteger)tris;
-    tg.opaque = NO; /* mcm_trace runs the alpha test on cutout triangles (grass, leaves) */
-    MTLPrimitiveAccelerationStructureDescriptor *pd = [MTLPrimitiveAccelerationStructureDescriptor descriptor];
-    pd.geometryDescriptors = @[ tg ];
-    id<MTLAccelerationStructure> as = build_as(pd);
-    use_buffer(pos);
-    mglb_buffer_release(pos);
-    if (!as) {
-        mglb_buffer_release(tri);
-        mglb_buffer_release(lights);
-        return nil;
-    }
-    if (!rt_sections)
-        rt_sections = [NSMutableDictionary dictionary];
-    s = [RtSection new];
-    s.as = as;
-    s.tris = tri;
-    s.lights = lights;
+        *(uint32_t *)s.lights->ptr = 0; /* candidate count */
     s.lcap = lcap;
-    s.last_frame = rt_frame;
-    rt_sections[key] = s;
-    *tris_out = tri;
-    *sec_out = s;
-    return as;
+    s.pos = mglb_buffer_new((size_t)tris * 36);
+    if (!s.tris || !s.pos)
+        return nil;
+    MTLPrimitiveAccelerationStructureDescriptor *pd = [MTLPrimitiveAccelerationStructureDescriptor descriptor];
+    /* placeholder buffer for the size query; the real one is set once decoded */
+    pd.geometryDescriptors = @[ tri_geometry(s.tris, 0, tris, NO) ];
+    pd.usage = rt_upgrade_on() ? MTLAccelerationStructureUsagePreferFastBuild : MTLAccelerationStructureUsageNone;
+    s.as = new_as(pd);
+    if (!s.as)
+        return nil;
+    s.desc = pd;
+    s.last_frame = s.built_frame = rt_frame;
+    s.state = rt_tiles ? 1 : 0;
+    rt_tab_insert(k, h, s);
+    return s;
+}
+
+/* A section kept long enough: build it again for tracing (see the top of this part) */
+static void section_upgrade(RtSection *s)
+{
+    int tris = s.ntris;
+    const uint32_t *counts = (const uint32_t *)((const char *)s.tris->ptr + (size_t)tris * 48);
+    uint32_t solid = s.state == 1 ? counts[0] : 0, cut = s.state == 1 ? counts[1] : (uint32_t)tris;
+    if (solid + cut != (uint32_t)tris || !rt_opaque_on()) /* not counted (no atlas map yet): all cutout */
+        solid = 0, cut = (uint32_t)tris;
+    MTLPrimitiveAccelerationStructureDescriptor *pd = [MTLPrimitiveAccelerationStructureDescriptor descriptor];
+    int split = solid && cut;
+    if (split) {
+        pd.geometryDescriptors = @[ tri_geometry(s.tris, 0, tris, YES), tri_geometry(s.tris, (size_t)tris, tris, NO) ];
+        rt_split++;
+    } else {
+        pd.geometryDescriptors = @[ tri_geometry(s.tris, 0, tris, solid ? YES : NO) ];
+        rt_solid += solid ? 1 : 0;
+    }
+#if defined(__MAC_26_0) && __MAC_OS_X_VERSION_MAX_ALLOWED >= __MAC_26_0
+    if (@available(macOS 26.0, *)) /* older SDKs: the default build, already better for tracing than the first */
+        pd.usage = MTLAccelerationStructureUsagePreferFastIntersection;
+#endif
+    id<MTLAccelerationStructure> as = new_as(pd);
+    mglb_buffer *pos = as ? mglb_buffer_new((size_t)tris * 36 * (split ? 2 : 1)) : NULL;
+    if (!pos)
+        return;
+    mglb_buffer_release(s.pos);
+    s.pos = pos;
+    rt_retire(s.as);
+    s.as = as;
+    s.desc = pd;
+    /* not counted before (no alpha map at its first build) but there is one now: count while decoding, and come
+       back once more for the split */
+    s.state = s.state == 0 && rt_tiles && rt_opaque_on() ? 1 : 2;
+    s.built_frame = rt_frame;
+    rt_upgraded++;
+    rt_upgraded_tris += (unsigned long)tris;
 }
 
 /* The light list for mcm_lights_near (layout in core/mgl_program.c): every section's light candidates, one light
@@ -4046,12 +4367,12 @@ static id<MTLAccelerationStructure> entity_as(mglb_buffer **tris_out)
     tg.vertexStride = 12;
     tg.vertexFormat = MTLAttributeFormatFloat3;
     tg.triangleCount = (NSUInteger)n;
-    tg.opaque = NO; /* the same path as terrain: mcm_opaque_at passes them at once (cutoff byte 0) */
+    tg.opaque = YES; /* solid (cutoff byte 0): the ray hardware takes the hit without asking mcm_trace */
     MTLPrimitiveAccelerationStructureDescriptor *pd = [MTLPrimitiveAccelerationStructureDescriptor descriptor];
     pd.geometryDescriptors = @[ tg ];
     pd.usage = MTLAccelerationStructureUsagePreferFastBuild;
     use_buffer(pos);
-    id<MTLAccelerationStructure> as = build_as(pd);
+    id<MTLAccelerationStructure> as = build_as(pd, "rt build entities");
     mglb_buffer_release(pos);
     if (!as) {
         mglb_buffer_release(rec);
@@ -4095,6 +4416,8 @@ static void rt_update(const mgl_rt_geom *g, int n)
         return;
     }
     rt_frame++;
+    [rt_retired[rt_frame % 8] removeAllObjects];
+    rt_alpha_tiles();
     NSMutableArray<id<MTLAccelerationStructure>> *parts = [NSMutableArray arrayWithCapacity:(NSUInteger)n];
     size_t slots = (size_t)n + 1; /* + the entities */
     mglb_buffer *inst = mglb_buffer_new(sizeof(MTLAccelerationStructureUserIDInstanceDescriptor) * slots);
@@ -4108,18 +4431,39 @@ static void rt_update(const mgl_rt_geom *g, int n)
     int count = 0;
     RtSection *__strong *secs = (RtSection *__strong *)calloc((size_t)(n ? n : 1), sizeof(RtSection *));
     int *sec_geom = calloc((size_t)(n ? n : 1), sizeof(int));
+    /* sections to decode and build this frame: new ones (with their per-triangle data) and ones rebuilt for tracing */
+    NSMutableArray<RtSection *> *todo = [NSMutableArray array];
+    int *todo_geom = calloc((size_t)(n ? n : 1), sizeof(int)), *todo_new = calloc((size_t)(n ? n : 1), sizeof(int));
+    int upgrades = 0;
+    long upgrade_tris = 0;
     for (int i = 0; i < n; i++) {
-        mglb_buffer *tris = NULL;
-        RtSection *sec = nil;
         if (mgl_rt_radius > 0 && !section_in_reach(&g[i]))
             continue;
-        id<MTLAccelerationStructure> as = section_as(&g[i], &tris, &sec);
-        if (!as)
-            continue;
+        rt_key k = make_key(&g[i]);
+        uint64_t h = rt_key_hash(&k);
+        RtSection *sec = rt_tab_find(&k, h);
+        if (!sec) {
+            if (!(sec = section_new(&g[i], &k, h)))
+                continue;
+            todo_geom[todo.count] = i;
+            todo_new[todo.count] = 1;
+            [todo addObject:sec];
+        } else if (sec.state < 2 && rt_upgrade_on() && rt_frame - sec.built_frame >= 90 && upgrades < 24 &&
+                   upgrade_tris + sec.ntris <= 400000) { /* a few per frame, so standing still settles in ~1 s */
+            section_upgrade(sec);
+            if (sec.desc) {
+                upgrades++;
+                upgrade_tris += sec.ntris;
+                todo_geom[todo.count] = i;
+                todo_new[todo.count] = 0;
+                [todo addObject:sec];
+            }
+        }
+        sec.last_frame = rt_frame;
         secs[count] = sec;
         sec_geom[count] = i;
-        addr[count] = OBJ(id<MTLBuffer>, tris->mtl).gpuAddress;
-        rt_tris_c[count] = OBJ(id<MTLBuffer>, tris->mtl);
+        addr[count] = OBJ(id<MTLBuffer>, sec.tris->mtl).gpuAddress;
+        rt_tris_c[count] = OBJ(id<MTLBuffer>, sec.tris->mtl);
         MTLAccelerationStructureUserIDInstanceDescriptor *d = &descs[count];
         memset(d, 0, sizeof *d);
         /* column-major 4x3: identity rotation, translation = camera-relative region origin */
@@ -4127,22 +4471,43 @@ static void rt_update(const mgl_rt_geom *g, int n)
         d->transformationMatrix.columns[1] = MTLPackedFloat3Make(0, 1, 0);
         d->transformationMatrix.columns[2] = MTLPackedFloat3Make(0, 0, 1);
         d->transformationMatrix.columns[3] = MTLPackedFloat3Make(g[i].region[0], g[i].region[1], g[i].region[2]);
-        /* no instance Opaque flag: it overrides geometry opaque = NO, so cutout triangles would never reach the
+        /* no instance Opaque flag: it overrides the geometries' own, so cutout triangles would never reach the
            alpha test in mcm_trace (every hit was solid; foliage cast square shadows) */
         d->options = MTLAccelerationStructureInstanceOptionNone;
         d->mask = g[i].translucent ? 0x02 : 0x01; /* mcm_trace sees solid and cutout terrain only (mask 1) */
         d->accelerationStructureIndex = (uint32_t)count;
         d->userID = (uint32_t)i;
-        [parts addObject:as];
+        [parts addObject:sec.as];
         count++;
     }
+    /* all decodes in one compute pass, then all builds in one pass (they overlap on the GPU; one pass pair per
+       section used to cost two encoder switches each) */
+    if (todo.count) {
+        id<MTLComputeCommandEncoder> c = compute_encoder();
+        pt_label("rt decode");
+        for (NSUInteger j = 0; j < todo.count; j++) {
+            RtSection *s = todo[j];
+            encode_decode(c, &g[todo_geom[j]], s, s.desc.geometryDescriptors.count == 2 ? (uint32_t)s.ntris : 0,
+                          todo_new[j]);
+        }
+        id<MTLAccelerationStructureCommandEncoder> e = as_encoder("rt build sections");
+        for (RtSection *s in todo) {
+            for (MTLAccelerationStructureGeometryDescriptor *gd in s.desc.geometryDescriptors)
+                ((MTLAccelerationStructureTriangleGeometryDescriptor *)gd).vertexBuffer = OBJ(id<MTLBuffer>, s.pos->mtl);
+            encode_build(e, s.as, s.desc);
+            mglb_buffer_release(s.pos); /* the pool keeps it until the GPU is done with it */
+            s.pos = NULL;
+            s.desc = nil;
+        }
+        [e endEncoding];
+    }
+    free(todo_geom);
+    free(todo_new);
     /* forget sections unused for ~4 s */
-    NSMutableArray<NSData *> *old = [NSMutableArray array];
-    [rt_sections enumerateKeysAndObjectsUsingBlock:^(NSData *k, RtSection *s, BOOL *stop) {
-      if (rt_frame - s.last_frame > 240)
-          [old addObject:k];
-    }];
-    [rt_sections removeObjectsForKeys:old];
+    if (rt_frame % 60 == 0)
+        for (size_t i = 0; i < rt_tab_cap; i++)
+            if (rt_tab[i].sec && rt_frame - ((__bridge RtSection *)rt_tab[i].sec).last_frame > 240)
+                rt_tab_drop(i);
     rt_build_lights(g, secs, sec_geom, count);
     for (int i = 0; i < count; i++)
         secs[i] = nil;
@@ -4180,7 +4545,9 @@ static void rt_update(const mgl_rt_geom *g, int n)
     idesc.instanceCount = (NSUInteger)count;
     idesc.instanceDescriptorBuffer = OBJ(id<MTLBuffer>, inst->mtl);
     idesc.instanceDescriptorType = MTLAccelerationStructureInstanceDescriptorTypeUserID;
-    rt_scene = build_as(idesc);
+    if (rt_scene)
+        rt_retire(rt_scene);
+    rt_scene = build_as(idesc, "rt build scene");
     rt_scene_parts = parts;
     free(rt_parts_c);
     rt_parts_c = (__unsafe_unretained id<MTLResource> *)calloc((size_t)count, sizeof(id));
@@ -4198,10 +4565,12 @@ static void rt_update(const mgl_rt_geom *g, int n)
     if (!logged++ || (debug && rt_frame % 120 == 0))
     {
         mgl_log("ray tracing: scene built from %d of %d terrain sections (%lu cached), %d entity triangles; %lu section "
-                "structures (%luk triangles) built in the last %d frames, %lu of them ranges built before",
-                count - (ent ? 1 : 0), n, (unsigned long)rt_sections.count, ent ? rt_ent_n : 0, rt_built,
-                rt_built_tris / 1000, logged == 1 ? 1 : 120, rt_rebuilt);
-        rt_built = rt_built_tris = rt_rebuilt = 0;
+                "structures (%luk triangles) built in the last %d frames, %lu of them ranges built before; %lu rebuilt "
+                "for tracing (%luk triangles: %lu split solid/cutout, %lu all solid)",
+                count - (ent ? 1 : 0), n, (unsigned long)rt_tab_live, ent ? rt_ent_n : 0, rt_built,
+                rt_built_tris / 1000, logged == 1 ? 1 : 120, rt_rebuilt, rt_upgraded, rt_upgraded_tris / 1000, rt_split,
+                rt_solid);
+        rt_built = rt_built_tris = rt_rebuilt = rt_upgraded = rt_upgraded_tris = rt_split = rt_solid = 0;
     }
 }
 
@@ -4654,6 +5023,20 @@ static int upscale_on(void)
     return on;
 }
 
+/* MCMETAL_UPSCALE_SCALE=N: with the upscaler on, the game renders at N% of the Retina size each way (34-100,
+   default 50 = the window's point size). The patched GLFW reports the same size (see build_mac.sh), computed the
+   same way: floor(points * backing scale * N / 100). */
+static int render_pct(void)
+{
+    static int pct;
+    if (!pct) {
+        const char *e = getenv("MCMETAL_UPSCALE_SCALE");
+        pct = e ? atoi(e) : 50;
+        pct = pct < 34 ? 34 : pct > 100 ? 100 : pct;
+    }
+    return pct;
+}
+
 static void update_size(mgl_ctx *c)
 {
     CGSize pt = c->layer.bounds.size, px = pt;
@@ -4664,8 +5047,8 @@ static void update_size(mgl_ctx *c)
     if (!CGSizeEqualToSize(c->layer.drawableSize, px))
         c->layer.drawableSize = px;
     int up = upscale_on() && c->layer.contentsScale > 1;
-    c->w = (int)(up ? pt.width : px.width);
-    c->h = (int)(up ? pt.height : px.height);
+    c->w = (int)(up ? floor(pt.width * c->layer.contentsScale * render_pct() / 100.0) : px.width);
+    c->h = (int)(up ? floor(pt.height * c->layer.contentsScale * render_pct() / 100.0) : px.height);
 }
 
 static id<MTLTexture> upscaled; /* last MetalFX output, for test screenshots */
@@ -4788,6 +5171,7 @@ static struct {
     int failed, reset;         /* failed: the interpolator */
     int snap_failed;
     double hand;
+    const mglb_texture *depth_src; /* the main target's depth at the last snapshot: draws into it are the world */
 } fg;
 
 static const char *fg_msl =
@@ -4929,6 +5313,7 @@ static void fg_snapshot(const mgl_target *t)
             fg.cur ^= 1;
         }
         fg.snap_frame = frames_presented + 1;
+        fg.depth_src = t->depth;
         end_encoders();
         id<MTLBlitCommandEncoder> b = [current_cb() blitCommandEncoder];
         [b copyFromTexture:col toTexture:fg.color[fg.cur]];
@@ -5038,16 +5423,21 @@ static void fg_history_reset(void)
 
 /* ================================================================ MetalFX temporal upscaler (MCMETAL_UPSCALE=2)
 
-   Like MCMETAL_UPSCALE=1 the game renders at half the Retina size each way, but MetalFX's temporal upscaler
-   rebuilds the full-size world picture from this frame and the last ones (using the world snapshot's depth and
-   camera motion, the same as frame interpolation), instead of sharpening one frame on its own. The HUD isn't
-   in the snapshot: pixels where the finished frame differs from the world picture (and their neighbours) come
-   from the spatial upscaler instead, so text and the hotbar don't smear. Needs a shader pack (Iris's camera
-   uniforms); without one, and in menus, frames use the spatial upscaler. No jitter: packs do their own TAA.
-   Measured on an M3 Max (1728x965 -> 3456x1930, 2026-10-22): NOT worth it yet. ~2-4 ms more GPU (SEUS 25.4 ->
-   27.2 ms, Complementary 5.4 -> 9.8), so pacing drops a step (SEUS 40 -> 30, Complementary 118 -> 59), and the
-   picture is no sharper (very slightly softer on SEUS): without jitter there's no sub-pixel detail to gather.
-   Kept as an experiment for a jittered path. */
+   Like MCMETAL_UPSCALE=1 the game renders below the Retina size (MCMETAL_UPSCALE_SCALE, default half each way),
+   but MetalFX's temporal upscaler rebuilds the full-size world picture from this frame and the last ones, using
+   the world snapshot's depth and camera motion (the same as frame interpolation). Needs a shader pack (Iris's
+   camera uniforms); without one, and in menus, frames use the spatial upscaler.
+   Jitter: world draws (into the main depth, depth tested or written, before the snapshot) are moved by a sub-pixel
+   offset from a Halton(2,3) sequence that changes every frame (vertex shaders get it through mcm_jitter, see
+   mgl_program.c), and MetalFX is told the offset, so it gathers detail finer than the render resolution. Packs
+   with their own TAA jitter too; turning the pack's TAA off lets MetalFX do it instead. MCMETAL_TU_JITTER=0 off;
+   MCMETAL_TU_JX / MCMETAL_TU_JY = -1 flip the sign MetalFX is told (convention check).
+   The HUD isn't in the snapshot: output pixels whose input footprint (the 2x2 input pixels around it) differs
+   from the world picture are the HUD, taken from the finished frame with sharp-edged bilinear filtering (pixel
+   exact at whole-number scales); everything else is MetalFX's world. That pass writes straight into the window.
+   History (M3 Max, 1728x965 -> 3456x1930, 2026-10-22, no jitter, HUD via a second, spatial MetalFX pass): ~2-4 ms
+   more GPU (SEUS 25.4 -> 27.2 ms, Complementary 5.4 -> 9.8) and no sharper; the jitter and the cheaper HUD pass
+   are the fix for both. */
 static int tu_enabled(void)
 {
     static int on = -1;
@@ -5055,7 +5445,7 @@ static int tu_enabled(void)
         const char *e = getenv("MCMETAL_UPSCALE");
         on = e && atoi(e) == 2;
         if (on)
-            mgl_log("temporal upscaler: on (with a shader pack; spatial otherwise)");
+            mgl_log("temporal upscaler: on (with a shader pack; spatial otherwise), render scale %d%%", render_pct());
     }
     return on;
 }
@@ -5063,42 +5453,124 @@ static int tu_enabled(void)
 static struct {
     id fx; /* id<MTLFXTemporalScaler> */
     id<MTLTexture> out, final;
-    id<MTLRenderPipelineState> pipe;
-    MTLPixelFormat pipe_fmt;
+    id<MTLRenderPipelineState> pipe[2]; /* by output: window (BGRA8), test-screenshot copy (fg.fmt) */
+    MTLPixelFormat pipe_fmt[2];
     NSUInteger ow, oh;
     int failed, reset, logged;
+    uint64_t jittered_frame; /* frame number (frames_presented + 1) whose world draws got jitter */
 } tu = {.reset = 1};
+
+/* Halton(base) for index i >= 1, in [0, 1) */
+static float halton(unsigned i, unsigned base)
+{
+    float f = 1, r = 0;
+    for (; i; i /= base) {
+        f /= (float)base;
+        r += f * (float)(i % base);
+    }
+    return r;
+}
+
+/* Frame n's jitter in input pixels, each in [-0.5, 0.5): +x = later columns, +y = later rows (GL row order, as
+   the snapshot is stored). The cycle covers each output pixel ~8 times: 8 x (output / input pixels), at most 64. */
+static void tu_jitter_px(uint64_t n, float j[2])
+{
+    double ratio = 100.0 / render_pct();
+    unsigned len = (unsigned)(8.0 * ratio * ratio + 0.5);
+    len = len < 8 ? 8 : len > 64 ? 64 : len;
+    unsigned i = (unsigned)(n % len) + 1;
+    j[0] = halton(i, 2) - 0.5f;
+    j[1] = halton(i, 3) - 0.5f;
+}
+
+void mglb_tu_jitter(const mgl_target *t, float out[2])
+{
+    out[0] = out[1] = 0;
+    /* only on frames that will use the temporal path: the last frame had a snapshot (so this one is in the world
+       too), and only before this frame's snapshot (the HUD draws into the same depth afterwards) */
+    if (!tu_enabled() || tu.failed || !t->depth || t->depth != fg.depth_src || fg.snap_frame != frames_presented ||
+        t->width != fg.w || t->height != fg.h)
+        return;
+    float j[2];
+    tu_jitter_px(frames_presented + 1, j);
+    out[0] = 2.0f * j[0] / (float)t->width; /* clip x: +2/w moves one column */
+    out[1] = 2.0f * j[1] / (float)t->height; /* GL clip y: +2/h moves one row up = one later row */
+    tu.jittered_frame = frames_presented + 1;
+}
 
 static const char *tu_msl =
     "#include <metal_stdlib>\nusing namespace metal;\n"
+    "struct TuU { float2 in_per_out; float flip_h, sharp; };\n"
     "vertex float4 tu_vs(uint v [[vertex_id]]) { float2 p = float2((v << 1) & 2, v & 2); return float4(p * 2.0 - 1.0, 0.0, 1.0); }\n"
-    /* all textures in GL row order, the output too: row r of each is the same place */
-    "fragment float4 tu_fs(float4 pos [[position]], texture2d<float> world_up [[texture(0)]], texture2d<float> full_up [[texture(1)]],\n"
-    "                      texture2d<float> full [[texture(2)]], texture2d<float> world [[texture(3)]]) {\n"
-    "    uint2 o = uint2(pos.xy);\n"
+    /* world_up / full / world are in GL row order; flip_h > 0: the output is the window (top row first) */
+    "fragment float4 tu_fs(float4 pos [[position]], texture2d<float> world_up [[texture(0)]],\n"
+    "                      texture2d<float> full [[texture(1)]], texture2d<float> world [[texture(2)]], constant TuU &u [[buffer(0)]]) {\n"
+    "    float2 o = pos.xy;\n"
+    "    if (u.flip_h > 0.0) o.y = u.flip_h - o.y;\n"
     "    int2 isz = int2(full.get_width(), full.get_height());\n"
-    "    int2 c = int2(pos.xy / float2(world_up.get_width(), world_up.get_height()) * float2(isz));\n"
-    "    float m = 0.0;\n"
-    "    for (int y = -1; y <= 1; y++)\n"
-    "        for (int x = -1; x <= 1; x++) {\n"
-    "            uint2 q = uint2(clamp(c + int2(x, y), int2(0), isz - 1));\n"
-    "            float3 d = abs(full.read(q).rgb - world.read(q).rgb);\n"
-    "            m = max(m, max(d.r, max(d.g, d.b)));\n"
-    "        }\n"
-    "    float4 r = m > 0.002 ? full_up.read(o) : world_up.read(o);\n"
-    "    return float4(r.rgb, 1.0);\n"
+    "    float2 t = o * u.in_per_out - 0.5;\n"
+    "    float2 b = floor(t), f = t - b;\n"
+    "    int2 c0 = clamp(int2(b), int2(0), isz - 1), c1 = clamp(int2(b) + 1, int2(0), isz - 1);\n"
+    "    float4 h00 = full.read(uint2(c0)), h10 = full.read(uint2(c1.x, c0.y)), h01 = full.read(uint2(c0.x, c1.y)), h11 = full.read(uint2(c1));\n"
+    "    float3 d = max(max(abs(h00.rgb - world.read(uint2(c0)).rgb), abs(h10.rgb - world.read(uint2(c1.x, c0.y)).rgb)),\n"
+    "                   max(abs(h01.rgb - world.read(uint2(c0.x, c1.y)).rgb), abs(h11.rgb - world.read(uint2(c1)).rgb)));\n"
+    "    if (max(d.r, max(d.g, d.b)) <= 0.002) return float4(world_up.read(uint2(o)).rgb, 1.0);\n"
+    "    float2 k = clamp((f - 0.5) * u.sharp + 0.5, 0.0, 1.0);\n" /* sharp bilinear: hard texel edges, 1-pixel blend */
+    "    return float4(mix(mix(h00, h10, k.x), mix(h01, h11, k.x), k.y).rgb, 1.0);\n"
     "}\n";
 
-/* The finished frame (window_color, HUD included) upscaled to ow x oh with the world from the temporal upscaler,
-   or nil (off, no fresh snapshot, or MetalFX can't): then the caller uses the spatial upscaler. */
-static id<MTLTexture> tu_frame(mgl_ctx *c, id<MTLTexture> win, NSUInteger ow, NSUInteger oh)
+static id<MTLRenderPipelineState> tu_pipeline(int slot, MTLPixelFormat fmt)
+{
+    if (tu.pipe[slot] && tu.pipe_fmt[slot] == fmt)
+        return tu.pipe[slot];
+    NSError *e = nil;
+    id<MTLLibrary> lib = [dev newLibraryWithSource:[NSString stringWithUTF8String:tu_msl] options:nil error:&e];
+    MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
+    pd.vertexFunction = [lib newFunctionWithName:@"tu_vs"];
+    pd.fragmentFunction = [lib newFunctionWithName:@"tu_fs"];
+    pd.colorAttachments[0].pixelFormat = fmt;
+    tu.pipe[slot] = lib ? [dev newRenderPipelineStateWithDescriptor:pd error:&e] : nil;
+    tu.pipe_fmt[slot] = fmt;
+    if (!tu.pipe[slot])
+        mgl_log("temporal upscaler: HUD shader failed: %s", e.localizedDescription.UTF8String);
+    return tu.pipe[slot];
+}
+
+/* The world + HUD pass: into dst (ow x oh), the window's way up when flip */
+static int tu_compose(id<MTLTexture> win, id<MTLTexture> dst, int slot, int flip)
+{
+    id<MTLRenderPipelineState> ps = tu_pipeline(slot, dst.pixelFormat);
+    if (!ps)
+        return 0;
+    struct { float in_per_out[2], flip_h, sharp; } u = {
+        {(float)fg.w / (float)dst.width, (float)fg.h / (float)dst.height}, flip ? (float)dst.height : 0.0f,
+        (float)dst.width / (float)fg.w};
+    MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
+    rp.colorAttachments[0].texture = dst;
+    rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+    rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+    id<MTLRenderCommandEncoder> e = [current_cb() renderCommandEncoderWithDescriptor:rp];
+    [e setRenderPipelineState:ps];
+    [e setFragmentTexture:tu.out atIndex:0];
+    [e setFragmentTexture:win atIndex:1];
+    [e setFragmentTexture:fg.color[fg.cur] atIndex:2];
+    [e setFragmentBytes:&u length:sizeof u atIndex:0];
+    [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    [e endEncoding];
+    return 1;
+}
+
+/* The finished frame (window_color, HUD included) upscaled into the drawable with the world from the temporal
+   upscaler. 0 (nothing drawn) when off, no fresh snapshot, or MetalFX can't: then the caller uses the spatial one. */
+static int tu_frame(id<MTLTexture> win, id<MTLTexture> drawable)
 {
     if (!tu_enabled() || tu.failed)
-        return nil;
+        return 0;
+    NSUInteger ow = drawable.width, oh = drawable.height;
     if (fg.snap_frame != frames_presented + 1 || !fg.color[0] || (int)win.width != fg.w || (int)win.height != fg.h ||
         win.pixelFormat != fg.fmt) {
         tu.reset = 1;
-        return nil;
+        return 0;
     }
     if (!tu.fx || tu.ow != ow || tu.oh != oh || [(id<MTLFXTemporalScaler>)tu.fx colorTextureFormat] != fg.fmt ||
         [(id<MTLFXTemporalScaler>)tu.fx inputWidth] != (NSUInteger)fg.w || [(id<MTLFXTemporalScaler>)tu.fx inputHeight] != (NSUInteger)fg.h) {
@@ -5116,35 +5588,29 @@ static id<MTLTexture> tu_frame(mgl_ctx *c, id<MTLTexture> win, NSUInteger ow, NS
         if (!fx) {
             mgl_log("temporal upscaler: MetalFX wouldn't make one for %dx%d -> %lux%lu, using the spatial one", fg.w, fg.h,
                     (unsigned long)ow, (unsigned long)oh);
+            if (@available(macOS 14.4, *))
+                mgl_log("temporal upscaler: this Mac takes %.2fx to %.2fx (output / input)",
+                        [MTLFXTemporalScalerDescriptor supportedInputContentMinScaleForDevice:dev],
+                        [MTLFXTemporalScalerDescriptor supportedInputContentMaxScaleForDevice:dev]);
             tu.failed = 1;
-            return nil;
+            return 0;
         }
         tu.fx = fx;
         tu.ow = ow;
         tu.oh = oh;
         tu.out = fg_texture(fg.fmt, (int)ow, (int)oh, fx.outputTextureUsage);
-        tu.final = fg_texture(fg.fmt, (int)ow, (int)oh, MTLTextureUsageRenderTarget);
+        tu.final = nil;
         tu.reset = 1;
         mgl_log("temporal upscaler: %dx%d -> %lux%lu", fg.w, fg.h, (unsigned long)ow, (unsigned long)oh);
     }
-    if (!tu.pipe || tu.pipe_fmt != fg.fmt) {
-        NSError *e = nil;
-        id<MTLLibrary> lib = [dev newLibraryWithSource:[NSString stringWithUTF8String:tu_msl] options:nil error:&e];
-        MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
-        pd.vertexFunction = [lib newFunctionWithName:@"tu_vs"];
-        pd.fragmentFunction = [lib newFunctionWithName:@"tu_fs"];
-        pd.colorAttachments[0].pixelFormat = fg.fmt;
-        tu.pipe = lib ? [dev newRenderPipelineStateWithDescriptor:pd error:&e] : nil;
-        tu.pipe_fmt = fg.fmt;
-        if (!tu.pipe) {
-            mgl_log("temporal upscaler: HUD shader failed: %s", e.localizedDescription.UTF8String);
-            tu.failed = 1;
-            return nil;
-        }
+    float j[2] = {0, 0};
+    if (tu.jittered_frame == fg.snap_frame)
+        tu_jitter_px(fg.snap_frame, j);
+    static float sx, sy;
+    if (!sx) {
+        sx = getenv("MCMETAL_TU_JX") && atoi(getenv("MCMETAL_TU_JX")) < 0 ? -1.0f : 1.0f;
+        sy = getenv("MCMETAL_TU_JY") && atoi(getenv("MCMETAL_TU_JY")) < 0 ? -1.0f : 1.0f;
     }
-    id<MTLTexture> hud = upscale(c, win, ow, oh); /* the whole frame, spatially, for the HUD's pixels */
-    if (!hud)
-        return nil;
     id<MTLFXTemporalScaler> fx = tu.fx;
     fx.colorTexture = fg.color[fg.cur];
     fx.depthTexture = fg.depth;
@@ -5152,8 +5618,8 @@ static id<MTLTexture> tu_frame(mgl_ctx *c, id<MTLTexture> win, NSUInteger ow, NS
     fx.outputTexture = tu.out;
     fx.inputContentWidth = fg.w;
     fx.inputContentHeight = fg.h;
-    fx.jitterOffsetX = 0;
-    fx.jitterOffsetY = 0;
+    fx.jitterOffsetX = sx * j[0];
+    fx.jitterOffsetY = sy * j[1];
     fx.motionVectorScaleX = (float)fg.w;
     fx.motionVectorScaleY = (float)fg.h;
     fx.depthReversed = NO;
@@ -5161,24 +5627,24 @@ static id<MTLTexture> tu_frame(mgl_ctx *c, id<MTLTexture> win, NSUInteger ow, NS
     tu.reset = 0;
     [fx encodeToCommandBuffer:current_cb()];
 
-    MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
-    rp.colorAttachments[0].texture = tu.final;
-    rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
-    rp.colorAttachments[0].storeAction = MTLStoreActionStore;
-    id<MTLRenderCommandEncoder> e = [current_cb() renderCommandEncoderWithDescriptor:rp];
-    [e setRenderPipelineState:tu.pipe];
-    [e setFragmentTexture:tu.out atIndex:0];
-    [e setFragmentTexture:hud atIndex:1];
-    [e setFragmentTexture:win atIndex:2];
-    [e setFragmentTexture:fg.color[fg.cur] atIndex:3];
-    [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
-    [e endEncoding];
-    upscaled = tu.final; /* test screenshots */
+    if (!tu_compose(win, drawable, 0, 1)) {
+        tu.failed = 1;
+        return 0;
+    }
+    static int shots = -1;
+    if (shots < 0)
+        shots = getenv("MGL_SHOT_DIR") != NULL;
+    if (shots) { /* test screenshots read the shown frame back: the window can't be read, so draw it once more */
+        if (!tu.final || tu.final.width != ow || tu.final.height != oh)
+            tu.final = fg_texture(fg.fmt, (int)ow, (int)oh, MTLTextureUsageRenderTarget);
+        if (tu_compose(win, tu.final, 1, 0))
+            upscaled = tu.final;
+    }
     if (!tu.logged) {
         tu.logged = 1;
-        mgl_log("temporal upscaler: first frame drawn");
+        mgl_log("temporal upscaler: first frame drawn (jitter %s)", tu.jittered_frame == fg.snap_frame ? "on" : "off");
     }
-    return tu.final;
+    return 1;
 }
 
 void mglb_window_size(int *w, int *h)
@@ -5434,10 +5900,9 @@ static void watch_drawable(id<CAMetalDrawable> drawable)
 static void draw_to_drawable(mgl_ctx *c, id<MTLTexture> src, id<CAMetalDrawable> drawable)
 {
     if (upscale_on()) {
-        NSUInteger ow = drawable.texture.width, oh = drawable.texture.height;
-        id<MTLTexture> up = src == OBJ(id<MTLTexture>, mgl->window_color->mtl) ? tu_frame(c, src, ow, oh) : nil;
-        if (!up)
-            up = upscale(c, src, ow, oh);
+        if (src == OBJ(id<MTLTexture>, mgl->window_color->mtl) && tu_frame(src, drawable.texture))
+            return;
+        id<MTLTexture> up = upscale(c, src, drawable.texture.width, drawable.texture.height);
         if (up)
             src = up;
     }

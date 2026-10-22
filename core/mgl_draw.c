@@ -215,6 +215,17 @@ static mglb_buffer *zero_attrib_buffer(void)
     return z;
 }
 
+/* RGB internal formats live in RGBA textures (Metal has no 3-channel formats); GL samples their alpha as 1 */
+static int rgb_only(GLenum internal)
+{
+    switch (internal) {
+    case GL_RGB: case GL_RGB8: case 3: case GL_SRGB8: case GL_RGB8_SNORM: case GL_RGB16F: case GL_RGB32F: case GL_RGB16:
+    case GL_SRGB: case GL_RGB4: case GL_RGB5: case GL_RGB10: case GL_RGB12: case GL_R3_G3_B2: case GL_RGB565:
+        return 1;
+    }
+    return 0;
+}
+
 static void gather_textures(mgl_draw *d, mgl_program *p, int compute)
 {
     for (int i = 0; i < p->x.num_textures && i < MGL_MAX_TEXTURES * 3; i++) {
@@ -246,8 +257,13 @@ static void gather_textures(mgl_draw *d, mgl_program *p, int compute)
                     continue;
                 mgl_texture *t = mgl_texture_obj(mgl->bound_tex[unit][tex_index_for_dim(slot->dim)]);
                 bt->tex = t ? t->mem : NULL;
-                if (t && t->has_swizzle) {
-                    memcpy(bt->swizzle, t->swizzle, sizeof bt->swizzle);
+                int no_alpha = t && rgb_only(t->internal_format);
+                if (t && (t->has_swizzle || no_alpha)) {
+                    static const int ident[4] = {GL_RED, GL_GREEN, GL_BLUE, GL_ALPHA};
+                    memcpy(bt->swizzle, t->has_swizzle ? t->swizzle : ident, sizeof bt->swizzle);
+                    for (int c = 0; no_alpha && c < 4; c++)
+                        if (bt->swizzle[c] == GL_ALPHA)
+                            bt->swizzle[c] = GL_ONE;
                     mglb_texture_need_view(bt->tex);
                 }
                 mgl_sampler *so = mgl_table_get(&mgl->samplers, mgl->bound_sampler[unit]);
@@ -426,6 +442,8 @@ static int build_draw(mgl_draw *d)
         o->type = k == 2 ? as_unsigned[o->type] : as_signed[o->type];
     }
 
+    if (mgl_tu_jitter_on()) /* world geometry (depth tested or written) moves with the temporal upscaler's jitter */
+        mgl_program_jitter(p, mgl->current_program, &d->target, d->depth_test || d->depth_write);
     gather_uniforms(d, p);
     d->uses_scene = p->x.uses_scene;
     gather_textures(d, p, 0);
@@ -578,6 +596,27 @@ void glMultiDrawElementsBaseVertex(GLenum mode, const GLsizei *count, GLenum typ
         if (mode == GL_TRIANGLES && type == GL_UNSIGNED_INT)
             d.cull_cmd = mgl_cull_take(count, drawcount, ib->mem);
         mglb_draw(&d);
+        return;
+    }
+    /* Geometry-shader programs (SEUS's shadow terrain: ~30 sections per call): the state is the same for every
+       section, so assemble it once and only change the range per section. */
+    if (drawcount > 1 && p && p->x.gs_max_vertices && ib && ib->mem && mode == GL_TRIANGLES &&
+        (type == GL_UNSIGNED_SHORT || type == GL_UNSIGNED_INT)) {
+        mgl_draw d;
+        if (!build_draw(&d))
+            return;
+        d.primitive = (int)mode;
+        d.instances = 1;
+        d.index_buf = ib->mem;
+        d.index_type = (int)type;
+        for (GLsizei i = 0; i < drawcount; i++) {
+            if (count[i] <= 0)
+                continue;
+            d.count = count[i];
+            d.index_offset = (size_t)ind[i];
+            d.base_vertex = bv[i];
+            submit(&d);
+        }
         return;
     }
     for (GLsizei i = 0; i < drawcount; i++)
