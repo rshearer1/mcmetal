@@ -295,6 +295,11 @@ dh_phase() { # dh / dh-shaders: Distant Horizons at noon, without a pack or with
     python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import bare_mc; bare_mc.fetch(*sys.argv[2:])' \
         "$SRC/tools" "$url" "$G/mods/distanthorizons.jar" "$sha" || { echo "could not download Distant Horizons"; return; }
     scene noon clear dh
+    # LODs for the test world, built ahead (tests/game/dh-lods.tgz: DH 3.3.3 at radius 128 on real OpenGL, ~12 min),
+    # so the phase shows distant terrain to the horizon from its first frame; DH would take far longer than a CI
+    # phase to build them. GAME_DH_COLD=1 starts without them (LOD build hitches, upload paths).
+    rm -f "$G/saves/metal/data"/DistantHorizons.sqlite*
+    [ "${GAME_DH_COLD:-}" = 1 ] || tar xzf "$SRC/tests/game/dh-lods.tgz" -C "$G/saves/metal"
     # GAME_DH_OPTS="graphics.quality.lodChunkRenderDistanceRadius=128 graphics.enableSsao=false": DH settings, as
     # keys under [client.advanced] of config/DistantHorizons.toml (DH fills in the rest); unset = DH's defaults
     rm -f "$G/config/DistantHorizons.toml"
@@ -303,7 +308,7 @@ dh_phase() { # dh / dh-shaders: Distant Horizons at noon, without a pack or with
         local kv; for kv in $GAME_DH_OPTS; do echo "client.advanced.${kv%%=*} = ${kv#*=}" >> "$G/config/DistantHorizons.toml"; done
     fi
     GAME_SHOTS=${GAME_SHOTS:-16} run_phase "$1" 360 metal "$2"
-    rm -f "$G/mods/distanthorizons.jar" "$G/config/DistantHorizons.toml"
+    rm -f "$G/mods/distanthorizons.jar" "$G/config/DistantHorizons.toml" "$G/saves/metal/data"/DistantHorizons.sqlite*
 }
 
 # packnight-NAME turns each pack's coloured block light on (all ship with it off except Solas and RV)
