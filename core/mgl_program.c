@@ -467,7 +467,7 @@ static void add_photon_rt(mgl_shader *s)
         return;
     static const char wrap[] =
         "\n#define MCMETAL_LIGHT_IDS 10032 10079\n"
-        "#define MCMETAL_RT_RADIUS 48\n" /* the light list's reach: block light rays end within 15 blocks of a pixel */
+        "#define MCMETAL_RT_RADIUS 72\n" /* the furthest light the list keeps (grid corner 55 + 16 of reach) */
         "int mcm_lights_near(vec3 p, int slot, out vec3 pos, out int blockId);\n"
         "float mcm_trace(vec3 origin, vec3 dir, float tmax);\n"
         "const vec3 mcm_photon_light[48] = vec3[48](\n"
@@ -509,6 +509,9 @@ static void add_photon_rt(mgl_shader *s)
         "    if (w[n] <= 0.0) continue;\n"
         "    all_ += c[n]; total += w[n]; n++;\n"
         "  }\n"
+        "#ifdef MCM_PHOTON_RT_DEBUG\n"
+        "  if (total <= 1e-4) return vec3(0.0); /* no light in reach: black */\n"
+        "#endif\n"
         "  if (total <= 1e-4) return lpv;\n"
         /* shadow rays only for lights that give at least a tenth of the light here; the faint ones count as seen */
         "  vec3 seen = vec3(0.0);\n"
