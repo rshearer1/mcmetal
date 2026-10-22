@@ -304,6 +304,9 @@ static int npclear, keep_clears;
 static id<MTLRenderCommandEncoder> begin_pass_at(int line, const mgl_target *t, unsigned clear_colors, const float *rgba,
                                                  int clear_depth, float depth);
 
+static void mark_clean(const pending_clear *r);
+static void target_dirty(const mgl_target *t);
+
 static void materialize_clears(void)
 {
     if (!npclear)
@@ -314,7 +317,10 @@ static void materialize_clears(void)
     npclear = 0;
     for (int i = 0; i < n; i++)
         if (list[i].colors || list[i].depth)
+        {
             begin_pass_at(__LINE__, &list[i].t, list[i].colors, list[i].rgba, list[i].depth, list[i].depth_value);
+            mark_clean(&list[i]);
+        }
 }
 
 /* any image of a pending clear's target, cleared or only loaded */
@@ -416,7 +422,8 @@ static id<MTLBlitCommandEncoder> blit_encoder_at(int line)
 /* A blit that touches no image a pending clear clears leaves the clears pending, so the next pass into the
    cleared images can still take them as load actions (images the clear only loads keep whatever the blit wrote).
    One that does touch them replays the clears first. */
-static id<MTLBlitCommandEncoder> blit_encoder_for_at(int line, const mglb_texture *a, const mglb_texture *b)
+static void tex_dirty(mglb_texture *t);
+static id<MTLBlitCommandEncoder> blit_encoder_for_at(int line, mglb_texture *a, mglb_texture *b)
 {
     int touches = (a && pending_clear_clears(a)) || (b && pending_clear_clears(b));
     if (touches && benc)
@@ -424,6 +431,8 @@ static id<MTLBlitCommandEncoder> blit_encoder_for_at(int line, const mglb_textur
     keep_clears = !touches;
     id<MTLBlitCommandEncoder> e = blit_encoder_at(line);
     keep_clears = 0;
+    tex_dirty(a); /* the copy source too: cheaper than telling the caller's direction apart */
+    tex_dirty(b);
     return e;
 }
 #define blit_encoder_for(a, b) blit_encoder_for_at(__LINE__, a, b)
@@ -600,7 +609,34 @@ struct mglb_texture {
     void *mtl;
     mglb_texture_desc d;
     MTLPixelFormat pf;
+    /* level 0 holds only `cval` (colour, or depth in cval[0]) since a clear pass, nothing written since: a
+       repeat of that clear has nothing to do (Iris clears images every frame that nothing draws into) */
+    int clean;
+    float cval[4];
 };
+static void tex_dirty(mglb_texture *t) { if (t) t->clean = 0; }
+static void target_dirty(const mgl_target *t)
+{
+    for (int a = 0; a < MGL_MAX_ATTACHMENTS; a++)
+        tex_dirty(t->tex[a]);
+    tex_dirty(t->depth);
+}
+/* after a pass that only clears: the cleared level-0 images of plain 2D textures hold just the clear value */
+static void mark_clean(const pending_clear *r)
+{
+    for (int a = 0; a < MGL_MAX_ATTACHMENTS; a++) {
+        mglb_texture *x = r->t.tex[a];
+        if (x && (r->colors & (1u << a)) && x->d.type == MGLT_2D && r->t.level[a] == 0) {
+            x->clean = 1;
+            memcpy(x->cval, r->rgba, sizeof x->cval);
+        }
+    }
+    mglb_texture *z = r->t.depth;
+    if (z && r->depth && z->d.type == MGLT_2D && r->t.depth_level == 0) {
+        z->clean = 1;
+        z->cval[0] = r->depth_value;
+    }
+}
 
 static MTLPixelFormat pixel_format(enum mgl_format f)
 {
@@ -1923,6 +1959,7 @@ static id<MTLRenderCommandEncoder> begin_pass_at(int line, const mgl_target *t, 
 static id<MTLRenderCommandEncoder> begin_pass_at(int line, const mgl_target *t, unsigned clear_colors, const float *rgba,
                                                  int clear_depth, float depth)
 {
+    target_dirty(t);
     /* pending clears of this target's images become its load actions; other pending clears go first */
     unsigned take_colors = 0;
     float take_rgba[MGL_MAX_ATTACHMENTS][4];
@@ -2015,6 +2052,7 @@ static id<MTLRenderCommandEncoder> begin_pass_at(int line, const mgl_target *t, 
 static id<MTLRenderCommandEncoder> pass_for(const mgl_target *t)
 {
     gs_flush();
+    target_dirty(t);
     if (renc && same_target(t, &renc_target))
         return renc;
     return begin_pass(t, 0, NULL, 0, 0);
@@ -2030,6 +2068,7 @@ static id<MTLRenderCommandEncoder> pass_for_draw(const mgl_draw *d)
 {
     gs_flush();
     const mgl_target *t = &d->target;
+    target_dirty(t);
     if (renc && same_target(t, &renc_target))
         return renc;
     if (opt_smart_load == ~0u)
@@ -2255,6 +2294,23 @@ void mglb_clear(const mgl_target *t, unsigned mask_color, const float rgba[4], i
         keep_clears = 1;
         end_encoders();
         keep_clears = 0;
+        /* images still holding exactly this clear (and no other clear pending) need nothing */
+        for (int j = 0; j < MGL_MAX_ATTACHMENTS; j++) {
+            mglb_texture *x = t->tex[j];
+            if ((mask_color & (1u << j)) && x && x->clean && t->level[j] == 0 && !pending_clear_clears(x) &&
+                !memcmp(x->cval, rgba, sizeof x->cval))
+                mask_color &= ~(1u << j);
+        }
+        if (clear_depth && t->depth && t->depth->clean && t->depth_level == 0 && !pending_clear_clears(t->depth) &&
+            t->depth->cval[0] == depth)
+            clear_depth = 0;
+        if (!mask_color && !(clear_depth && t->depth)) {
+            if (flush_log_on()) {
+                static line_tally skipped = {"clears skipped (images still clear)"};
+                tally_line(&skipped, __LINE__);
+            }
+            return;
+        }
         /* a later clear of the same image wins */
         for (int i = 0; i < npclear; i++) {
             for (int a = 0; a < MGL_MAX_ATTACHMENTS; a++)
@@ -2423,6 +2479,8 @@ static void bind_stage_resources(id<MTLRenderCommandEncoder> e, id<MTLComputeCom
         if (!bt->dim)
             continue; /* slot unused by this stage */
         id<MTLTexture> tex = bt->tex ? OBJ(id<MTLTexture>, bt->tex->mtl) : dummy_texture(bt->dim, bt->sample_kind, bt->is_shadow);
+        if (bt->is_image)
+            tex_dirty(bt->tex);
         if (bt->is_image && bt->tex && bt->image_level > 0)
             tex = [tex newTextureViewWithPixelFormat:tex.pixelFormat textureType:tex.textureType
                                               levels:NSMakeRange((NSUInteger)bt->image_level, 1)
