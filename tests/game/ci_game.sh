@@ -238,9 +238,16 @@ for p in $PHASES; do
     dh-shaders) dh_phase dh-shaders true ;;     # Distant Horizons + Complementary
     glcount-*) # the pack on Apple's OpenGL through tools/glcount.c, which logs draws and triangles per second (all,
                # and into shadow-map-sized viewports) to glcount.log: what Iris and Sodium draw on real OpenGL
-        clang -dynamiclib -o "$WORK/libglcount.dylib" "$SRC/tools/glcount.c" -framework OpenGL -Wl,-reexport_framework,OpenGL
+        # (Apple's OpenGL can't make a context on GitHub's runners; on Linux this counts Mesa, the cloud reference rig)
+        if [ "$(uname)" = Darwin ]; then
+            lib="$WORK/libglcount.dylib"
+            clang -dynamiclib -o "$lib" "$SRC/tools/glcount.c" -framework OpenGL -Wl,-reexport_framework,OpenGL
+        else
+            lib="$WORK/libglcount.so"
+            gcc -shared -fPIC -o "$lib" "$SRC/tools/glcount.c" "$(ls /usr/lib/*/libGL.so.1 /usr/lib/libGL.so.1 2>/dev/null | head -1)" -ldl
+        fi
         inner=${p#glcount-}
-        LIBARGS=(--gl "$WORK/libglcount.dylib")
+        LIBARGS=(--gl "$lib")
         third_party "$inner" "$p" MCMETAL_DISABLE=1 GLCOUNT_LOG="$OUT/$p/glcount.log"
         LIBARGS=()
         tail -5 "$OUT/$p/glcount.log" 2>/dev/null ;;

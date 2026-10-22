@@ -4,8 +4,14 @@
    Once a second it appends to $GLCOUNT_LOG: draw calls and triangles, all and those into square viewports of
    1024 or more (shadow maps).
 
-   clang -dynamiclib -o libglcount.dylib tools/glcount.c -framework OpenGL -Wl,-reexport_framework,OpenGL */
+   clang -dynamiclib -o libglcount.dylib tools/glcount.c -framework OpenGL -Wl,-reexport_framework,OpenGL
+   Linux (Mesa, for the cloud reference rig): gcc -shared -fPIC -o libglcount.so tools/glcount.c -lGL -ldl
+   (LWJGL finds GL functions through glXGetProcAddress there, so that is answered here too). */
+#ifndef __APPLE__
+#define _GNU_SOURCE
+#endif
 #include <dlfcn.h>
+#include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -18,7 +24,8 @@ typedef int GLint, GLsizei;
 #define GL_TRIANGLE_FAN 0x0006
 
 static GLint vp_w, vp_h;
-static unsigned long draws, tris, sh_draws, sh_tris;
+static unsigned long draws, tris, sh_draws, sh_tris, sh_passes; /* passes: runs of shadow-sized draws (one a frame) */
+static int in_shadow;
 static double last;
 
 static void tick(void)
@@ -33,11 +40,12 @@ static void tick(void)
     const char *path = getenv("GLCOUNT_LOG");
     FILE *f = path ? fopen(path, "a") : NULL;
     if (f) {
-        fprintf(f, "glcount: per second %lu draws %lu triangles; shadow-sized viewports %lu draws %lu triangles\n", draws,
-                tris, sh_draws, sh_tris);
+        fprintf(f, "glcount: per second %lu draws %lu triangles; shadow-sized viewports %lu draws %lu triangles in %lu "
+                "passes (%.0fk triangles a pass)\n", draws, tris, sh_draws, sh_tris, sh_passes,
+                sh_passes ? sh_tris * 1e-3 / sh_passes : 0.0);
         fclose(f);
     }
-    draws = tris = sh_draws = sh_tris = 0;
+    draws = tris = sh_draws = sh_tris = sh_passes = 0;
     last = now;
 }
 
@@ -47,16 +55,32 @@ static void count(GLenum mode, long n, long instances)
     t *= instances > 0 ? instances : 1;
     draws++;
     tris += (unsigned long)t;
-    if (vp_w == vp_h && vp_w >= 1024) {
+    int sh = vp_w == vp_h && vp_w >= 1024;
+    if (sh && !in_shadow)
+        sh_passes++;
+    in_shadow = sh;
+    if (sh) {
         sh_draws++;
         sh_tris += (unsigned long)t;
     }
     tick();
 }
 
+#ifdef __APPLE__
+static void *real_lib(void) { return RTLD_NEXT; }
+#else
+static void *real_lib(void) /* RTLD_NEXT doesn't reach a dependency of a library LWJGL dlopens privately */
+{
+    static void *h;
+    if (!h)
+        h = dlopen("libGL.so.1", RTLD_NOW | RTLD_GLOBAL);
+    return h;
+}
+#endif
+
 #define REAL(name, ret, args) \
     static ret(*real_##name) args; \
-    if (!real_##name) real_##name = (ret(*) args)dlsym(RTLD_NEXT, #name)
+    if (!real_##name) real_##name = (ret(*) args)dlsym(real_lib(), #name)
 
 void glViewport(GLint x, GLint y, GLsizei w, GLsizei h)
 {
@@ -123,3 +147,33 @@ void glMultiDrawElementsBaseVertex(GLenum m, const GLsizei *n, GLenum type, void
         count(m, n[i], 1);
     real_glMultiDrawElementsBaseVertex(m, n, type, ind, k, bv);
 }
+
+#ifndef __APPLE__
+static void *own(const char *n)
+{
+    static const char *names[] = {"glViewport", "glDrawArrays", "glDrawArraysInstanced", "glDrawElements",
+                                  "glDrawElementsInstanced", "glDrawElementsBaseVertex", "glDrawRangeElements",
+                                  "glMultiDrawElements", "glMultiDrawElementsBaseVertex"};
+    static void *fns[] = {(void *)glViewport, (void *)glDrawArrays, (void *)glDrawArraysInstanced, (void *)glDrawElements,
+                          (void *)glDrawElementsInstanced, (void *)glDrawElementsBaseVertex, (void *)glDrawRangeElements,
+                          (void *)glMultiDrawElements, (void *)glMultiDrawElementsBaseVertex};
+    for (unsigned i = 0; i < sizeof names / sizeof *names; i++)
+        if (!strcmp(n, names[i]))
+            return fns[i];
+    return NULL;
+}
+
+void *glXGetProcAddress(const unsigned char *n)
+{
+    REAL(glXGetProcAddress, void *, (const unsigned char *));
+    void *f = own((const char *)n);
+    return f ? f : real_glXGetProcAddress(n);
+}
+
+void *glXGetProcAddressARB(const unsigned char *n)
+{
+    REAL(glXGetProcAddressARB, void *, (const unsigned char *));
+    void *f = own((const char *)n);
+    return f ? f : real_glXGetProcAddressARB(n);
+}
+#endif

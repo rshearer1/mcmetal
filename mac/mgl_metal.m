@@ -452,6 +452,10 @@ static id<MTLBlitCommandEncoder> blit_encoder_at(int line)
         }
     }
     prof.blits++;
+    if (flush_log_on()) {
+        static line_tally opened = {"blit encoders opened"};
+        tally_line(&opened, line);
+    }
     return benc;
 }
 #define blit_encoder() blit_encoder_at(__LINE__)
