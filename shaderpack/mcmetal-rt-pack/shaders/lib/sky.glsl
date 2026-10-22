@@ -31,17 +31,21 @@ vec3 atmosphere(vec3 dir, vec3 lightDir, float intensity) {
     dir.y = max(dir.y, 0.0) * 0.94 + 0.06;
     dir = normalize(dir);
     vec3 ro = vec3(0.0, R_EARTH + 100.0, 0.0);
-    float len = raySphere(ro, dir, R_ATMOS).y, seg = len / 8.0;
+    float len = raySphere(ro, dir, R_ATMOS).y;
     float mu = dot(dir, lightDir), g2 = MIE_G * MIE_G;
     float phR = 3.0 / (16.0 * PI) * (1.0 + mu * mu);
     float phM = 3.0 / (8.0 * PI) * ((1.0 - g2) * (1.0 + mu * mu)) / ((2.0 + g2) * pow(1.0 + g2 - 2.0 * MIE_G * mu, 1.5));
     vec2 od = vec2(0.0);
     vec3 sumR = vec3(0.0), sumM = vec3(0.0);
+    // samples packed towards the eye (spacing grows as i^2), where the air is dense: 8 even steps along a near-
+    // horizontal view skip most of the low air and turned the horizon olive; this matches 128 even steps closely
     for (int i = 0; i < 8; i++) {
-        vec3 p = ro + dir * (seg * (float(i) + 0.5));
+        float a = float(i) / 8.0, b = float(i + 1) / 8.0;
+        float seg = (b * b - a * a) * len;
+        vec3 p = ro + dir * (0.5 * (a * a + b * b) * len);
         vec2 d = exp(-(length(p) - R_EARTH) / vec2(H_RAY, H_MIE)) * seg;
         od += d;
-        vec3 t = transmittance(od + opticalDepthTowards(p, lightDir, 3));
+        vec3 t = transmittance(od - 0.5 * d + opticalDepthTowards(p, lightDir, 3));   // (to the middle of the step)
         // light below the horizon: fade instead of a hard cut (the earth shadows the air)
         t *= smoothstep(-0.12, 0.02, dot(normalize(p), lightDir));
         sumR += t * d.x;
