@@ -105,6 +105,15 @@ HOOK(void, mgl_glfw_make_current, (void *ctx), (ctx))
 HOOK(void, mgl_glfw_swap_interval, (void *ctx, int interval), (ctx, interval))
 HOOK(void, mgl_glfw_destroy, (void *ctx), (ctx))
 
+/* mcmetal's own entry point for the mod's GPU chunk culling (core/mgl_cull.c); 0 = draw normally */
+GP_EXPORT int64_t mcmGpuCull(const void *cmd)
+{
+    static int64_t (*real)(const void *);
+    if (!real)
+        real = (int64_t(*)(const void *))gp_real("mcmGpuCull");
+    return real ? real(cmd) : 0;
+}
+
 GP_EXPORT void mgl_glfw_swap(void *ctx)
 {
     static void (*real)(void *);

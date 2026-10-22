@@ -89,6 +89,29 @@ void mglb_rt_dynamic(const float *tris, int n) {}
 mglb_buffer *mglb_rt_instances(void) { return NULL; }
 mglb_buffer *mglb_rt_lights(void) { return NULL; }
 
+/* GPU chunk culling: the same box test on the CPU, so the cloud rig checks the planes and the bookkeeping */
+static unsigned long cull_kept, cull_total, cull_runs;
+int mglb_cull_supported(void) { return 1; }
+int mglb_cull_run(const mgl_cull_pass *p, const mgl_cull_draw *dr, int n, mglb_buffer *const *ib, int nr)
+{
+    for (int i = 0; i < n; i++) {
+        int in = 1;
+        for (int k = 0; k < 6 && in; k++) {
+            const float *q = p->planes[k]; /* the box corner furthest along the plane normal */
+            float x = dr[i].min[0] + (q[0] > 0 ? 16 : 0), y = dr[i].min[1] + (q[1] > 0 ? 16 : 0),
+                  z = dr[i].min[2] + (q[2] > 0 ? 16 : 0);
+            in = q[0] * x + q[1] * y + q[2] * z + q[3] >= 0;
+        }
+        cull_kept += (unsigned long)in;
+    }
+    cull_total += (unsigned long)n;
+    if (++cull_runs % 2000 == 0) {
+        mgl_log("null cull: last 2000 passes kept %lu of %lu section draws", cull_kept, cull_total);
+        cull_kept = cull_total = 0;
+    }
+    return 0;
+}
+
 void mglb_window_size(int *w, int *h) { *w = 1280; *h = 720; }
 int mglb_upscaled_read(unsigned char **px, int *w, int *h) { (void)px; (void)w; (void)h; return 0; }
 void mglb_tu_jitter(const mgl_target *t, float out[2]) { (void)t; out[0] = out[1] = 0; }

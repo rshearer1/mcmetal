@@ -3,6 +3,7 @@
 #include "mgl_state.h"
 
 mgl_program *mgl_current_program(void);
+int mgl_cull_take(const int *count, int n, mglb_buffer *ib); /* mgl_cull.c */
 
 /* ---------------------------------------------------------------- vertex arrays */
 
@@ -592,6 +593,8 @@ void glMultiDrawElementsBaseVertex(GLenum mode, const GLsizei *count, GLenum typ
         d.multi_count = count;
         d.multi_offset = ind;
         d.multi_base = bv;
+        if (mode == GL_TRIANGLES && type == GL_UNSIGNED_INT)
+            d.cull_cmd = mgl_cull_take(count, drawcount, ib->mem);
         mglb_draw(&d);
         return;
     }

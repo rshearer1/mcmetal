@@ -1692,6 +1692,140 @@ static MTLVertexFormat vertex_format(const mgl_vertex_attr *a)
     return MTLVertexFormatFloat4;
 }
 
+/* ================================================================ GPU chunk culling (core/mgl_cull.c) */
+
+/* One compute thread per Sodium section draw: keep it if its 16-block box is inside the pass's view, and write its
+   indirect draw arguments (no instances when culled). The region's multi-draw then draws each section from those
+   arguments with everything else (pipeline, vertex buffers, uniforms, textures) as usual. Indirect command buffers
+   would save the per-section calls too, but Metal refuses them for fragment shaders that bind textures directly,
+   which is every GL shader we translate. */
+static const char *cull_msl =
+    "#include <metal_stdlib>\n"
+    "using namespace metal;\n"
+    "struct Draw { uint count, first_index, base_vertex, region; packed_float3 mn; float pad; };\n"
+    "struct Params { float4 planes[6]; uint first, n, region_base, flags; };\n"
+    "struct Args { uint index_count, instance_count, index_start; int base_vertex; uint base_instance; };\n"
+    "kernel void mcm_cull(device const Draw *draws [[buffer(0)]], constant Params &p [[buffer(1)]],\n"
+    "                     device Args *args [[buffer(2)]], uint i [[thread_position_in_grid]]) {\n"
+    "    if (i >= p.n) return;\n"
+    "    uint k = p.first + i;\n"
+    "    Draw d = draws[k];\n"
+    "    bool keep = d.count > 0;\n"
+    "    for (int j = 0; j < 6; j++) {\n"
+    "        float4 q = p.planes[j];\n"
+    "        float3 c = float3(d.mn) + select(float3(0.0), float3(16.0), q.xyz > 0.0);\n"
+    "        keep = keep && dot(q.xyz, c) + q.w >= 0.0;\n"
+    "    }\n"
+    "    args[k] = Args{d.count, keep ? 1u : 0u, d.first_index, int(d.base_vertex), 0u};\n"
+    "}\n";
+
+#define CULL_SLOTS 4          /* frames in flight that may each hold arguments */
+#define CULL_MAX_CMDS 65536   /* section draws per frame, all terrain passes together */
+#define CULL_SLOT_SHIFT 17    /* the slot rides above the draw index in what mglb_cull_run returns */
+typedef struct { uint32_t first, n, region_base, flags; } cull_params_tail;
+static struct cull_slot {
+    id<MTLBuffer> draws, args;
+    int used;                 /* draws handed out this frame */
+    uint64_t serial;          /* last command buffer that draws from its arguments */
+    unsigned long long frame;
+} cslot[CULL_SLOTS];
+static int cull_state = -1, cull_cur = -1;
+static id<MTLComputePipelineState> cull_pso;
+
+static int cull_setup(void);
+int mglb_cull_supported(void)
+{
+    /* the game may ask from more than one thread: set up exactly once */
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ cull_state = cull_setup(); });
+    return cull_state;
+}
+
+static int cull_setup(void)
+{
+    init_device();
+    /* Apple's paravirtual GPU (GitHub's Macs) mishandles large base vertices (see apply_base_vertex), which the
+       arguments rely on: MGL_GPU_CULL_FORCE=1 runs it there anyway (call counts, crashes, no picture checks) */
+    if (strstr(dev.name.UTF8String, "aravirtual") && !opt("MGL_GPU_CULL_FORCE")) {
+        mgl_log("GPU chunk culling: off on %s (base vertices; MGL_GPU_CULL_FORCE=1 to try)", dev.name.UTF8String);
+        return 0;
+    }
+    NSError *e = nil;
+    id<MTLLibrary> lib = [dev newLibraryWithSource:[NSString stringWithUTF8String:cull_msl] options:nil error:&e];
+    id<MTLFunction> fn = [lib newFunctionWithName:@"mcm_cull"];
+    cull_pso = fn ? [dev newComputePipelineStateWithFunction:fn error:&e] : nil;
+    if (!cull_pso) {
+        mgl_log("GPU chunk culling: kernel failed: %s", e ? e.localizedDescription.UTF8String : "no function");
+        return 0;
+    }
+    for (int i = 0; i < CULL_SLOTS; i++) {
+        struct cull_slot *c = &cslot[i];
+        c->draws = [dev newBufferWithLength:CULL_MAX_CMDS * sizeof(mgl_cull_draw) options:MTLResourceStorageModeShared];
+        c->args = [dev newBufferWithLength:CULL_MAX_CMDS * sizeof(MTLDrawIndexedPrimitivesIndirectArguments)
+                                   options:MTLResourceStorageModePrivate];
+        if (!c->draws || !c->args) {
+            mgl_log("GPU chunk culling: out of memory for the draw arguments");
+            return 0;
+        }
+        c->frame = ~0ull;
+    }
+    mgl_log("GPU chunk culling: kernel ready on %s", dev.name.UTF8String);
+    return 1;
+}
+
+int mglb_cull_run(const mgl_cull_pass *p, const mgl_cull_draw *draws, int n, mglb_buffer *const *ibufs, int nregions)
+{
+    (void)ibufs, (void)nregions; /* each region's own draw binds its index buffer */
+    if (mglb_cull_supported() <= 0 || n <= 0)
+        return -1;
+    if (cull_cur < 0 || cslot[cull_cur].frame != frames_presented) { /* first terrain pass of a frame: next slot */
+        int next = (cull_cur + 1) % CULL_SLOTS;
+        if (cslot[next].serial > atomic_load(&completed_serial))
+            return -1; /* the GPU may still be drawing from that slot: draw normally this frame */
+        cull_cur = next;
+        cslot[next].frame = frames_presented;
+        cslot[next].used = 0;
+    }
+    struct cull_slot *c = &cslot[cull_cur];
+    if (c->used + n > CULL_MAX_CMDS)
+        return -1;
+    memcpy((mgl_cull_draw *)c->draws.contents + c->used, draws, sizeof *draws * (size_t)n);
+    struct { float planes[6][4]; cull_params_tail t; } params;
+    memcpy(params.planes, p->planes, sizeof params.planes);
+    params.t = (cull_params_tail){(uint32_t)c->used, (uint32_t)n, 0, (uint32_t)p->flags};
+    /* its own command buffer, committed now: it runs before the frame's draws (committed later), so it never
+       splits the render pass the terrain is drawn into */
+    id<MTLCommandBuffer> side = [queue commandBuffer];
+    id<MTLComputeCommandEncoder> enc = [side computeCommandEncoder];
+    [enc setComputePipelineState:cull_pso];
+    [enc setBuffer:c->draws offset:0 atIndex:0];
+    [enc setBytes:&params length:sizeof params atIndex:1];
+    [enc setBuffer:c->args offset:0 atIndex:2];
+    NSUInteger tg = cull_pso.threadExecutionWidth;
+    [enc dispatchThreads:MTLSizeMake((NSUInteger)n, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg, 1, 1)];
+    [enc endEncoding];
+    [side commit];
+    int first = c->used | (cull_cur << CULL_SLOT_SHIFT);
+    c->used += n;
+    return first;
+}
+
+/* one multi-draw from its culled arguments: same sections, same order, culled ones draw no instances */
+static void draw_culled(id<MTLRenderCommandEncoder> e, const mgl_draw *d, MTLPrimitiveType pt)
+{
+    int cmd = d->cull_cmd - 1;
+    struct cull_slot *c = &cslot[cmd >> CULL_SLOT_SHIFT];
+    NSUInteger first = (NSUInteger)(cmd & ((1 << CULL_SLOT_SHIFT) - 1));
+    id<MTLBuffer> ib = OBJ(id<MTLBuffer>, d->index_buf->mtl);
+    for (int i = 0; i < d->multi_n; i++)
+        if (d->multi_count[i] > 0)
+            [e drawIndexedPrimitives:pt indexType:MTLIndexTypeUInt32 indexBuffer:ib indexBufferOffset:0
+                      indirectBuffer:c->args
+                indirectBufferOffset:(first + (NSUInteger)i) * sizeof(MTLDrawIndexedPrimitivesIndirectArguments)];
+    c->serial = cb_serial;
+    use_buffer(d->index_buf);
+}
+
 /* Everything that decides an MTLRenderPipelineState, flattened so it can be compared byte-wise. */
 typedef struct pipe_key {
     uint32_t program;
@@ -2995,7 +3129,9 @@ void mglb_draw(const mgl_draw *d)
         prof.sh_draws += d->multi_n > 0 ? (unsigned long)d->multi_n : 1;
         prof.sh_tris += (unsigned long)(n / 3);
     }
-    if (d->multi_n > 0) {
+    if (d->multi_n > 0 && d->cull_cmd > 0 && cull_state > 0) {
+        draw_culled(e, d, pt);
+    } else if (d->multi_n > 0) {
         id<MTLBuffer> ib = OBJ(id<MTLBuffer>, d->index_buf->mtl);
         MTLIndexType it = d->index_type == GL_UNSIGNED_SHORT ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32;
         for (int i = 0; i < d->multi_n; i++)

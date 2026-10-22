@@ -166,6 +166,9 @@ typedef struct mgl_draw {
     const int *multi_count;        /* GLsizei */
     const void *const *multi_offset;
     const int *multi_base;         /* GLint */
+    /* GPU chunk culling (mgl_cull.c): non-zero draws the multi-draw's sections from the backend's culled
+       indirect arguments, entries cull_cmd - 1 .. cull_cmd + multi_n - 2 */
+    int cull_cmd;
 } mgl_draw;
 
 /* ---- ray tracing (step 2, see STEP2-RAYTRACING.md and mgl_rt.c) ---- */
@@ -208,6 +211,21 @@ typedef struct mgl_camera {
     unsigned seen;
 } mgl_camera;
 extern mgl_camera mgl_cam;
+
+/* ---- GPU chunk culling (mgl_cull.c, MCMETAL_GPU_CULL) ---- */
+typedef struct mgl_cull_draw {
+    uint32_t count, first_index, base_vertex, region; /* one Sodium section range (multi-draw sub-draw) */
+    float min[3], pad;     /* the section's 16x16x16 box corner, camera-relative */
+} mgl_cull_draw;
+typedef struct mgl_cull_pass {
+    float planes[6][4];    /* keep a box unless it is fully outside one of these (x, y, z, d: dot + d < 0 outside) */
+    int flags;
+} mgl_cull_pass;
+int mglb_cull_supported(void);
+/* Culls `n` section draws of `nregions` regions (index buffers in ibufs[], 32-bit indices) and writes the
+   indirect draw arguments. Returns a base that, added to a draw's index, names its entry (opaque to the front end),
+   or -1 when culling can't run now (draw normally). */
+int mglb_cull_run(const mgl_cull_pass *p, const mgl_cull_draw *draws, int n, mglb_buffer *const *ibufs, int nregions);
 
 /* MetalFX temporal upscaler (MCMETAL_UPSCALE=2): world geometry is drawn shifted by a sub-pixel amount that changes
    every frame, so MetalFX can gather detail finer than the render resolution. mgl_tu_jitter_on: vertex shaders get
