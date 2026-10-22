@@ -891,7 +891,8 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
     /* ---- compute shader ---- */
     /* MGL_GS_PROBE (timing experiments only, the picture is wrong): 1 = no geometry stage (nothing emitted),
        2 = no vertex stage (attributes straight to the geometry stage), 3 = no record writes, 4 = constant attributes (no fetch),
-       5 = attribute fetch only (no vertex stage), 6 = no passthrough draws (mgl_metal.m). MGL_GS_LOCAL = threads
+       5 = attribute fetch only (no vertex stage), 6 = no passthrough draws (mgl_metal.m), 7 = vertex stage
+       on real data with its results kept alive but no geometry stage. MGL_GS_LOCAL = threads
        per threadgroup (default 64). Both change the generated shader: run with MGL_CACHE_DIR unset. */
     int probe = getenv("MGL_GS_PROBE") ? atoi(getenv("MGL_GS_PROBE")) : 0;
     int local = getenv("MGL_GS_LOCAL") ? atoi(getenv("MGL_GS_LOCAL")) : 64;
@@ -950,7 +951,20 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
         }
     }
     sb_puts(&comp, "}\n");
-    const char *gs_call = probe == 1 ? "" : "  mgl_g_main();\n";
+    /* probe 7: the vertex stage runs on real data and its results are kept alive, but the geometry stage doesn't run */
+    sb ks = {0};
+    if (probe == 7) {
+        sb_puts(&ks, "  float mgl_ks = dot(mgl_gin[0].pos + mgl_gin[1].pos + mgl_gin[2].pos, vec4(1.0));\n");
+        static const char *sw[4] = {".x", ".y", ".z", ".w"};
+        for (int i = 0; i < ngin; i++)
+            for (int j = 0; fed[i] && j < gin[i].comps && j < 4; j++) {
+                const char *w = gin[i].comps == 1 ? "" : sw[j];
+                sb_printf(&ks, "  mgl_ks += float(%s[0]%s + %s[1]%s + %s[2]%s);\n", gin[i].name, w, gin[i].name, w,
+                          gin[i].name, w);
+            }
+        sb_puts(&ks, "  if (mgl_ks == 1234.5678) mgl_emitted = 1u;\n");
+    }
+    const char *gs_call = probe == 1 ? "" : probe == 7 ? ks.s : "  mgl_g_main();\n";
     /* MGL_GS_SHARE=0: every thread runs the vertex stage for its own three corners. Default: when two neighbouring
        triangles form a quad the way Sodium indexes them (0 1 2, 2 3 0), the pair runs the vertex stage once per
        corner, two corners per thread, and swaps the results through threadgroup memory (4 runs instead of 6). */
@@ -1009,6 +1023,8 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
                          "  mgl_prim_id = int(prim);\n  mgl_emitted = 0u;\n  mgl_strip = 0u;\n"
                          "%s  mgl_oc[prim] = mgl_emitted;\n}\n", gs_call);
     }
+
+    free(ks.s);
 
     /* ---- passthrough vertex shader: strip -> triangle list ---- */
     sb_puts(&pass, "#version 450\n"
