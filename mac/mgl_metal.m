@@ -261,17 +261,19 @@ static id<MTLCommandBuffer> current_cb(void)
     return cb;
 }
 
-static void gs_flush(void);
+static void gs_flush_at(int line);
+#define gs_flush() gs_flush_at(__LINE__) /* MGL_GS_FLUSH_LOG=1 counts which call sites end a batch */
 static int gs_recording; /* mglb_draw_gs is opening its compute encoder: keep the pending draws pending */
 
-static void end_encoders(void)
+static void end_encoders_at(int line)
 {
     if (!gs_recording)
-        gs_flush();
+        gs_flush_at(line);
     if (renc) { [renc endEncoding]; renc = nil; }
     if (benc) { [benc endEncoding]; benc = nil; }
     if (cenc) { [cenc endEncoding]; cenc = nil; }
 }
+#define end_encoders() end_encoders_at(__LINE__)
 
 static void commit(void)
 {
@@ -2546,11 +2548,31 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
 /* Draw the pending geometry-shader draws in one render pass on their target. Called before anything else uses
    the GPU (any encoder, a commit, a barrier, a texture release), so GL's order is kept for everything that
    could see their results. */
-static void gs_flush(void)
+static void gs_flush_at(int line)
 {
     static int flushing;
     if (!gs_pending.count || flushing)
         return;
+    static int flush_log = -1, lines[16], counts[16], total;
+    if (flush_log < 0)
+        flush_log = getenv("MGL_GS_FLUSH_LOG") && atoi(getenv("MGL_GS_FLUSH_LOG"));
+    if (flush_log) {
+        int k = 0;
+        while (k < 15 && lines[k] && lines[k] != line)
+            k++;
+        lines[k] = line;
+        counts[k]++;
+        if (++total == 600) {
+            char msg[512];
+            int n = snprintf(msg, sizeof msg, "geometry shader batches ended (600, by source line):");
+            for (int i = 0; i < 16 && lines[i]; i++)
+                n += snprintf(msg + n, sizeof msg - (size_t)n, " %d x%d", lines[i], counts[i]);
+            mgl_log("%s; last batch %d draws", msg, (int)gs_pending.count);
+            memset(lines, 0, sizeof lines);
+            memset(counts, 0, sizeof counts);
+            total = 0;
+        }
+    }
     flushing = 1;
     NSArray<gs_play> *list = gs_pending;
     gs_pending = [NSMutableArray new];
