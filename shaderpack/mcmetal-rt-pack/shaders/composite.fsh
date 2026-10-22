@@ -11,7 +11,7 @@ const vec4 colortex11ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 #include "/lib/uniforms.glsl"
 #include "/lib/sky.glsl"
 
-uniform sampler2D colortex0, colortex5, colortex8, colortex11, depthtex0, depthtex1;
+uniform sampler2D colortex0, colortex1, colortex5, colortex8, colortex11, depthtex0, depthtex1;
 
 #ifdef DISTANT_HORIZONS
 uniform sampler2D dhDepthTex0;
@@ -62,7 +62,9 @@ void main() {
         float deep = throughWater ? exp(-(length(p1) - dist) * 0.04) : 1.0;
         float c = caustics(p1 + cameraPosition, sunDir, frameTimeCounter);
         // focused lines brighter, the gaps between them darker (about the same light overall)
-        col *= mix(1.0, 0.45 + 2.75 * c, min(CAUSTICS_STRENGTH * sun * deep, 1.0));
+        // walls catch the lines at a slant: softer there than on the floor
+        float facing = mix(0.45, 1.0, max(octDecode(texture(colortex1, texcoord).xy).y, 0.0));
+        col *= mix(1.0, 0.45 + 2.75 * c, min(CAUSTICS_STRENGTH * sun * deep * facing, 1.0));
   #if DEBUG_VIEW == 7
         col = vec3(c, float(throughWater), sun);
   #endif
