@@ -109,6 +109,10 @@ layout(location = 3) out vec4 outPBR;   // colortex10: xy normal with the normal
 /* RENDERTARGETS: 0,2 */
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outMaterial;
+#elif defined WATER
+/* RENDERTARGETS: 0,11 */
+layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outWater;   // colortex11: r 1 where the nearest see-through surface is water (composite.fsh)
 #else
 /* RENDERTARGETS: 0 */
 layout(location = 0) out vec4 outColor;
@@ -226,6 +230,9 @@ void main() {
     #endif
   #endif
     outColor = vec4(col, c.a);
+  #ifdef WATER
+    outWater = vec4(float(mat == MAT_WATER), 0.0, 0.0, 1.0);
+  #endif
   #ifdef KEEP_MATERIAL
     outMaterial = vec4(float(MAT_LIT) / 255.0, 1.0, 0.0, 0.0);
   #endif

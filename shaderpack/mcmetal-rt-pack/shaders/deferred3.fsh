@@ -40,7 +40,11 @@ void main() {
     float dist = min(length(p), 48.0);
     vec3 scatter = vec3(0.0);
 #if defined USE_RT && defined LIGHT_SHAFTS
-    if (isEyeInWater == 0 && dot(sunCol, sunCol) > 1e-6) {
+    bool underWater = isEyeInWater == 1;
+  #ifndef CAUSTICS
+    underWater = false;
+  #endif
+    if ((isEyeInWater == 0 || underWater) && dot(sunCol, sunCol) > 1e-6) {
         // Henyey-Greenstein phase: most light scatters a little off the sun's direction (bright towards the sun)
         float g = 0.65, mu = dot(dir, lightDir);
         float phase = 0.3 / (4.0 * PI) + 0.7 * (1.0 - g * g) / (4.0 * PI * pow(1.0 + g * g - 2.0 * g * mu, 1.5));
@@ -49,6 +53,8 @@ void main() {
         // clear air at midday, hazier with a low sun (morning, evening) and in rain
         float density = 0.005 * LIGHT_SHAFTS_STRENGTH * mix(1.0, 0.25, smoothstep(0.25, 0.7, lightDir.y))
                       * (1.0 + 3.0 * rainStrength + 3.0 * indoors);
+        // under water: much thicker (the beams you see from below the surface), and blue-green
+        if (underWater) { dist = min(dist, 32.0); density = 0.04 * LIGHT_SHAFTS_STRENGTH; }
         float stepLen = dist / float(LIGHT_SHAFTS_STEPS);
         float jitter = ign(gl_FragCoord.xy, frameCounter);
         float lit = 0.0;
@@ -63,8 +69,8 @@ void main() {
         // (dust that only shows in a beam: 0.05 per block where the view ray is all in shade)
         float shade = 1.0 - lit / float(LIGHT_SHAFTS_STEPS);
         // (cubed: a view ray that starts in open sunlight and then enters a room shouldn't haze the whole room)
-        float beam = 0.05 * LIGHT_SHAFTS_STRENGTH * shade * shade * shade;
-        scatter = sunCol * phase * (density + beam) * stepLen * lit * 4.0 * PI;   // x 4pi: our lights skip the 1/pi of diffuse
+        float beam = underWater ? 0.0 : 0.05 * LIGHT_SHAFTS_STRENGTH * shade * shade * shade;
+        scatter = sunCol * (underWater ? vec3(0.1, 0.26, 0.32) : vec3(1.0)) * phase * (density + beam) * stepLen * lit * 4.0 * PI;   // x 4pi: our lights skip the 1/pi of diffuse
         if (any(isnan(scatter)) || any(isinf(scatter))) scatter = vec3(0.0);
     }
 #endif

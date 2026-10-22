@@ -41,6 +41,8 @@
 #define CLOUD_SPEED 1.0 // [0.0 0.5 1.0 2.0 4.0]
 #define RAIN_PUDDLES // puddles on open ground in the rain, with ray-traced reflections
 #define PUDDLE_AMOUNT 1.0 // [0.5 1.0 1.5 2.0]
+#define CAUSTICS // moving light patterns on the bottom of sunlit water
+#define CAUSTICS_STRENGTH 1.0 // [0.5 1.0 1.5 2.0]
 const float wetnessHalfLife = 100.0;   // ticks for the ground to get wet once rain starts (Iris's default is 600)
 const float drynessHalfLife = 400.0;
 
@@ -85,6 +87,8 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef COLORED_LIGHT
 #endif
 #ifdef LIGHT_SHAFTS
+#endif
+#ifdef CAUSTICS
 #endif
 #ifdef RAIN_PUDDLES
 #endif
