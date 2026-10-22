@@ -26,6 +26,7 @@ typedef struct rt_draw {
 
 static rt_draw *draws;
 static int num_draws, cap_draws;
+static unsigned write_epoch; /* buffer writes so far: a new entry's generation (mgl_rt_note_write) */
 static double scene_wanted;  /* last time a program that casts rays was drawn; capture runs only around it */
 static float view_proj[16];
 static int have_view;
@@ -208,7 +209,7 @@ static void rt_debug_tick(void)
         mgl_log("rt debug: %lu draws new to the capture: %lu same section with another index range, %lu another index "
                 "buffer, %lu a vertex buffer not seen before, %lu other (%lu overlapping a kept section); %lu inside a kept section, %lu merged into "
                 "one", rtd.fresh, rtd.f_range, rtd.f_ibuf, rtd.f_vbuf, rtd.f_other, rtd.f_overlap, rtd.f_sub, rtd.f_merged);
-        mgl_log("rt debug: %lu buffer writes (%llu KB), %lu kept sections marked rewritten", rtd.writes,
+        mgl_log("rt debug: %lu buffer writes (%llu KB), %lu kept sections overwritten (dropped)", rtd.writes,
                 rtd.write_bytes / 1024, rtd.bumped);
         /* MGL_RT_DEBUG=2: the material byte Sodium packs beside the section index (alpha cutoff in bits 1-2), over
            the captured vertices: shows whether cutout blocks carry a cutoff here (reads every vertex: slow) */
@@ -302,7 +303,7 @@ void mgl_rt_record(mgl_program *p, const mgl_draw *d)
     }
 
     rt_draw key = {{vb->buf, d->index_buf, vb->offset + (size_t)a->offset, vb->stride, d->index_offset,
-                    d->index_type, d->count, d->base_vertex, 0, {region[0], region[1], region[2]},
+                    d->index_type, d->count, d->base_vertex, write_epoch, {region[0], region[1], region[2]},
                     d->blend[0].enabled, ent_off}, t};
     for (int i = 0; i < num_draws; i++) {
         rt_draw *r = &draws[i];
@@ -378,22 +379,29 @@ recorded:;
     }
 }
 
-/* Vertex data written: sections whose vertices may overlap the range get a new generation (rebuilt). */
+/* Vertex data written. Sodium never rewrites a live section in place (a rebuilt section gets new space and the
+   old space is freed), so a write over a kept range means that range is gone: drop it rather than rebuild it, and
+   if the same range is drawn again it comes back as new. Every write moves the epoch that new entries take as
+   their generation, so a range reused for other vertices never matches an acceleration structure built before. */
 void mgl_rt_note_write(mglb_buffer *m, size_t offset, size_t size)
 {
+    write_epoch++;
+    int n = 0;
     for (int i = 0; i < num_draws; i++) {
         mgl_rt_geom *g = &draws[i].g;
-        if (g->vbuf != m)
-            continue;
-        /* Sodium draws quads: 4 vertices per 6 indices, starting at the base vertex */
-        size_t lo = g->vbase + (size_t)g->base_vertex * (size_t)g->stride;
-        size_t hi = lo + ((size_t)g->count * 2 / 3 + 4) * (size_t)g->stride;
-        if (offset < hi && (size == (size_t)-1 || offset + size > lo)) {
-            g->gen++;
-            rtd.bumped++;
+        if (g->vbuf == m) {
+            /* Sodium draws quads: 4 vertices per 6 indices, starting at the base vertex */
+            size_t lo = g->vbase + (size_t)g->base_vertex * (size_t)g->stride;
+            size_t hi = lo + (size_t)g->count * 2 / 3 * (size_t)g->stride;
+            if (offset < hi && (size == (size_t)-1 || offset + size > lo)) {
+                rtd.bumped++;
+                continue;
+            }
         }
+        draws[n++] = draws[i];
     }
-    if (num_draws) {
+    num_draws = n;
+    if (n) {
         rtd.writes++;
         rtd.write_bytes += size == (size_t)-1 ? 0 : size;
     }

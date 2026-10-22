@@ -330,6 +330,19 @@ static int pending_clear_uses(const mglb_texture *x)
     return 0;
 }
 
+/* an image a pending clear actually clears (attachments it only loads keep their contents either way) */
+static int pending_clear_clears(const mglb_texture *x)
+{
+    for (int i = 0; i < npclear; i++) {
+        for (int a = 0; a < MGL_MAX_ATTACHMENTS; a++)
+            if (pclear[i].t.tex[a] == x && (pclear[i].colors & (1u << a)))
+                return 1;
+        if (pclear[i].t.depth == x && pclear[i].depth)
+            return 1;
+    }
+    return 0;
+}
+
 static void end_encoders_at(int line)
 {
     if (!gs_recording)
@@ -400,11 +413,12 @@ static id<MTLBlitCommandEncoder> blit_encoder_at(int line)
 }
 #define blit_encoder() blit_encoder_at(__LINE__)
 
-/* A blit that touches neither texture of a pending clear leaves the clears pending, so the next pass into the
-   cleared images can still take them as load actions. One that does touch them replays the clears first. */
+/* A blit that touches no image a pending clear clears leaves the clears pending, so the next pass into the
+   cleared images can still take them as load actions (images the clear only loads keep whatever the blit wrote).
+   One that does touch them replays the clears first. */
 static id<MTLBlitCommandEncoder> blit_encoder_for_at(int line, const mglb_texture *a, const mglb_texture *b)
 {
-    int touches = (a && pending_clear_uses(a)) || (b && pending_clear_uses(b));
+    int touches = (a && pending_clear_clears(a)) || (b && pending_clear_clears(b));
     if (touches && benc)
         end_encoders_at(line); /* an open blit encoder would otherwise run this blit before the clears */
     keep_clears = !touches;
