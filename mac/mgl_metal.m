@@ -2024,6 +2024,9 @@ static const char *builtin_msl =
     "  float3 in = float3(as_type<float>(e[0]), as_type<float>(e[1]), as_type<float>(e[2]));\n"
     "  int3 b = int3(floor(in)) + s.off + 512;\n"
     "  if (any(b < 0) || any(b > 1023)) return;\n"
+    /* only lights that can reach the camera's grid (32 blocks each way, plus 16 of reach): far lava and fire
+       used to fill the 2048 slots before the lights next to the camera got one */
+    "  if (any(abs(floor(in) + 0.5 + s.region) > 48.0)) return;\n"
     "  uint key = uint(b.x) | uint(b.y) << 10 | uint(b.z) << 20 | 0x40000000u;\n"
     "  uint h = (key * 2654435761u) >> 19;\n"
     "  for (int probe = 0; probe < 64; ) {\n"

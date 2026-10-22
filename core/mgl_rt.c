@@ -100,6 +100,11 @@ static void rt_debug_tick(void)
                 "triangles, %lu no position attribute, %lu stride < 20, %lu before a ray-tracing shader; %d sections kept",
                 now - last_log, rtd.taken, rtd.not_terrain, rtd.last_skip[0] ? rtd.last_skip : "-", rtd.not_tris,
                 rtd.no_attr, rtd.small_stride, rtd.idle, num_draws_fwd());
+        if (rt_debug() < 2) { /* level 2: the vertex scans below (slow, and they read every captured buffer) */
+            memset(&rtd, 0, sizeof rtd);
+            last_log = now;
+            return;
+        }
         /* the material byte Sodium packs beside the section index (alpha cutoff in bits 1-2), over the captured
            vertices: shows whether cutout blocks carry a cutoff here */
         unsigned long hist[256] = {0}, stride_seen = 0;
