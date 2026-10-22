@@ -500,6 +500,8 @@ static void draw(GLenum mode, GLsizei count, GLenum type, const void *indices, G
         mgl_log("indexed draw without an element buffer (client-side indices are not supported)");
         return;
     }
+    if (ib && (type == GL_UNSIGNED_BYTE || mode == GL_TRIANGLE_FAN))
+        mglb_buffer_wait_writes(ib->mem); /* read on the CPU below */
     if (type == GL_UNSIGNED_BYTE && mode != GL_TRIANGLE_FAN) {
         /* Metal has no 8-bit indices: widen */
         mglb_buffer *w = mglb_buffer_new((size_t)count * 2);

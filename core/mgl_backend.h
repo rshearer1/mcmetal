@@ -45,11 +45,17 @@ void mglb_texture_generate_mipmaps(mglb_texture *t);
    writes or format/swizzle views the first time a texture needs them (it is remade, contents kept) */
 void mglb_texture_need_image(mglb_texture *t);
 void mglb_texture_need_view(mglb_texture *t);
+/* GPU buffer copy in command order (0: not possible, e.g. offsets not 4-byte aligned; copy on the CPU instead).
+   Until it has run, the CPU must not read or write dst: mglb_buffer_wait_writes waits for it. */
+int mglb_buffer_copy(mglb_buffer *src, size_t src_off, mglb_buffer *dst, size_t dst_off, size_t size);
+int mglb_buffer_gpu_writing(mglb_buffer *b);
+void mglb_buffer_wait_writes(mglb_buffer *b);
 
 /* MGL_PROFILE: CPU-side buffer traffic in core/mgl_buffer.c, logged and reset by the backend once a second */
 typedef struct {
     uint64_t renames, rename_copy_bytes, rename_ns; /* fresh memory for a buffer the GPU still reads (and bytes copied over) */
-    uint64_t copies, copy_bytes, copy_ns;           /* glCopyBufferSubData (the CPU memmove; renames it causes count above) */
+    uint64_t copies, copy_bytes, copy_ns;           /* glCopyBufferSubData on the CPU (memmove only) */
+    uint64_t gpu_copies, gpu_copy_bytes, gpu_waits; /* ... as GPU copies; CPU accesses that had to wait for one */
     uint64_t datas, data_bytes;                     /* glBufferData */
 } mgl_buf_stats;
 extern mgl_buf_stats mgl_bstats;

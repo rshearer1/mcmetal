@@ -165,7 +165,8 @@ static void record_entity(const mgl_program *p, const mgl_draw *d)
     const mgl_vertex_buf *vb = &d->vbufs[a->buffer];
     const unsigned char *base = mglb_buffer_ptr(vb->buf);
     const unsigned char *ib = d->index_buf ? mglb_buffer_ptr(d->index_buf) : NULL;
-    if (!base || (d->index_buf && !ib) || vb->stride < 12) {
+    if (!base || (d->index_buf && !ib) || vb->stride < 12 || mglb_buffer_gpu_writing(vb->buf) ||
+        mglb_buffer_gpu_writing(d->index_buf)) {
         ent_why[4]++;
         return;
     }
@@ -271,6 +272,8 @@ static int same_layout(const mgl_rt_geom *a, const mgl_rt_geom *b)
 /* every vertex in [lo, hi) carries the same section index, and the index buffer reaches far enough */
 static int one_section(const mgl_rt_geom *g, int lo, int hi)
 {
+    if (mglb_buffer_gpu_writing(g->vbuf))
+        return 0; /* a GPU copy into it hasn't run yet: the CPU sees old vertices, so don't fold */
     const unsigned char *base = mglb_buffer_ptr(g->vbuf);
     size_t isz = (size_t)(g->itype == GL_UNSIGNED_SHORT ? 2 : 4);
     if (!base || lo < 0 || (size_t)(hi - lo) / 4 * 6 * isz > mglb_buffer_size(g->ibuf) ||

@@ -7,6 +7,15 @@
 
 mgl_buf_stats mgl_bstats; /* MGL_PROFILE counts these; the backend logs and resets them each second */
 
+/* before the CPU reads or writes a buffer's memory: a GPU copy into it may still be on its way */
+static void cpu_touch(mglb_buffer *m)
+{
+    if (mglb_buffer_gpu_writing(m)) {
+        mgl_bstats.gpu_waits++;
+        mglb_buffer_wait_writes(m);
+    }
+}
+
 static uint64_t buf_now(void)
 {
     struct timespec t;
@@ -134,6 +143,7 @@ static void rename_mem(mgl_buffer *b, int copy)
     uint64_t t0 = buf_now();
     mglb_buffer *fresh = new_mem(b->size ? b->size : 1);
     if (copy && b->mem) {
+        cpu_touch(b->mem);
         memcpy(mglb_buffer_ptr(fresh), mglb_buffer_ptr(b->mem), b->size);
         mgl_bstats.rename_copy_bytes += b->size;
     }
@@ -211,6 +221,7 @@ static void buffer_sub_data(mgl_buffer *b, GLintptr offset, GLsizeiptr size, con
         mgl_set_error(GL_INVALID_VALUE);
         return;
     }
+    cpu_touch(b->mem);
     if (!(b->storage_flags & GL_MAP_PERSISTENT_BIT) && mglb_buffer_in_use(b->mem))
         rename_mem(b, (size_t)size != b->size);
     memcpy((char *)mglb_buffer_ptr(b->mem) + offset, data, (size_t)size);
@@ -237,6 +248,7 @@ static void *map_range(mgl_buffer *b, GLintptr offset, GLsizeiptr length, GLbitf
         mgl_set_error(GL_INVALID_VALUE);
         return NULL;
     }
+    cpu_touch(b->mem);
     if (!(access & (GL_MAP_PERSISTENT_BIT | GL_MAP_UNSYNCHRONIZED_BIT)) && !(b->storage_flags & GL_MAP_PERSISTENT_BIT) &&
         mglb_buffer_in_use(b->mem)) {
         if (access & GL_MAP_INVALIDATE_BUFFER_BIT)
@@ -300,8 +312,26 @@ static void copy_sub_data(mgl_buffer *src, mgl_buffer *dst, GLintptr ro, GLintpt
         mgl_set_error(GL_INVALID_VALUE);
         return;
     }
+    /* The destination still read by the GPU (Sodium's region buffers, drawn every frame): copy on the GPU, in
+       order with the draws, instead of giving it fresh memory and copying all of it on the CPU (MGL_GPU_COPY=0). */
+    static int gpu_copy = -1;
+    if (gpu_copy < 0) {
+        const char *e = getenv("MGL_GPU_COPY");
+        gpu_copy = !(e && *e == '0');
+    }
+    int busy = !(dst->storage_flags & GL_MAP_PERSISTENT_BIT) && mglb_buffer_in_use(dst->mem);
+    int overlap = src->mem == dst->mem && ro < wo + size && wo < ro + size;
+    if (gpu_copy && (busy || mglb_buffer_gpu_writing(src->mem) || mglb_buffer_gpu_writing(dst->mem)) && !overlap &&
+        mglb_buffer_copy(src->mem, (size_t)ro, dst->mem, (size_t)wo, (size_t)size)) {
+        mgl_rt_note_write(dst->mem, (size_t)wo, (size_t)size);
+        mgl_bstats.gpu_copies++;
+        mgl_bstats.gpu_copy_bytes += (uint64_t)size;
+        return;
+    }
     /* CPU copy; if the destination is busy, rename it first so earlier draws keep the old data. */
-    if (!(dst->storage_flags & GL_MAP_PERSISTENT_BIT) && mglb_buffer_in_use(dst->mem))
+    cpu_touch(src->mem);
+    cpu_touch(dst->mem);
+    if (busy)
         rename_mem(dst, 1);
     uint64_t t0 = buf_now();
     memmove((char *)mglb_buffer_ptr(dst->mem) + wo, (char *)mglb_buffer_ptr(src->mem) + ro, (size_t)size);
@@ -348,6 +378,7 @@ void glGetBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, void *d
     mgl_buffer *b = bound(target);
     if (!b || !b->mem)
         return;
+    cpu_touch(b->mem);
     if (mglb_buffer_in_use(b->mem))
         mglb_finish();
     memcpy(data, (char *)mglb_buffer_ptr(b->mem) + offset, (size_t)size);
@@ -373,6 +404,7 @@ static void clear_sub_data(mgl_buffer *b, GLenum internalformat, size_t offset, 
         mgl_set_error(GL_INVALID_VALUE);
         return;
     }
+    cpu_touch(b->mem);
     if (!(b->storage_flags & GL_MAP_PERSISTENT_BIT) && mglb_buffer_in_use(b->mem))
         rename_mem(b, size != b->size);
     char *p = (char *)mglb_buffer_ptr(b->mem) + offset;

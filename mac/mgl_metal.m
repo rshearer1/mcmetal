@@ -504,6 +504,7 @@ struct mglb_buffer {
     void *ptr;
     size_t size, cap;
     uint64_t last_use;
+    uint64_t gpu_write; /* command buffer of the last GPU copy into it (mglb_buffer_copy) */
     struct mglb_buffer *next_free;
 };
 
@@ -588,6 +589,30 @@ static void use_buffer(mglb_buffer *b)
 {
     if (b)
         b->last_use = cb_serial;
+}
+
+/* glCopyBufferSubData as a GPU copy, in order with the draws around it. Used when the destination is still being
+   read by the GPU: the CPU route then had to give the buffer fresh memory and copy all of it over first (Sodium's
+   region buffers while chunks load: up to ~24 MB and 15-26 ms of CPU in one frame on GitHub's Mac). */
+int mglb_buffer_copy(mglb_buffer *src, size_t src_off, mglb_buffer *dst, size_t dst_off, size_t size)
+{
+    if (!src || !dst || (src_off | dst_off | size) & 3)
+        return 0; /* Metal on macOS wants 4-byte offsets and sizes: the caller copies on the CPU */
+    id<MTLBlitCommandEncoder> e = blit_encoder_for(NULL, NULL);
+    [e copyFromBuffer:OBJ(id<MTLBuffer>, src->mtl) sourceOffset:src_off toBuffer:OBJ(id<MTLBuffer>, dst->mtl)
+        destinationOffset:dst_off size:size];
+    use_buffer(src);
+    use_buffer(dst);
+    dst->gpu_write = cb_serial;
+    return 1;
+}
+
+int mglb_buffer_gpu_writing(mglb_buffer *b) { return b && b->gpu_write > atomic_load(&completed_serial); }
+
+void mglb_buffer_wait_writes(mglb_buffer *b)
+{
+    if (mglb_buffer_gpu_writing(b))
+        mglb_fence_wait(b->gpu_write, 5000000000ull);
 }
 
 /* Transient memory for one command buffer: geometry-shader output and texture upload staging. Suballocated
@@ -676,7 +701,20 @@ struct mglb_texture {
     int clean;
     float cval[4];
     MTLTextureUsage usage;
+    /* views made at draw time, kept for the next draws (Iris samples a swizzled shadow map ~100 times a frame) */
+    void *swz_view;
+    int swz[4];
+    void *level_view[4]; /* image views of levels 1-4 */
 };
+static void tex_drop_views(mglb_texture *t)
+{
+    release_obj(t->swz_view);
+    t->swz_view = NULL;
+    for (int i = 0; i < 4; i++) {
+        release_obj(t->level_view[i]);
+        t->level_view[i] = NULL;
+    }
+}
 static void tex_dirty(mglb_texture *t) { if (t) t->clean = 0; }
 static void target_dirty(const mgl_target *t)
 {
@@ -856,6 +894,7 @@ static void tex_need_usage(mglb_texture *t, MTLTextureUsage need)
     }
     /* keep the contents (pending clears of it are replayed into the old one first) */
     [blit_encoder_for(t, NULL) copyFromTexture:old toTexture:fresh];
+    tex_drop_views(t);
     release_obj(t->mtl); /* the copy (and earlier work) keep the old one alive until the GPU is done */
     t->mtl = retain_obj(fresh);
     t->usage = td.usage;
@@ -879,6 +918,7 @@ void mglb_texture_release(mglb_texture *t)
     if (renc) {
         /* the open render pass may still reference it; Metal retains it for the command buffer */
     }
+    tex_drop_views(t);
     release_obj(t->mtl);
     free(t);
 }
@@ -2726,13 +2766,34 @@ static void bind_stage_resources(id<MTLRenderCommandEncoder> e, id<MTLComputeCom
         id<MTLTexture> tex = bt->tex ? OBJ(id<MTLTexture>, bt->tex->mtl) : dummy_texture(bt->dim, bt->sample_kind, bt->is_shadow);
         if (bt->is_image)
             tex_dirty(bt->tex);
-        if (bt->is_image && bt->tex && bt->image_level > 0 && ++prof.tex_views)
-            tex = [tex newTextureViewWithPixelFormat:tex.pixelFormat textureType:tex.textureType
-                                              levels:NSMakeRange((NSUInteger)bt->image_level, 1)
-                                              slices:NSMakeRange(0, tex.textureType == MTLTextureType3D ? 1 : tex.arrayLength)];
+        if (bt->is_image && bt->tex && bt->image_level > 0) {
+            int li = bt->image_level - 1;
+            if (li < 4 && bt->tex->level_view[li])
+                tex = OBJ(id<MTLTexture>, bt->tex->level_view[li]);
+            else {
+                prof.tex_views++;
+                tex = [tex newTextureViewWithPixelFormat:tex.pixelFormat textureType:tex.textureType
+                                                  levels:NSMakeRange((NSUInteger)bt->image_level, 1)
+                                                  slices:NSMakeRange(0, tex.textureType == MTLTextureType3D ? 1 : tex.arrayLength)];
+                if (li < 4 && tex)
+                    bt->tex->level_view[li] = retain_obj(tex);
+            }
+        }
         /* fetch-only textures past slot 15 use a constexpr sampler in the shader (see mgl_xlate.c) */
-        if (bt->tex && (bt->swizzle[0] | bt->swizzle[1] | bt->swizzle[2] | bt->swizzle[3]) && ++prof.tex_views)
-            tex = swizzled_view(tex, bt->swizzle);
+        if (bt->tex && (bt->swizzle[0] | bt->swizzle[1] | bt->swizzle[2] | bt->swizzle[3])) {
+            mglb_texture *x = bt->tex;
+            if (x->swz_view && !memcmp(x->swz, bt->swizzle, sizeof x->swz) && !bt->is_image)
+                tex = OBJ(id<MTLTexture>, x->swz_view);
+            else {
+                prof.tex_views++;
+                tex = swizzled_view(tex, bt->swizzle);
+                if (!bt->is_image && tex) {
+                    release_obj(x->swz_view);
+                    x->swz_view = retain_obj(tex);
+                    memcpy(x->swz, bt->swizzle, sizeof x->swz);
+                }
+            }
+        }
         id<MTLSamplerState> smp = bt->is_image || i >= 16 ? nil : get_sampler(&bt->sampler, bt->is_shadow);
         if (c) {
             [c setTexture:tex atIndex:(NSUInteger)i];
@@ -4578,10 +4639,11 @@ static void profile_frame(unsigned long draws)
             TR_MAX, tr_oneoff / f, tr_waits / f);
     tr_oneoff = tr_waits = 0;
     mgl_log("profile: cpu buffer traffic per frame: %.1f renames (%.2f MB copied, %.2f ms), %.1f glCopyBufferSubData "
-            "(%.2f MB, %.2f ms), %.0f glBufferData (%.2f MB); %.1f texture views made, %.1f pipeline lookups, %.1f big "
+            "(%.2f MB, %.2f ms), %.1f GPU copies (%.2f MB, %.1f CPU waits for one), %.0f glBufferData (%.2f MB); %.1f texture views made, %.1f pipeline lookups, %.1f big "
             "uniform blocks; %lu textures remade for image/view use", mgl_bstats.renames / f,
             mgl_bstats.rename_copy_bytes / f / 1048576.0, mgl_bstats.rename_ns / f * 1e-6, mgl_bstats.copies / f,
-            mgl_bstats.copy_bytes / f / 1048576.0, mgl_bstats.copy_ns / f * 1e-6, mgl_bstats.datas / f,
+            mgl_bstats.copy_bytes / f / 1048576.0, mgl_bstats.copy_ns / f * 1e-6, mgl_bstats.gpu_copies / f,
+            mgl_bstats.gpu_copy_bytes / f / 1048576.0, mgl_bstats.gpu_waits / f, mgl_bstats.datas / f,
             mgl_bstats.data_bytes / f / 1048576.0, prof.tex_views / f, prof.pipe_lookups / f, prof.big_uniforms / f,
             tex_upgrades);
     memset(&mgl_bstats, 0, sizeof mgl_bstats);
