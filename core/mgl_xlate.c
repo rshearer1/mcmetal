@@ -310,10 +310,42 @@ static char *pack_threadgroup_vec3(char *msl)
     return out;
 }
 
+/* Names of the fragment outputs declared narrower than vec4 (vec3, float), one per line. */
+static char *narrow_outputs(spvc_compiler comp)
+{
+    spvc_resources res;
+    const spvc_reflected_resource *list;
+    size_t count, len = 0;
+    if (spvc_compiler_create_shader_resources(comp, &res) != SPVC_SUCCESS ||
+        spvc_resources_get_resource_list_for_type(res, SPVC_RESOURCE_TYPE_STAGE_OUTPUT, &list, &count) != SPVC_SUCCESS)
+        return NULL;
+    for (size_t i = 0; i < count; i++)
+        len += strlen(list[i].name) + 1;
+    char *names = calloc(1, len + 1);
+    if (!names)
+        return NULL;
+    for (size_t i = 0; i < count; i++)
+        if (spvc_type_get_vector_size(spvc_compiler_get_type_handle(comp, list[i].type_id)) < 4) {
+            strcat(names, list[i].name);
+            strcat(names, "\n");
+        }
+    return names;
+}
+
+static int in_list(const char *list, const char *name, size_t n)
+{
+    for (const char *p = list; p && *p; p = strchr(p, '\n') + 1)
+        if (!strncmp(p, name, n) && p[n] == '\n')
+            return 1;
+    return 0;
+}
+
 /* SPIRV-Cross pads narrow fragment outputs (vec3, float) to float4 but writes only out.x.xyz, leaving alpha 0:
    with blending that made SEUS PTGI's passes transparent. GL's missing components read as (0, 0, 0, 1), so
-   every padded output starts as that before the shader's own write. */
-static char *msl_dup(const char *msl, int stage)
+   every padded output starts as that before the shader's own write. A vec4 output the shader only partly writes
+   (Bliss's final passes write .rgb of colortex7) keeps 0 in the rest, as GL drivers leave it: alpha 1 there made
+   Bliss read its glass as water the next frame (no tint, milky haze). narrow: from narrow_outputs(). */
+static char *msl_dup(const char *msl, int stage, const char *narrow)
 {
     const char *init = stage == MGL_FRAGMENT ? strstr(msl, "main0_out out = {};\n") : NULL;
     if (stage == MGL_COMPUTE)
@@ -328,7 +360,7 @@ static char *msl_dup(const char *msl, int stage)
             e++;
         if (strncmp(e, ".x = ", 5) && strncmp(e, ".xy = ", 6) && strncmp(e, ".xyz = ", 7))
             continue;
-        if (e - q >= 128)
+        if (e - q >= 128 || !in_list(narrow, q, (size_t)(e - q)))
             continue;
         int dup = 0;
         for (int k = 0; k < n; k++)
@@ -557,7 +589,9 @@ static spvc_bool cross_stage(mgl_xlate_result *r, int stage, const uint32_t *wor
         xlog(r, "%s: SPIRV-Cross: %s", stage_name[stage], spvc_context_get_last_error_string(ctx));
         goto done;
     }
-    r->msl[stage] = msl_dup(msl, stage);
+    char *narrow = stage == MGL_FRAGMENT ? narrow_outputs(comp) : NULL;
+    r->msl[stage] = msl_dup(msl, stage, narrow);
+    free(narrow);
     ok = SPVC_TRUE;
 done:
     spvc_context_destroy(ctx);
@@ -924,7 +958,9 @@ int mgl_xlate_emit(void *pending[MGL_NUM_STAGES], char *msl[MGL_NUM_STAGES], cha
             continue;
         const char *out = NULL;
         if (ok && spvc_compiler_compile(ps->comp, &out) == SPVC_SUCCESS) {
-            msl[s] = msl_dup(out, ps->stage);
+            char *narrow = ps->stage == MGL_FRAGMENT ? narrow_outputs(ps->comp) : NULL;
+            msl[s] = msl_dup(out, ps->stage, narrow);
+            free(narrow);
         } else if (ok) {
             ok = 0;
             mgl_xlate_result tmp = {0};
