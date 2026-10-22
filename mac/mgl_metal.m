@@ -3144,17 +3144,17 @@ static int power_cap_fps(void)
     return cap;
 }
 
-static int choose_paced_fps(mgl_ctx *c, int shown_per_frame)
+/* Even presenting rates, fastest first. Down to 15: a heavy pack panning (SEUS ~20 real fps) paced at 30 got
+   deadlines it never met and showed 13-16 uneven fps; 20 is even, and with interpolation 20 real shows as an even
+   40 on 120 Hz. */
+static const int pace_rates[] = {120, 60, 40, 30, 24, 20, 15};
+enum { PACE_N = sizeof pace_rates / sizeof pace_rates[0] };
+
+/* Which rates may be used with shown_per_frame frames on screen per real frame; returns the slowest one's index.
+   Only rates that are a whole number of the screen's refreshes (40 on a 60 Hz screen would judder) and within the
+   power cap. A screen none of them divides (e.g. 144 Hz) gets them all, as before. */
+static int pace_allowed(int shown_per_frame, int allowed[PACE_N])
 {
-    /* down to 15: a heavy pack panning (SEUS ~20 real fps) paced at 30 got deadlines it never met and showed
-       13-16 uneven fps; 20 is even, and with interpolation 20 real shows as an even 40 on 120 Hz */
-    static const int rates[] = {120, 60, 40, 30, 24, 20, 15};
-    enum { N = sizeof rates / sizeof rates[0] };
-    const char *forced = getenv("MGL_TARGET_FPS");
-    if (forced && atoi(forced) > 0)
-        return atoi(forced);
-    /* Only rates that are a whole number of the screen's refreshes (40 on a 60 Hz screen would judder) and
-       within the power cap. A screen none of them divides (e.g. 144 Hz) gets them all, as before. */
     static int hz;
     if (!hz) {
         hz = (int)[NSScreen mainScreen].maximumFramesPerSecond;
@@ -3162,16 +3162,38 @@ static int choose_paced_fps(mgl_ctx *c, int shown_per_frame)
             hz = 60;
         mgl_log("frame pacing: screen refreshes at %d Hz", hz);
     }
-    int cap = power_cap_fps(), allowed[N], any = 0;
-    for (int i = 0; i < N; i++)
-        any |= allowed[i] = hz % (rates[i] * shown_per_frame) == 0 && rates[i] * shown_per_frame <= hz && (!cap || rates[i] <= cap);
-    for (int i = 0; i < N && !any; i++)
-        any |= allowed[i] = !cap || rates[i] <= cap;
+    int cap = power_cap_fps(), any = 0;
+    for (int i = 0; i < PACE_N; i++)
+        any |= allowed[i] = hz % (pace_rates[i] * shown_per_frame) == 0 && pace_rates[i] * shown_per_frame <= hz &&
+                            (!cap || pace_rates[i] <= cap);
+    for (int i = 0; i < PACE_N && !any; i++)
+        any |= allowed[i] = !cap || pace_rates[i] <= cap;
     if (!any)
-        allowed[N - 1] = 1;
-    int slowest = N - 1;
+        allowed[PACE_N - 1] = 1;
+    int slowest = PACE_N - 1;
     while (!allowed[slowest])
         slowest--;
+    return slowest;
+}
+
+/* The fastest allowed real rate a frame costing cost_ms keeps up with, with 10% to spare. */
+static int pace_fit(double cost_ms, int shown_per_frame)
+{
+    int allowed[PACE_N], fit = pace_allowed(shown_per_frame, allowed);
+    for (int i = fit; i >= 0; i--)
+        if (allowed[i] && cost_ms * 1.1 <= 1000.0 / pace_rates[i])
+            fit = i;
+    return pace_rates[fit];
+}
+
+static int choose_paced_fps(mgl_ctx *c, int shown_per_frame)
+{
+    const int *rates = pace_rates;
+    enum { N = PACE_N };
+    const char *forced = getenv("MGL_TARGET_FPS");
+    if (forced && atoi(forced) > 0)
+        return atoi(forced);
+    int allowed[N], slowest = pace_allowed(shown_per_frame, allowed);
     uint64_t t = now_ns();
     int cur = -1;
     for (int i = 0; i < N; i++)
@@ -3682,6 +3704,14 @@ static id<MTLTexture> fg_interpolate(double frame_s)
     return nil;
 }
 
+/* MetalFX must not blend across a pause in interpolation */
+static void fg_history_reset(void)
+{
+#ifdef MGL_HAVE_FRAMEGEN
+    fg.reset = 1;
+#endif
+}
+
 void mglb_window_size(int *w, int *h)
 {
     *w = current ? current->w : 0;
@@ -3751,8 +3781,9 @@ static void profile_frame(unsigned long draws)
     atomic_store(&prof_gpu_ns, 0);
 }
 
-/* MCMETAL_FG_TIMING=1: each part of an interpolated frame in its own command buffer, with its GPU time and the
-   gap before the GPU started it (a gap means the GPU sat waiting, e.g. for a drawable), averaged once a second. */
+/* Each part of an interpolated frame goes in its own command buffer so the made-up frame's GPU cost is known (for
+   fg_worth_it). MCMETAL_FG_TIMING=1 logs each part's GPU time and the gap before the GPU started it (a gap means
+   the GPU sat waiting, e.g. for a drawable), averaged once a second. */
 enum { FG_GAME, FG_MAKE, FG_SHOW_MID, FG_SHOW_REAL, FG_STAGES };
 static _Atomic uint64_t fg_stage_ns[FG_STAGES], fg_stage_gap_ns[FG_STAGES], fg_stage_n[FG_STAGES];
 static _Atomic uint64_t fg_last_end_ns; /* GPU end of the last timed command buffer, ns */
@@ -3765,14 +3796,20 @@ static int fg_timing(void)
     return on;
 }
 
+static _Atomic uint64_t fg_extra_ns, fg_extra_frames; /* GPU time of making + showing the made-up frames */
+
 static void fg_time_stage(int stage)
 {
-    if (!fg_timing())
-        return;
     [current_cb() addCompletedHandler:^(id<MTLCommandBuffer> done) {
       if (done.GPUEndTime <= done.GPUStartTime)
           return;
       uint64_t s = (uint64_t)(done.GPUStartTime * 1e9), e = (uint64_t)(done.GPUEndTime * 1e9);
+      if (stage == FG_MAKE || stage == FG_SHOW_MID)
+          atomic_fetch_add(&fg_extra_ns, e - s);
+      if (stage == FG_MAKE)
+          atomic_fetch_add(&fg_extra_frames, 1);
+      if (!fg_timing())
+          return;
       uint64_t prev = atomic_exchange(&fg_last_end_ns, e);
       atomic_fetch_add(&fg_stage_ns[stage], e - s);
       if (prev && s > prev)
@@ -3799,6 +3836,57 @@ static void fg_timing_report(void)
             n += snprintf(line + n, sizeof line - n, " %s %.2f / %.2f;", names[i], ns * 1e-6 / k, gap * 1e-6 / k);
     }
     mgl_log("%s", line);
+}
+
+/* Interpolation only pays when it shows more frames than the real ones could alone: static SEUS on an M3 makes an
+   even 40 real fps, while with interpolation (~5 ms more GPU) it only held 20 real shown as 40 (more lag, same
+   smoothness) or wobbled between that and 30 shown as 60. So every half second compare the two, from the frame
+   cost and the made-up frames' measured GPU time, and pause or resume interpolation after 2 s of agreement and at
+   least 3 s after the last switch. MCMETAL_FG_ALWAYS=1 keeps it on. */
+static int fg_paused;
+
+static void fg_decide(mgl_ctx *c)
+{
+    static uint64_t window_ns, switched_ns;
+    static double extra_ms;
+    static int votes, always = -1;
+    if (always < 0)
+        always = opt("MCMETAL_FG_ALWAYS");
+    uint64_t t = now_ns();
+    if (always || t - window_ns < 500000000ull)
+        return;
+    window_ns = t;
+    uint64_t ns = atomic_exchange(&fg_extra_ns, 0), n = atomic_exchange(&fg_extra_frames, 0);
+    if (n)
+        extra_ms = ns * 1e-6 / n;
+    if (extra_ms <= 0 || c->avg_frame_ms <= 0 || c->paced_fps <= 0 || (!fg_paused && !n) || t - switched_ns < 3000000000ull) {
+        votes = 0;
+        return;
+    }
+    int single, dual, vote;
+    if (!fg_paused) {
+        dual = c->paced_fps;
+        single = pace_fit(c->avg_frame_ms - extra_ms, 1);
+        vote = single >= 2 * dual;
+    } else {
+        single = c->paced_fps;
+        dual = pace_fit(c->avg_frame_ms + extra_ms, 2);
+        vote = 2 * dual > single;
+    }
+    votes = vote ? votes + 1 : 0;
+    if (votes < 4)
+        return;
+    votes = 0;
+    switched_ns = t;
+    fg_paused = !fg_paused;
+    c->paced_fps = 0; /* pick the rate afresh */
+    fg_history_reset();
+    if (fg_paused)
+        mgl_log("frame interpolation paused: real frames alone make an even %d fps (interpolated: %d shown as %d; made-up frames cost %.1f ms)",
+                single, dual, 2 * dual, extra_ms);
+    else
+        mgl_log("frame interpolation back on: %d real fps shown as %d beats %d real (made-up frames cost %.1f ms)", dual, 2 * dual,
+                single, extra_ms);
 }
 
 static atomic_int presents_waiting; /* drawn but not yet on screen */
@@ -3892,7 +3980,7 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
         double frame_s = c->paced_fps > 0 ? 1.0 / c->paced_fps : c->avg_frame_ms > 0 ? c->avg_frame_ms * 1e-3 : 1.0 / 60;
         if (fg_enabled())
             fg_time_stage(FG_GAME);
-        id<MTLTexture> mid = fg_interpolate(frame_s);
+        id<MTLTexture> mid = fg_paused ? nil : fg_interpolate(frame_s);
         if (mid)
             fg_time_stage(FG_MAKE);
         static int fg_no_present = -1;
@@ -3952,6 +4040,8 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
         c->last_swap_ns = t;
         c->last_wait_ns = pace_wait_ns;
         c->last_gpu_ns = gpu;
+        if (fg_enabled() && opt_pacing > 0 && c->vsync)
+            fg_decide(c);
         if (mid || !drawable) {
         } else if (opt_pacing > 0 && c->vsync && c->avg_frame_ms > 0) {
             int fps = choose_paced_fps(c, 1);
