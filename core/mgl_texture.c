@@ -447,7 +447,10 @@ static const void *unpack_source(const void *pixels)
 {
     if (mgl->pixel_unpack_buffer) {
         mgl_buffer *b = mgl_buffer_obj(mgl->pixel_unpack_buffer);
-        return b && b->mem ? (const char *)mglb_buffer_ptr(b->mem) + (size_t)pixels : NULL;
+        if (!b || !b->mem)
+            return NULL;
+        mglb_buffer_wait_writes(b->mem); /* a GPU copy into it may still be on its way */
+        return (const char *)mglb_buffer_ptr(b->mem) + (size_t)pixels;
     }
     return pixels;
 }

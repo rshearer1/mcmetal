@@ -61,6 +61,7 @@ static void attrib_pointer(GLuint index, GLint size, GLenum type, int normalized
         stride = ts * a->size;
     }
     a->stride = stride;
+    a->use_binding = 0;
     if (!a->buffer)
         mgl_log("client-side vertex arrays are not supported (attribute %u)", index);
 }
@@ -87,6 +88,84 @@ void glDisableVertexAttribArray(GLuint index)
     mgl_vao *v = cur_vao();
     if (v && index < MGL_MAX_VERTEX_ATTRIBS)
         v->attr[index].enabled = 0;
+}
+
+/* ARB_vertex_attrib_binding (Distant Horizons with Iris): formats and buffers set apart, joined at draw time */
+static void attrib_format(GLuint index, GLint size, GLenum type, int normalized, int integer, GLuint reloffset)
+{
+    mgl_vao *v = cur_vao();
+    if (!v || index >= MGL_MAX_VERTEX_ATTRIBS)
+        return;
+    mgl_vattrib *a = &v->attr[index];
+    if (!a->use_binding)
+        a->binding = index; /* the default binding of an attribute is its own index */
+    a->use_binding = 1;
+    a->size = size == GL_BGRA ? 4 : size;
+    a->type = type;
+    a->normalized = normalized;
+    a->integer = integer;
+    a->offset = reloffset;
+}
+
+void glVertexAttribFormat(GLuint index, GLint size, GLenum type, GLboolean normalized, GLuint reloffset)
+{
+    attrib_format(index, size, type, normalized, 0, reloffset);
+}
+
+void glVertexAttribIFormat(GLuint index, GLint size, GLenum type, GLuint reloffset)
+{
+    attrib_format(index, size, type, 0, 1, reloffset);
+}
+
+void glVertexAttribBinding(GLuint index, GLuint binding)
+{
+    mgl_vao *v = cur_vao();
+    if (v && index < MGL_MAX_VERTEX_ATTRIBS && binding < MGL_MAX_VERTEX_ATTRIBS) {
+        v->attr[index].binding = binding;
+        v->attr[index].use_binding = 1;
+    }
+}
+
+void glBindVertexBuffer(GLuint binding, GLuint buffer, GLintptr offset, GLsizei stride)
+{
+    mgl_vao *v = cur_vao();
+    if (v && binding < MGL_MAX_VERTEX_ATTRIBS) {
+        v->bind[binding].buffer = buffer;
+        v->bind[binding].offset = (size_t)offset;
+        v->bind[binding].stride = stride;
+    }
+}
+
+void glBindVertexBuffers(GLuint first, GLsizei count, const GLuint *buffers, const GLintptr *offsets, const GLsizei *strides)
+{
+    for (GLsizei i = 0; i < count; i++)
+        glBindVertexBuffer(first + (GLuint)i, buffers ? buffers[i] : 0, buffers ? offsets[i] : 0, buffers ? strides[i] : 16);
+}
+
+void glVertexBindingDivisor(GLuint binding, GLuint divisor)
+{
+    mgl_vao *v = cur_vao();
+    if (v && binding < MGL_MAX_VERTEX_ATTRIBS)
+        v->bind[binding].divisor = divisor;
+}
+
+/* An attribute's effective source: its own pointer, or its binding point's buffer plus its relative offset */
+static mgl_vattrib resolve_attrib(const mgl_vao *v, int gi)
+{
+    mgl_vattrib a = v->attr[gi];
+    if (a.use_binding) {
+        const mgl_vbinding *b = &v->bind[a.binding];
+        a.buffer = b->buffer;
+        a.offset += b->offset;
+        a.divisor = b->divisor;
+        a.stride = b->stride;
+        if (!a.stride) {
+            int ts = a.type == GL_FLOAT || a.type == GL_INT || a.type == GL_UNSIGNED_INT ? 4
+                   : a.type == GL_SHORT || a.type == GL_UNSIGNED_SHORT || a.type == GL_HALF_FLOAT ? 2 : 1;
+            a.stride = ts * a.size;
+        }
+    }
+    return a;
 }
 
 void glVertexAttribDivisor(GLuint index, GLuint divisor)
@@ -154,6 +233,7 @@ static void gather_textures(mgl_draw *d, mgl_program *p, int compute)
                 int unit = p->image_unit_of[i];
                 mgl_texture *t = unit >= 0 && unit < MGL_MAX_IMAGE_UNITS ? mgl_texture_obj(mgl->images[unit].texture) : NULL;
                 bt->tex = t ? t->mem : NULL;
+                mglb_texture_need_image(bt->tex); /* textures start without image writes (lossless compression) */
                 bt->image_level = unit >= 0 && unit < MGL_MAX_IMAGE_UNITS ? mgl->images[unit].level : 0;
             } else if (p->x.uses_scene && !strcmp(slot->name, "mcm_atlas")) {
                 bt->tex = mgl_rt_atlas; /* mcm_trace's alpha test reads the terrain's block atlas */
@@ -165,8 +245,10 @@ static void gather_textures(mgl_draw *d, mgl_program *p, int compute)
                     continue;
                 mgl_texture *t = mgl_texture_obj(mgl->bound_tex[unit][tex_index_for_dim(slot->dim)]);
                 bt->tex = t ? t->mem : NULL;
-                if (t && t->has_swizzle)
+                if (t && t->has_swizzle) {
                     memcpy(bt->swizzle, t->swizzle, sizeof bt->swizzle);
+                    mglb_texture_need_view(bt->tex);
+                }
                 mgl_sampler *so = mgl_table_get(&mgl->samplers, mgl->bound_sampler[unit]);
                 if (so)
                     bt->sampler = so->s;
@@ -186,6 +268,8 @@ static void gather_uniforms(mgl_draw *d, mgl_program *p)
         d->uniforms[s] = p->ublock[s];
         d->uniform_size[s] = p->x.default_block_size[s];
     }
+    d->uniform_used = p->x.used_ranges[MGL_COMPUTE];
+    d->num_uniform_used = p->x.num_used_ranges[MGL_COMPUTE];
     for (int i = 0; i < p->x.num_ubos && i < 12; i++) {
         int b = p->ubo_binding[i];
         if (b < 0 || b >= MGL_MAX_UBO_BINDINGS)
@@ -259,7 +343,7 @@ static int build_draw(mgl_draw *d)
         if (loc < 0 || loc >= MGL_MAX_VERTEX_ATTRIBS)
             continue;
         has_input[loc] = 1;
-        mgl_vattrib *a = &v->attr[gi];
+        mgl_vattrib ra = resolve_attrib(v, gi), *a = &ra;
         mgl_vertex_attr *o = &d->attrs[loc];
         o->enabled = 1;
         o->location = loc;
@@ -398,7 +482,7 @@ static void submit(mgl_draw *d)
             p->ublock[MGL_COMPUTE])
             memcpy(p->ublock[MGL_COMPUTE] + p->x.uniforms[i].offset[MGL_COMPUTE], info, sizeof info);
     memcpy(d->local_size, p->x.local_size, sizeof d->local_size);
-    mglb_draw_gs(d, tris, p->x.gs_max_vertices, p->x.gs_record_vec4s);
+    mglb_draw_gs(d, tris, p->x.gs_max_vertices, p->x.gs_record_floats);
 }
 
 static void draw(GLenum mode, GLsizei count, GLenum type, const void *indices, GLint first, GLint basevertex,
@@ -418,6 +502,8 @@ static void draw(GLenum mode, GLsizei count, GLenum type, const void *indices, G
         mgl_log("indexed draw without an element buffer (client-side indices are not supported)");
         return;
     }
+    if (ib && (type == GL_UNSIGNED_BYTE || mode == GL_TRIANGLE_FAN))
+        mglb_buffer_wait_writes(ib->mem); /* read on the CPU below */
     if (type == GL_UNSIGNED_BYTE && mode != GL_TRIANGLE_FAN) {
         /* Metal has no 8-bit indices: widen */
         mglb_buffer *w = mglb_buffer_new((size_t)count * 2);

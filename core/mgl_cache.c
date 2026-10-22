@@ -12,7 +12,7 @@
 #include "mgl_log.h"
 
 #define MAGIC 0x4D43534Du /* "MSCM" */
-static const char build_tag[] = "mcmetal-xlate-2 " __DATE__ " " __TIME__;
+static const char build_tag[] = "mcmetal-xlate-4 " __DATE__ " " __TIME__;
 
 static const char *cache_dir(void)
 {
@@ -114,6 +114,8 @@ void mgl_cache_store(const char *key, const mgl_xlate_result *r)
     for (int s = 0; s < MGL_NUM_STAGES; s++)
         put_str(f, r->msl[s]);
     put(f, r->default_block_size, sizeof r->default_block_size);
+    put(f, r->used_ranges, sizeof r->used_ranges);
+    put(f, r->num_used_ranges, sizeof r->num_used_ranges);
     put(f, r->local_size, sizeof r->local_size);
     put_int(f, r->num_uniforms); put(f, r->uniforms, sizeof *r->uniforms * (size_t)r->num_uniforms);
     put_int(f, r->num_textures); put(f, r->textures, sizeof *r->textures * (size_t)r->num_textures);
@@ -122,7 +124,7 @@ void mgl_cache_store(const char *key, const mgl_xlate_result *r)
     put_int(f, r->num_attribs); put(f, r->attribs, sizeof *r->attribs * (size_t)r->num_attribs);
     put_int(f, r->num_outs); put(f, r->outs, sizeof *r->outs * (size_t)r->num_outs);
     put_int(f, r->gs_max_vertices);
-    put_int(f, r->gs_record_vec4s);
+    put_int(f, r->gs_record_floats);
     put_int(f, r->uses_scene);
     put_str(f, r->log);
     int bad = ferror(f);
@@ -146,15 +148,24 @@ int mgl_cache_load(const char *key, mgl_xlate_result *r)
                               guard == ((int)sizeof(mgl_uniform) ^ (int)sizeof(mgl_texture_slot) << 12);
     for (int s = 0; ok && s < MGL_NUM_STAGES; s++)
         ok = get_str(f, &r->msl[s]);
-    ok = ok && get(f, r->default_block_size, sizeof r->default_block_size) && get(f, r->local_size, sizeof r->local_size);
+    ok = ok && get(f, r->default_block_size, sizeof r->default_block_size) && get(f, r->used_ranges, sizeof r->used_ranges) &&
+         get(f, r->num_used_ranges, sizeof r->num_used_ranges) && get(f, r->local_size, sizeof r->local_size);
     ok = ok && get_arr(f, (void **)&r->uniforms, &r->num_uniforms, sizeof *r->uniforms);
     ok = ok && get_arr(f, (void **)&r->textures, &r->num_textures, sizeof *r->textures);
     ok = ok && get_arr(f, (void **)&r->ubos, &r->num_ubos, sizeof *r->ubos);
     ok = ok && get_arr(f, (void **)&r->ssbos, &r->num_ssbos, sizeof *r->ssbos);
     ok = ok && get_arr(f, (void **)&r->attribs, &r->num_attribs, sizeof *r->attribs);
     ok = ok && get_arr(f, (void **)&r->outs, &r->num_outs, sizeof *r->outs);
-    ok = ok && get_int(f, &r->gs_max_vertices) && get_int(f, &r->gs_record_vec4s) && get_int(f, &r->uses_scene);
+    ok = ok && get_int(f, &r->gs_max_vertices) && get_int(f, &r->gs_record_floats) && get_int(f, &r->uses_scene);
     ok = ok && get_str(f, &r->log);
+    for (int s = 0; ok && s < MGL_NUM_STAGES; s++) { /* a damaged file must not index past used_ranges */
+        int n = r->num_used_ranges[s];
+        if (n < -1 || n > 64)
+            ok = 0;
+        for (int k = 0; ok && k < n; k++)
+            ok = r->used_ranges[s][k][0] >= 0 && r->used_ranges[s][k][1] > 0 &&
+                 (long)r->used_ranges[s][k][0] + r->used_ranges[s][k][1] <= (long)r->default_block_size[s];
+    }
     fclose(f);
     if (!ok) {
         mgl_xlate_free(r);

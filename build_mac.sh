@@ -23,8 +23,14 @@ mv ./*.o build/obj/
 clang "${CFLAGS[@]}" -fobjc-arc -Icore -c mac/*.m
 mv ./*.o build/obj/
 clang -arch arm64 -dynamiclib -o build/libmcmetal.dylib build/obj/*.o $D/libspirvcross_all.a $D/libglslang_all.a -lc++ \
-    -install_name @rpath/libmcmetal.dylib -framework Metal -framework MetalFX -framework QuartzCore -framework Foundation
+    -install_name @rpath/libmcmetal.dylib -framework Metal -framework MetalFX -framework QuartzCore -framework Foundation -framework AppKit
 echo "libmcmetal: $(nm -gU build/libmcmetal.dylib | grep -c ' _gl') GL symbols exported"
+
+# 3b. glprof (tools/glprof.h): GL call profiler that wraps exactly the GL functions libmcmetal exports
+nm -gU build/libmcmetal.dylib | grep ' _gl' > build/gen/mcmetal-gl-names.txt
+python3 -I gen/gen_glprof.py build/gl.xml build/gen/glprof_gen.c build/gen/mcmetal-gl-names.txt
+clang "${CFLAGS[@]}" -std=gnu11 -Icore -Itools -dynamiclib -o build/libglprof-mcmetal.dylib tools/glprof.c build/gen/glprof_gen.c \
+    -install_name @rpath/libglprof-mcmetal.dylib
 
 # 4. Patched GLFW 3.4 (nsgl_context.m replaced by glfw/mtl_context.m)
 if [ ! -d build/glfw-3.4 ]; then

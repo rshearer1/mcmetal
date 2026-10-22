@@ -31,6 +31,7 @@ typedef struct mgl_link_job {
 static pthread_mutex_t job_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t job_ready = PTHREAD_COND_INITIALIZER, job_done = PTHREAD_COND_INITIALIZER;
 static mgl_link_job *queue_head, *queue_tail;
+static int jobs_running; /* taken off the queue, not done yet */
 
 /* MGL_MSL_DUMP=dir: write every program's MSL there (<key>.<stage>.metal), e.g. for an offline `xcrun metal` check */
 static void dump_msl(const mgl_link_job *j)
@@ -44,12 +45,14 @@ static void dump_msl(const mgl_link_job *j)
     for (int s = 0; s < MGL_NUM_STAGES; s++) {
         if (!j->msl[s])
             continue;
-        char path[1024];
+        char path[1024], tmp[1040];
         snprintf(path, sizeof path, "%s/%s-%u.%s.metal", dir, j->key[0] ? j->key : "nokey", n, ext[s]);
-        FILE *f = fopen(path, "w");
-        if (f) {
-            fputs(j->msl[s], f);
-            fclose(f);
+        snprintf(tmp, sizeof tmp, "%s.part", path);
+        FILE *f = fopen(tmp, "w");
+        if (f) { /* whole files only: a background compile can still be writing when a short test exits */
+            int ok = fputs(j->msl[s], f) >= 0;
+            if (fclose(f) == 0 && ok)
+                rename(tmp, path);
         }
     }
 }
@@ -83,13 +86,27 @@ static void *worker(void *arg)
         queue_head = j->next;
         if (!queue_head)
             queue_tail = NULL;
+        jobs_running++;
         pthread_mutex_unlock(&job_lock);
         run_job(j);
         pthread_mutex_lock(&job_lock);
+        jobs_running--;
         j->done = 1;
         pthread_cond_broadcast(&job_done);
     }
     return NULL;
+}
+
+/* at exit: let queued and running compiles finish. exit() otherwise tears down glslang's and Metal's globals
+   under a worker that is still using them (gl_smoke crashed with exit code 139 after its last check; a game
+   quit while a shader pack compiles can too). The binary archive's exit save calls it too, so pipelines these
+   jobs add are saved. */
+void mgl_program_drain(void)
+{
+    pthread_mutex_lock(&job_lock);
+    while (queue_head || jobs_running)
+        pthread_cond_wait(&job_done, &job_lock);
+    pthread_mutex_unlock(&job_lock);
 }
 
 static int async_link(void)
@@ -99,13 +116,18 @@ static int async_link(void)
         const char *e = getenv("MGL_ASYNC_LINK");
         long n = sysconf(_SC_NPROCESSORS_ONLN) - 1; /* leave the render thread its core */
         workers = e && *e == '0' ? 0 : n < 1 ? 1 : n > 15 ? 15 : (int)n;
-        for (int i = 0; i < workers; i++) {
+        /* without a way to drain them at exit, link on the caller's thread */
+        int want = workers > 0 && atexit(mgl_program_drain) == 0 ? workers : 0;
+        workers = 0;
+        for (int i = 0; i < want; i++) {
             pthread_t t;
             pthread_attr_t a;
             pthread_attr_init(&a);
             pthread_attr_setstacksize(&a, 16u << 20); /* glslang/SPIRV-Cross recurse deeply on big shaders */
-            if (pthread_create(&t, &a, worker, NULL) == 0)
+            if (pthread_create(&t, &a, worker, NULL) == 0) {
                 pthread_detach(t);
+                workers++; /* only threads that exist take jobs */
+            }
             pthread_attr_destroy(&a);
         }
         if (workers)
@@ -157,7 +179,8 @@ static void apply_job(mgl_program *p, mgl_link_job *j)
         p->linked = 0; /* Iris already saw a successful link; draws with this program are skipped */
         free(p->info_log);
         p->info_log = j->err;
-        mgl_log("Metal compile of program failed:\n%s", p->info_log);
+        mgl_log("Metal compile of program %u%s%s failed (work group %dx%dx%d):\n%s", j->name, p->debug_name[0] ? " " : "",
+                p->debug_name, p->x.local_size[0], p->x.local_size[1], p->x.local_size[2], p->info_log);
     } else {
         free(j->err);
     }
@@ -282,7 +305,8 @@ static void add_ray_tracing(mgl_shader *s)
                                "layout(std430, binding = 14) readonly buffer McmLights { uint mcm_lcount; uint mcm_lpad[3];\n"
                                "  vec4 mcm_light[2048]; uint mcm_lcell[]; };\n";
     /* McmTris: 12 words per triangle, written by rt_decode (mac/mgl_metal.m): 0-2 uv, 3 cutoff | 0x100 translucent,
-       4-6 colour, 7 octahedral normal, 8-10 light, 11 Iris block id + 1. Candidates (every triangle is non-opaque)
+       4-6 colour, 7 octahedral normal, 8-10 light, 11 Iris block id + 1; 0x200 in word 3 = untextured (entities,
+       mglb_rt_dynamic). Candidates (every triangle is non-opaque)
        pass Sodium's alpha test against the block atlas before they count. */
     static const char body[] =
         "\nvec2 mcm_uv(McmTris t, uint b, vec2 w) {\n"
@@ -334,7 +358,8 @@ static void add_ray_tracing(mgl_shader *s)
         "  if (n.z < 0.0) n.xy = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);\n"
         "  normal = normalize(n);\n"
         "  if (dot(normal, dir) > 0.0) normal = -normal; /* the face the ray hit */\n"
-        "  albedo = textureLod(mcm_atlas, mcm_uv(t, b, w), 0.0) * vec4(mcm_colour(t, b, w).rgb, 1.0);\n"
+        "  albedo = ((t.w[b + 3u] & 0x200u) != 0u ? vec4(1.0) : textureLod(mcm_atlas, mcm_uv(t, b, w), 0.0))\n"
+        "         * vec4(mcm_colour(t, b, w).rgb, 1.0);\n"
         "  uvec3 l = uvec3(t.w[b + 8u], t.w[b + 9u], t.w[b + 10u]);\n"
         "  vec3 wv = vec3(1.0 - w.x - w.y, w.x, w.y);\n"
         "  lightmap = vec2(dot(vec3(l & 0xFFu), wv), dot(vec3((l >> 8u) & 0xFFu), wv)) / 256.0;\n"
@@ -401,6 +426,93 @@ static void add_ray_tracing(mgl_shader *s)
         mgl_log("shader uses mcm_trace: hardware ray tracing enabled for it");
 }
 
+/* MCMETAL_PHOTON_RT=1: ray-traced shadows for Photon's coloured block light (the job its Photonics slot leaves to
+   the Photonics mod). Photon's light comes from a flood-filled light volume that bends round corners and has no
+   sharp shadows. We keep that light (its brightness and colour are Photon's own), and scale it by what the four
+   nearest light blocks (Photon's ids 32-79, its own colour table) can actually see: one shadow ray each from the
+   surface to the light's centre. Where every light is hidden, a quarter stays as bounce light. A light in view
+   but another of a different colour hidden shifts the tint towards the one in view. Photon's licence allows this
+   kind of derivative; nothing of the pack is changed on disk. */
+static void add_photon_rt(mgl_shader *s)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("MCMETAL_PHOTON_RT");
+        on = e && *e && *e != '0';
+    }
+    char *f = on && s->type == GL_FRAGMENT_SHADER ? strstr(s->source, "vec3 get_lpv_blocklight(") : NULL;
+    if (!f || !strstr(s->source, "vec3 get_block_lighting(") || strstr(s->source, "mcm_photon_lpv"))
+        return;
+    /* the end of Photon's function: its closing brace */
+    char *b = strchr(f, '{');
+    int depth = 0;
+    char *end = NULL;
+    for (char *q = b; q && *q; q++) {
+        if (*q == '{')
+            depth++;
+        else if (*q == '}' && --depth == 0) {
+            end = q + 1;
+            break;
+        }
+    }
+    if (!end)
+        return;
+    static const char wrap[] =
+        "\n#define MCMETAL_LIGHT_IDS 32 79\n"
+        "int mcm_lights_near(vec3 p, int slot, out vec3 pos, out int blockId);\n"
+        "float mcm_trace(vec3 origin, vec3 dir, float tmax);\n"
+        "const vec3 mcm_photon_light[48] = vec3[48](\n"
+        "  vec3(1.0,1.0,1.0)*12.0, vec3(1.0,1.0,1.0)*6.0, vec3(1.0,1.0,1.0), vec3(1.0,0.55,0.27)*14.0,\n"
+        "  vec3(1.0,0.57,0.3)*8.0, vec3(1.0,0.57,0.3)*6.0, vec3(1.0,0.18,0.1)*5.0, vec3(1.0,0.38,0.1)*7.0,\n"
+        "  vec3(1.0,0.45,0.1)*9.0, vec3(1.0,0.63,0.15)*4.0, vec3(1.0,0.57,0.3)*12.0, vec3(0.45,0.73,1.0)*6.0,\n"
+        "  vec3(0.45,0.73,1.0)*14.0, vec3(0.75,1.0,0.83)*3.0, vec3(0.75,1.0,0.83), vec3(0.6,0.1,1.0)*2.5,\n"
+        "  vec3(0.75,1.0,0.5), vec3(1.0,0.5,0.25)*4.0, vec3(1.0,0.57,0.3)*8.0, vec3(1.0,0.65,0.3)*8.0,\n"
+        "  vec3(0.86,1.0,0.44)*8.0, vec3(0.75,0.44,1.0)*8.0, vec3(0.6,0.1,1.0)*2.0, vec3(0.75,0.44,1.0)*4.0,\n"
+        "  vec3(0.75,0.44,1.0)*4.0, vec3(0.75,1.0,0.83)*6.0, vec3(1.0,0.18,0.1)*3.3, vec3(1.0,0.5,0.25)*3.0,\n"
+        "  vec3(0.85,1.3,1.0)*3.9, vec3(1.0,0.57,0.3)*8.0, vec3(0.6,0.1,1.0)*12.0, vec3(0.0),\n"
+        "  vec3(1.0)*10.0, vec3(0.85)*9.0, vec3(0.55)*8.0, vec3(0.2,0.2,0.22)*6.0, vec3(0.55,0.35,0.2)*8.0,\n"
+        "  vec3(1.0,0.1,0.1)*10.0, vec3(1.0,0.45,0.1)*10.0, vec3(1.0,0.95,0.2)*10.0, vec3(0.55,1.0,0.2)*10.0,\n"
+        "  vec3(0.15,1.0,0.2)*10.0, vec3(0.15,0.95,1.0)*10.0, vec3(0.45,0.75,1.0)*10.0, vec3(0.15,0.3,1.0)*10.0,\n"
+        "  vec3(0.55,0.15,1.0)*10.0, vec3(1.0,0.2,0.9)*10.0, vec3(1.0,0.55,0.85)*10.0);\n"
+        "vec3 get_lpv_blocklight(vec3 scene_pos, vec3 normal, vec3 mc_blocklight, float ao) {\n"
+        "  vec3 lpv = mcm_photon_lpv(scene_pos, normal, mc_blocklight, ao);\n"
+        "  vec3 seen = vec3(0.0), all_ = vec3(0.0);\n"
+        "  vec3 o = scene_pos + normal * 0.02;\n"
+        "  for (int i = 0; i < 4; i++) {\n"
+        "    vec3 lp; int id;\n"
+        "    if (mcm_lights_near(scene_pos, i, lp, id) < 0) break;\n"
+        "    vec3 d = lp - o;\n"
+        "    float dist = length(d);\n"
+        "    vec3 dir = d / max(dist, 1e-4);\n"
+        "    float fade = clamp(1.0 - dist / 15.0, 0.0, 1.0);\n"
+        "    float ndl = dist < 0.9 ? 1.0 : max(dot(normal, dir), 0.0);\n"
+        "    vec3 c = mcm_photon_light[clamp(id - 32, 0, 47)] * fade * fade * ndl / (0.25 * dist * dist + 1.0);\n"
+        "    if (dot(c, vec3(1.0)) <= 0.0) continue;\n"
+        "    all_ += c;\n"
+        /* stop short of the light block itself (a full block's faces are 0.5 from its centre, corners up to 0.87) */
+        "    if (dist <= 0.9 || mcm_trace(o + dir * 0.01, dir, dist - 0.9) < 0.0) seen += c;\n"
+        "  }\n"
+        "  if (dot(all_, vec3(1.0)) <= 1e-4) return lpv;\n"
+        "  return lpv * mix(vec3(0.25), min(seen / max(all_, vec3(1e-4)), vec3(2.0)), 0.75);\n"
+        "}\n";
+    size_t pre = (size_t)(f - s->source);
+    const char *nm = "vec3 mcm_photon_lpv(";
+    size_t oldnm = strlen("vec3 get_lpv_blocklight(");
+    size_t head = (size_t)(end - (f + oldnm)), rest = strlen(end);
+    char *n = malloc(pre + strlen(nm) + head + sizeof wrap + rest);
+    char *o = n;
+    memcpy(o, s->source, pre); o += pre;
+    memcpy(o, nm, strlen(nm)); o += strlen(nm);
+    memcpy(o, f + oldnm, head); o += head;
+    memcpy(o, wrap, sizeof wrap - 1); o += sizeof wrap - 1;
+    memcpy(o, end, rest + 1);
+    free(s->source);
+    s->source = n;
+    static int noted;
+    if (!noted++)
+        mgl_log("Photon: ray-traced shadows for its coloured block light (MCMETAL_PHOTON_RT)");
+}
+
 void glShaderSource(GLuint name, GLsizei count, const GLchar *const *strings, const GLint *lengths)
 {
     mgl_shader *s = shader_obj(name);
@@ -430,6 +542,7 @@ void glShaderSource(GLuint name, GLsizei count, const GLchar *const *strings, co
                 mgl_log("hiding MC_OS_MAC from shaders (Iris's macOS define)");
         }
     }
+    add_photon_rt(s);
     add_ray_tracing(s);
 }
 
@@ -497,6 +610,8 @@ static void release_link(mgl_program *p)
         mglb_program_release(p->gpu);
     p->gpu = NULL;
     mgl_xlate_free(&p->x);
+    free(p->name_hash);
+    p->name_hash = NULL;
     for (int s = 0; s < 3; s++) {
         free(p->ublock[s]);
         p->ublock[s] = NULL;
@@ -786,6 +901,35 @@ static int parse_name(const char *name, char *base, int *element)
     return strchr(br, '.') == NULL; /* no struct members */
 }
 
+static unsigned name_hash_of(const char *s)
+{
+    unsigned h = 2166136261u; /* FNV-1a */
+    while (*s)
+        h = (h ^ (unsigned char)*s++) * 16777619u;
+    return h;
+}
+
+/* Iris and the packs ask for every uniform's location by name, again on each program reload (Complementary and
+   Rethinking Voxels: 22-26k calls a minute); a table instead of a strcmp over all of a program's uniforms. */
+static void build_name_hash(mgl_program *p)
+{
+    int n = p->x.num_uniforms + p->x.num_textures;
+    unsigned size = 16;
+    while (size < (unsigned)n * 2)
+        size <<= 1;
+    p->name_hash = calloc(size, sizeof *p->name_hash);
+    if (!p->name_hash)
+        return;
+    p->name_hash_mask = size - 1;
+    for (int i = 0; i < n; i++) {
+        const char *nm = i < p->x.num_uniforms ? p->x.uniforms[i].name : p->x.textures[i - p->x.num_uniforms].name;
+        unsigned h = name_hash_of(nm) & p->name_hash_mask;
+        while (p->name_hash[h])
+            h = (h + 1) & p->name_hash_mask;
+        p->name_hash[h] = i + 1;
+    }
+}
+
 GLint glGetUniformLocation(GLuint prog, const GLchar *name)
 {
     mgl_program *p = program_obj(prog);
@@ -793,12 +937,20 @@ GLint glGetUniformLocation(GLuint prog, const GLchar *name)
     int el;
     if (!p || !p->linked || !parse_name(name, base, &el))
         return -1;
-    for (int i = 0; i < p->x.num_uniforms; i++)
-        if (!strcmp(p->x.uniforms[i].name, base) && el < p->x.uniforms[i].array_size)
-            return (i << 8) | el;
-    for (int i = 0; i < p->x.num_textures; i++)
-        if (!strcmp(p->x.textures[i].name, base) && el == 0)
-            return ((p->x.num_uniforms + i) << 8);
+    if (!p->name_hash)
+        build_name_hash(p);
+    if (!p->name_hash)
+        return -1;
+    /* the first entry with this name wins, as in the uniforms-then-textures order of the old linear search */
+    for (unsigned h = name_hash_of(base) & p->name_hash_mask; p->name_hash[h]; h = (h + 1) & p->name_hash_mask) {
+        int i = p->name_hash[h] - 1;
+        if (i < p->x.num_uniforms) {
+            if (!strcmp(p->x.uniforms[i].name, base) && el < p->x.uniforms[i].array_size)
+                return (i << 8) | el;
+        } else if (!strcmp(p->x.textures[i - p->x.num_uniforms].name, base) && el == 0) {
+            return i << 8;
+        }
+    }
     return -1;
 }
 
@@ -898,6 +1050,28 @@ void glShaderStorageBlockBinding(GLuint prog, GLuint index, GLuint binding)
 
 /* ---- writing uniform values ---- */
 
+mgl_camera mgl_cam;
+
+/* Keep Iris's camera uniforms for the backend (see mgl_camera); names only checked for float mat4 / vec3 writes */
+static void note_camera(const char *name, int n, int cols, const void *data)
+{
+    static const char *mats[] = {"gbufferModelView", "gbufferProjection", "gbufferPreviousModelView", "gbufferPreviousProjection"};
+    static const char *vecs[] = {"cameraPosition", "previousCameraPosition"};
+    if (cols == 4 && n == 4) {
+        for (int i = 0; i < 4; i++)
+            if (!strcmp(name, mats[i])) {
+                memcpy(mgl_cam.mat[i], data, sizeof mgl_cam.mat[i]);
+                mgl_cam.seen |= 1u << i;
+            }
+    } else if (cols <= 1 && n == 3) {
+        for (int i = 0; i < 2; i++)
+            if (!strcmp(name, vecs[i])) {
+                memcpy(mgl_cam.pos[i], data, sizeof mgl_cam.pos[i]);
+                mgl_cam.seen |= 1u << (4 + i);
+            }
+    }
+}
+
 /* Write `count` elements of n components each (floats or 32-bit ints) for location loc of program p. */
 static void write_uniform(mgl_program *p, GLint loc, int n, int cols, GLsizei count, const void *data, int is_int)
 {
@@ -916,6 +1090,8 @@ static void write_uniform(mgl_program *p, GLint loc, int n, int cols, GLsizei co
         return;
     }
     mgl_uniform *u = &p->x.uniforms[idx];
+    if (!is_int && count == 1 && el == 0 && (u->name[0] == 'g' || u->name[0] == 'c' || u->name[0] == 'p'))
+        note_camera(u->name, n, cols, data);
     const char *src = data;
     for (GLsizei e = 0; e < count && el + e < u->array_size; e++) {
         for (int s = 0; s < 3; s++) {

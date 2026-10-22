@@ -1,7 +1,11 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
-#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-off ours-caustics ours-caustics-mask ours-underwater
-#   pack-NAME packnight-NAME (third-party packs, see PACKS below) (default: the first three)
+#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-off ours-caustics ours-caustics-mask ours-underwater
+#   pack-NAME packnight-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
+#   glcount-pack-NAME (the pack on Apple's OpenGL, draws counted by tools/glcount.c)
+#   ab-pack-NAME ab-packnight-NAME (the pack three times in one job: new, old = with GAME_AB_OFF's env, new)
+#   archive-NAME (pipeline binary archive: cold, warm, warm without archive)
+#   (default: the first three)
 # WORK holds the game install (cacheable), OUT gets screenshots and logs. Needs Java 21 as `java` or $JAVA.
 set -uo pipefail
 SRC=$(cd "$(dirname "$0")/../.." && pwd)
@@ -17,6 +21,7 @@ cp "$SRC/tests/game/options.txt" "$G/options.txt"
 # GAME_BENCH=true: frame-rate runs. No vsync or frame cap, 12 chunks, Minecraft's fps logged every second by the mod
 # (also on Apple's OpenGL: GAME_ENV=MCMETAL_DISABLE=1), window GAME_SIZE (default 1920x1200). Once the world is on
 # screen it settles for GAME_BENCH_SETTLE s (default 10), then measures GAME_BENCH_SECS s (default 30) and stops
+case "${GAME_BENCH_SETTLE:-10}" in ''|*[!0-9]*) echo "GAME_BENCH_SETTLE must be a whole number of seconds"; exit 1 ;; esac
 if [ "${GAME_BENCH:-}" = true ]; then
     sed -i.bak 's/^enableVsync:.*/enableVsync:false/; s/^maxFps:.*/maxFps:260/; s/^renderDistance:.*/renderDistance:12/' "$G/options.txt"
     export MCMETAL_FPS_LOG=1 MCMETAL_FPS_EVERY=1 MGL_SHOT_EVERY=0 # screenshots only after measuring: each one stalls the GPU
@@ -37,6 +42,14 @@ if [ "${GAME_JVM_ARGS:-}" = true ]; then
 else
     bash "$SRC/mod/build_mod.sh" "$WORK/mc/libraries" "$G/mods/mcmetal.jar" "$SRC/build" || exit 1
     LIBARGS=()
+fi
+# GAME_PROFILE=true (with GAME_BENCH): every GL call goes through glprof (tools/glprof.h: calls and CPU time per
+# function, frames, time in swap) and Java Flight Recorder samples the Java side; the measured window ends up in
+# glprof-report.txt and jfr-report.txt. The recording itself is deleted (it holds the environment).
+JFR_TOOL=${JAVA_HOME:+$JAVA_HOME/bin/}jfr
+if [ "${GAME_PROFILE:-}" = true ]; then
+    LIBARGS=(--gl "$SRC/build/libglprof-mcmetal.dylib" --glfw "$SRC/build/libglfw.dylib")
+    export MCMETAL_LIB="$SRC/build/libglprof-mcmetal.dylib" GLPROF_REAL="$SRC/build/libmcmetal.dylib"
 fi
 
 shots_in_world() { # screenshots taken after the first frame that drew terrain (any frame for the title screen)
@@ -62,11 +75,14 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     [ -n "$world" ] && wargs+=(--world "$world")
     mkdir -p "$OUT/$name/glsl"
     echo "=== phase $name: ${secs}s, world=${world:-none}, shaders=$shaders"
+    local jvmx=()
+    [ "${GAME_PROFILE:-}" = true ] && jvmx=(-- -XX:FlightRecorderOptions=stackdepth=128
+        "-XX:StartFlightRecording=name=mcm,settings=profile,dumponexit=true,filename=$WORK/rec.jfr,jdk.ExecutionSample#period=10ms,jdk.NativeMethodSample#period=10ms")
     MCMETAL_BACKGROUND=${MCMETAL_BACKGROUND-behind} \
     MGL_LOG="$OUT/$name/mgl.log" MGL_SHOT_DIR="$OUT/$name" MGL_SHOT_EVERY=${MGL_SHOT_EVERY-10} \
-    MGL_CACHE_DIR="$WORK/cache" MGL_DUMP_DIR="$OUT/$name/glsl" env ${GAME_ENV:-} "$@" \
+    MGL_CACHE_DIR="$WORK/cache" MGL_DUMP_DIR="$OUT/$name/glsl" GLPROF_OUT="$OUT/$name/glprof.txt" env ${GAME_ENV:-} "$@" \
         python3 -I "$SRC/tools/bare_mc.py" launch "$WORK" --java "$JAVA" "${wargs[@]}" \
-        ${LIBARGS[@]+"${LIBARGS[@]}"} > "$OUT/$name/launch.out" 2>&1 &
+        ${LIBARGS[@]+"${LIBARGS[@]}"} ${jvmx[@]+"${jvmx[@]}"} > "$OUT/$name/launch.out" 2>&1 &
     local t=0
     while [ $t -lt "$secs" ]; do
         sleep 5; t=$((t + 5))
@@ -78,7 +94,32 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
                 sleep "${GAME_BENCH_SETTLE:-10}"; t=$((t + ${GAME_BENCH_SETTLE:-10}))
                 bench_from=$(grep -c '\] fps ' "$WORK/client.log" 2>/dev/null)
                 echo "world on screen, measuring ${GAME_BENCH_SECS:-30}s"
+                cp "$OUT/$name/glprof.txt" "$OUT/$name/glprof-start.txt" 2>/dev/null; local from_s; from_s=$(date +%s)
                 sleep "${GAME_BENCH_SECS:-30}"
+                if [ "${GAME_PROFILE:-}" = true ]; then
+                    cp "$OUT/$name/glprof.txt" "$OUT/$name/glprof-end.txt" 2>/dev/null
+                    python3 -I "$SRC/tools/glprof_report.py" "$OUT/$name/glprof-start.txt" "$OUT/$name/glprof-end.txt" 60 \
+                        > "$OUT/$name/glprof-report.txt" 2>&1
+                    head -4 "$OUT/$name/glprof-report.txt"
+                    jfr_window="$from_s $((from_s + ${GAME_BENCH_SECS:-30}))" # the recording is written when the game exits
+                fi
+                # after measuring: where the CPU goes (native stacks, mcmetal symbolised) and what the Java render
+                # thread is doing, for phases whose frame time isn't GPU time
+                pid=$(cat "$WORK/client.pid" 2>/dev/null)
+                if [ -n "$pid" ]; then
+                    echo "sampling CPU stacks"
+                    # each tool gets a time limit (macOS has no timeout command) and no handle on the step's output:
+                    # jcmd can't attach to a 1 fps game and would otherwise keep the CI step open forever
+                    sample "$pid" 5 -mayDie -file "$OUT/$name/sample.txt" </dev/null >/dev/null 2>&1 &
+                    for k in 1 2 3; do
+                        jcmd "$pid" Thread.print </dev/null > "$OUT/$name/jstack-$k.txt" 2>/dev/null &
+                        sleep 4
+                    done
+                    sleep 12; pkill -9 -x jcmd; pkill -9 -x sample
+                    cat "$OUT/$name"/jstack-*.txt 2>/dev/null | awk '/^"Render thread"/,/^$/' > "$OUT/$name/render-thread.txt"
+                    rm -f "$OUT/$name"/jstack-*.txt
+                    echo "sampling done"
+                fi
                 touch "$OUT/$name/shoot"; sleep 3; rm -f "$OUT/$name/shoot"; break
             fi
             continue
@@ -88,7 +129,16 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
         fi
     done
     pid=$(cat "$WORK/client.pid" 2>/dev/null); [ -n "$pid" ] && kill "$pid" 2>/dev/null; sleep 5
+    if [ "${GAME_PROFILE:-}" = true ]; then # give the JVM time to write the flight recording on its way out
+        for _ in 1 2 3 4 5; do [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && sleep 3; done
+    fi
     [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null
+    if [ -n "${jfr_window:-}" ] && [ -f "$WORK/rec.jfr" ]; then
+        # where the render thread's time went in the measured window
+        python3 -I "$SRC/tools/jfr_report.py" "$JFR_TOOL" "$WORK/rec.jfr" $jfr_window > "$OUT/$name/jfr-report.txt" 2>&1
+        head -12 "$OUT/$name/jfr-report.txt"
+    fi
+    rm -f "$WORK/rec.jfr"; jfr_window=
     cp "$WORK/client.log" "$OUT/$name/client.log" 2>/dev/null
     # mcmetal clears the mod's start marker once real screens are drawn; left behind, the next launch would
     # fall back to Apple's OpenGL, so report it and clear it for the next phase
@@ -128,7 +178,10 @@ scene() { # time [weather [stage]]: copy the test datapack into the world; it bu
     perl -pi -e "s/(tag=!?|add )mcm\\b/\$1mcm$RANDOM$RANDOM/g" "$f/tick.mcfunction"
     [ "${3:-scene}" = showcase ] && echo 'tp @s ~ ~ ~ -90 0' > "$f/look.mcfunction"
     [ "${3:-scene}" = room ] && echo 'tp @s ~ ~ ~ -90 12' > "$f/look.mcfunction"
+    [ "${3:-scene}" = nether ] && echo 'tp @s 0.5 64 0.5 -90 7' > "$f/look.mcfunction" # held in the Nether room
+    [ "${3:-scene}" = dh ] && echo 'tp @s 0.5 150 0.5 -45 12' > "$f/look.mcfunction" # high up, looking at the horizon
     [ -n "${GAME_LOOK:-}" ] && echo "tp @s ~ ~ ~ $GAME_LOOK" > "$f/look.mcfunction" # GAME_LOOK="yaw pitch"
+    [ -n "${GAME_TP:-}" ] && echo "tp @s $GAME_TP" > "$f/look.mcfunction" # GAME_TP="~0.1 ~ ~ ~2 7": walk and turn each tick
     return 0
 }
 
@@ -158,6 +211,19 @@ complementary|ComplementaryReimagined_r5.9.3.zip|-|-"
 EUPHORIA="https://cdn.modrinth.com/data/4H6sumDB/versions/QMsRXtSJ/EuphoriaPatcher-1.10.5-r5.9.3-neoforge.jar|2b3f92878d6867fa0199937da25ba882b9db7902"
 EUPHORIA_PACK="ComplementaryReimagined_r5.9.3 + EuphoriaPatches_1.10.5"
 
+# Distant Horizons (LOD terrain past the render distance), fetched at run time like the packs and removed after
+DH="https://cdn.modrinth.com/data/uCdwusMi/versions/9w34y8ai/DistantHorizons-3.3.3-1.21.1-fabric-neoforge.jar|4357b4d19fab818780c94f0e43dad1cc931634b2"
+dh_phase() { # dh / dh-shaders: Distant Horizons at noon, without a pack or with Complementary (it has DH support);
+             # 16 screenshots (~160 s) so DH has time to build its distant terrain
+    local url sha
+    IFS='|' read -r url sha <<< "$DH"
+    python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import bare_mc; bare_mc.fetch(*sys.argv[2:])' \
+        "$SRC/tools" "$url" "$G/mods/distanthorizons.jar" "$sha" || { echo "could not download Distant Horizons"; return; }
+    scene noon clear dh
+    GAME_SHOTS=${GAME_SHOTS:-16} run_phase "$1" 360 metal "$2"
+    rm -f "$G/mods/distanthorizons.jar"
+}
+
 # packnight-NAME turns each pack's coloured block light on (all ship with it off except Solas and RV)
 PACK_LIGHT="photon|COLORED_LIGHTS=true
 bliss|LPV_ENABLED=true
@@ -165,9 +231,11 @@ bsl|MULTICOLORED_BLOCKLIGHT=true
 unbound|COLORED_LIGHTING=128
 complementary|COLORED_LIGHTING=128"
 
-third_party() { # pack-NAME / packnight-NAME: one third-party pack in the pool scene, at noon (pack settings as
-                # shipped) or midnight (coloured block light on)
-    local p=$1 name=${1#*-} file url sha
+third_party() { # pack-NAME / packnight-NAME [OUTNAME [VAR=value ...]]: one third-party pack in the pool scene, at
+                # noon (pack settings as shipped) or midnight (coloured block light on)
+    local p=$1 out=${2:-$1} name=${1#*-} file url sha extra=
+    shift; [ $# -gt 0 ] && shift
+    case $name in *@*) extra=${name#*@}; name=${name%%@*} ;; esac # pack-bliss@OPT=value,OPT2=value: extra options
     IFS='|' read -r _ file url sha <<< "$(grep "^${name%%+*}|" <<< "$PACKS")"
     [ -n "$file" ] || { echo "unknown pack $name"; return; }
     if [ "$url" != - ] && ! python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import bare_mc; bare_mc.fetch(*sys.argv[2:])' \
@@ -185,7 +253,8 @@ third_party() { # pack-NAME / packnight-NAME: one third-party pack in the pool s
         grep "^${name%%+*}|" <<< "$PACK_LIGHT" | cut -d'|' -f2 > "$opts"; [ -s "$opts" ] || rm -f "$opts" ;;
     *) scene noon ;;
     esac
-    PACK=$file run_phase "$p" 240 metal true
+    [ -n "$extra" ] && tr ',' '\n' <<< "$extra" >> "$opts"
+    PACK=$file run_phase "$out" 240 metal true "$@"
     rm -f "$opts"
     rm -f "$G/mods/euphoria-patcher.jar"
     [ "$url" != - ] && rm -rf "$G/shaderpacks/$file"
@@ -244,6 +313,39 @@ for p in $PHASES; do
     ours-underwater) GAME_LOOK="-90 -10" scene 6000 clear pool_under; PACK=mcmetal-rt-pack run_phase ours-underwater 180 metal true ;;
     ours-sky) GAME_LOOK="-60 -25" scene 2000; PACK=mcmetal-rt-pack run_phase ours-sky 180 metal true ;;  # clouds
     ours-gl) scene 1500; PACK=mcmetal-rt-pack run_phase ours-gl 180 metal true MCMETAL_DISABLE=1 ;; # shadow-map fallback on Apple GL
+    nether) scene noon clear nether; run_phase nether 180 metal false ;;                       # Nether room, Sodium
+    nether-shaders) scene noon clear nether; run_phase nether-shaders 240 metal true ;;      # Nether room, Complementary
+    dh) dh_phase dh false ;;                    # Distant Horizons, Sodium
+    dh-shaders) dh_phase dh-shaders true ;;     # Distant Horizons + Complementary
+    glcount-*) # the pack on Apple's OpenGL through tools/glcount.c, which logs draws and triangles per second (all,
+               # and into shadow-map-sized viewports) to glcount.log: what Iris and Sodium draw on real OpenGL
+        # (Apple's OpenGL can't make a context on GitHub's runners; on Linux this counts Mesa, the cloud reference rig)
+        if [ "$(uname)" = Darwin ]; then
+            lib="$WORK/libglcount.dylib"
+            clang -dynamiclib -o "$lib" "$SRC/tools/glcount.c" -framework OpenGL -Wl,-reexport_framework,OpenGL
+        else
+            lib="$WORK/libglcount.so"
+            gcc -shared -fPIC -o "$lib" "$SRC/tools/glcount.c" "$(ls /usr/lib/*/libGL.so.1 /usr/lib/libGL.so.1 2>/dev/null | head -1)" -ldl
+        fi
+        inner=${p#glcount-}
+        LIBARGS=(--gl "$lib")
+        third_party "$inner" "$p" MCMETAL_DISABLE=1 GLCOUNT_LOG="$OUT/$p/glcount.log"
+        LIBARGS=()
+        tail -5 "$OUT/$p/glcount.log" 2>/dev/null ;;
+    ab-*) # A/B in one job (separate jobs run on machines up to ~30% apart): ab-pack-NAME runs the pack with this
+          # change (new), with GAME_AB_OFF's env (old, e.g. MGL_TEX_COMPRESS=0), then new again; compare in fps.txt
+        inner=${p#ab-}
+        third_party "$inner" "$p-new1"
+        third_party "$inner" "$p-old" ${GAME_AB_OFF:-}
+        third_party "$inner" "$p-new2" ;;
     pack-*|packnight-*) third_party "$p" ;; # compatibility sweep: pack-photon, packnight-bsl, pack-complementary+euphoria, ...
+    archive-*) # Metal pipeline binary archive: the pack from an empty shader cache (archive written), again with the
+               # archive, and again with the shader cache but no archive. Run with bench=true settle=0 so the fps
+               # samples cover the first seconds in the world, where pipeline compiles show up as stalls
+        rm -rf "$WORK/cache"
+        third_party "pack-${p#archive-}" "$p-cold" MGL_BINARY_ARCHIVE=1
+        third_party "pack-${p#archive-}" "$p-warm" MGL_BINARY_ARCHIVE=1
+        third_party "pack-${p#archive-}" "$p-warm-noarchive"
+        ls -la "$WORK/cache" | tail -3 ;;
     esac
 done
