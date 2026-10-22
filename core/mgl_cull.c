@@ -172,6 +172,17 @@ GLAPI int64_t mcmGpuCull(const void *cmd)
     mgl_cull_pass p;
     planes_from(h->mvp, p.planes);
     p.flags = h->flags;
+    /* MGL_CULL_PROBE (timing only, pictures are wrong): 1 drops every section of the main view's terrain passes,
+       2 of the shadow passes, so the GPU time they cost shows; it bounds what finer culling could save */
+    static int probe = -1;
+    if (probe < 0) {
+        const char *e = getenv("MGL_CULL_PROBE");
+        probe = e ? atoi(e) : 0;
+    }
+    if ((probe == 1 && !(h->flags & 1)) || (probe == 2 && (h->flags & 1))) {
+        memset(p.planes, 0, sizeof p.planes);
+        p.planes[0][3] = -1.0f; /* every box is outside this plane */
+    }
     cull.pass = p;
     int first = mglb_cull_run(&p, cull.draws, nd, cull.ibufs, nr);
     if (first < 0) {
