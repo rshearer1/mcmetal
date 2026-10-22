@@ -8,3 +8,5 @@ Ideas come from other packs (SEUS, Complementary); the code is ours, written fro
 - Normal packing: octahedral (Cigolle et al. 2014). Noise: interleaved gradient noise (Jimenez 2014).
 
 Without mcmetal (RT_MODE Auto on other systems) it uses an ordinary shadow map.
+
+Licence: MIT (see LICENSE): anyone may use, change and share the pack, in modpacks too, keeping the credit.
