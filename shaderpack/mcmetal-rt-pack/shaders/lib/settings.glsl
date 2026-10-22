@@ -9,6 +9,7 @@
 #endif
 
 #define RT_GI // ray-traced global illumination: bounce light, colour bleeding, sky light through openings
+#define GI_FILTER 25 // [9 25] taps in the GI blur/upscale (9 = cheaper)
 #define GI_HALF_RES 1 // [0 1] trace GI and AO for every 2x2 pixels (about half the cost), then upscale
 #if GI_HALF_RES == 1
     #define GI_SCALE 0.5
