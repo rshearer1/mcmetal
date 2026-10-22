@@ -26,7 +26,9 @@ vec3 transmittance(vec2 od) { return exp(-(BETA_RAY * od.x + BETA_MIE * 1.1 * od
 
 // light scattered towards the eye along dir, lit from lightDir
 vec3 atmosphere(vec3 dir, vec3 lightDir, float intensity) {
-    dir.y = max(dir.y, 0.0) * 0.98 + 0.02;   // below the horizon there's terrain; keep the horizon colour there
+    // below the horizon there's terrain; keep the horizon colour there. Not quite at the horizon: through ~100 km
+    // of air the Mie haze turns olive, which showed as a brown band past the loaded world (and over DH's far LODs)
+    dir.y = max(dir.y, 0.0) * 0.94 + 0.06;
     dir = normalize(dir);
     vec3 ro = vec3(0.0, R_EARTH + 100.0, 0.0);
     float len = raySphere(ro, dir, R_ATMOS).y, seg = len / 8.0;
