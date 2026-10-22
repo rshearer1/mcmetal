@@ -121,6 +121,40 @@ static void rt_debug_tick(void)
             if (hist[m])
                 o += snprintf(line + o, sizeof line - (size_t)o, " 0x%02x x%lu", m, hist[m]);
         mgl_log("%s", line);
+        /* the block ids the light list sees (Iris's word >> 1, minus 1): shows whether MCMETAL_LIGHT_IDS matches */
+        unsigned long with_ent = 0, in_range = 0, nv_all = 0;
+        uint32_t ids[8], raw0 = 0;
+        int nids = 0, ent_off = -1;
+        for (int i = 0; i < num_draws; i++) {
+            const unsigned char *base = mglb_buffer_ptr(draws[i].g.vbuf);
+            if (!base || draws[i].g.ent_off < 0)
+                continue;
+            with_ent++;
+            ent_off = draws[i].g.ent_off;
+            int nv = draws[i].g.count * 2 / 3;
+            for (int v = 0; v < nv; v++) {
+                uint32_t w = *(const uint32_t *)(base + draws[i].g.vbase + draws[i].g.ent_off +
+                                                 (size_t)(draws[i].g.base_vertex + v) * (size_t)draws[i].g.stride);
+                int id = (int)(w >> 1) - 1;
+                nv_all++;
+                if (id >= mgl_rt_light_ids[0] && id <= mgl_rt_light_ids[1])
+                    in_range++;
+                int k = 0;
+                while (k < nids && ids[k] != (uint32_t)id)
+                    k++;
+                if (k == nids && nids < 8) {
+                    if (!nids)
+                        raw0 = w;
+                    ids[nids++] = (uint32_t)id;
+                }
+            }
+        }
+        o = snprintf(line, sizeof line, "rt debug: %lu sections with block ids (offset %d, first word 0x%08x), "
+                     "%lu of %lu vertices in the light range %d-%d; ids seen:", with_ent, ent_off, raw0, in_range,
+                     nv_all, mgl_rt_light_ids[0], mgl_rt_light_ids[1]);
+        for (int k = 0; k < nids && o < (int)sizeof line - 16; k++)
+            o += snprintf(line + o, sizeof line - (size_t)o, " %d", (int)ids[k]);
+        mgl_log("%s", line);
         memset(&rtd, 0, sizeof rtd);
         last_log = now;
     }

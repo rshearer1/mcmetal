@@ -2882,6 +2882,23 @@ static void rt_build_lights(const mgl_rt_geom *g, RtSection *__strong *secs, con
 {
     if (mgl_rt_light_ids[0] < 0)
         return;
+    static int debug = -1;
+    if (debug < 0)
+        debug = getenv("MGL_RT_DEBUG") && atoi(getenv("MGL_RT_DEBUG"));
+    if (debug && rt_frame % 120 == 0) { /* MGL_RT_DEBUG: candidates found by rt_decode, lights in the last list */
+        unsigned long cand = 0, with = 0;
+        for (int i = 0; i < count; i++)
+            if (secs[i].lights) {
+                with++;
+                cand += *(const uint32_t *)secs[i].lights->ptr;
+            }
+        const uint32_t *l = rt_lights_buf ? (const uint32_t *)rt_lights_buf->ptr : NULL;
+        const float *f = l ? (const float *)(l + 4) : NULL;
+        mgl_log("rt debug: light ids %d-%d: %lu of %d sections can hold lights, %lu candidates, last list %u lights%s",
+                mgl_rt_light_ids[0], mgl_rt_light_ids[1], with, count, cand, l ? l[0] : 0, l && l[0] ? ":" : "");
+        for (uint32_t i = 0; l && i < l[0] && i < 4; i++)
+            mgl_log("rt debug:   light %u at %.1f %.1f %.1f, id %.0f", i, f[i * 4], f[i * 4 + 1], f[i * 4 + 2], f[i * 4 + 3]);
+    }
     id<MTLComputePipelineState> pl = builtin_compute(@"rt_lights"), pg = builtin_compute(@"rt_light_grid");
     mglb_buffer *lb = mglb_buffer_new(RT_LIGHTS_BYTES), *hash = mglb_buffer_new(8192 * 4);
     if (!pl || !pg || !lb || !hash) {
