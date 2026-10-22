@@ -25,7 +25,7 @@ import org.lwjgl.system.JNI;
 import org.lwjgl.system.MemoryUtil;
 
 /**
- * GPU chunk culling, Java side (MCMETAL_GPU_CULL=1; see core/mgl_cull.c for the other half).
+ * GPU chunk culling, Java side (on unless MCMETAL_GPU_CULL=0; see core/mgl_cull.c for the other half).
  *
  * Not used as a class: GpuCullTransformer copies these static fields and methods into Sodium's DefaultChunkRenderer
  * (names prefixed "mcmetal$") so they run in the game's class space, and calls prepare() at the top of its render()
@@ -118,7 +118,7 @@ public final class CullHooks {
     private static boolean start() {
         fn = -1;
         String on = System.getenv("MCMETAL_GPU_CULL");
-        if (on == null || on.isEmpty() || on.equals("0") || GL.getFunctionProvider() == null)
+        if ("0".equals(on) || GL.getFunctionProvider() == null)
             return false;
         long f = GL.getFunctionProvider().getFunctionAddress("mcmGpuCull");
         if (f == 0) { // not mcmetal (Apple's OpenGL fallback), or a GL wrapper in front of it

@@ -1,4 +1,4 @@
-/* GPU chunk culling (MCMETAL_GPU_CULL=1). mcmetal's mod (mod/src/mcmetal/loader/sodium/CullHooks.java) calls
+/* GPU chunk culling (on by default; MCMETAL_GPU_CULL=0 turns it off). mcmetal's mod (mod/src/mcmetal/loader/sodium/CullHooks.java) calls
    mcmGpuCull before Sodium draws a terrain pass, with every region it is about to draw: Sodium's multi-draw arrays
    for that region, its index buffer, where the region sits relative to the camera and which section each run of
    sub-draws belongs to. The backend tests every section's box against the pass's view on the GPU and writes each
@@ -59,8 +59,9 @@ static int cull_enabled(void)
 {
     if (cull.on < 0) {
         const char *e = getenv("MCMETAL_GPU_CULL");
-        cull.on = e && *e && *e != '0' && mglb_cull_supported();
-        mgl_log("GPU chunk culling %s", cull.on ? "on" : e && *e && *e != '0' ? "requested, but this GPU can't" : "off");
+        int want = !(e && *e == '0');
+        cull.on = want && mglb_cull_supported();
+        mgl_log("GPU chunk culling %s", cull.on ? "on" : want ? "off: this GPU can't" : "off (MCMETAL_GPU_CULL=0)");
         const char *o = getenv("MCMETAL_GPU_OCCLUSION");
         cull.occlusion = cull.on && o && *o && *o != '0';
         if (cull.on)
