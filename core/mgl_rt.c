@@ -79,7 +79,8 @@ static void mat_mul(float *o, const float *a, const float *b) /* column-major o 
 static void snapshot(const char *path);
 
 /* MGL_RT_DEBUG=1: once a second, log what the capture saw (draws taken, skipped and why, sections kept). */
-static struct { unsigned long taken, not_terrain, not_tris, no_attr, small_stride, idle; char last_skip[64]; } rtd;
+static struct { unsigned long taken, not_terrain, not_tris, no_attr, small_stride, idle, fresh, f_range, f_ibuf, f_vbuf, f_other;
+                char last_skip[64]; } rtd;
 static int rt_debug(void)
 {
     static int on = -1;
@@ -100,27 +101,32 @@ static void rt_debug_tick(void)
                 "triangles, %lu no position attribute, %lu stride < 20, %lu before a ray-tracing shader; %d sections kept",
                 now - last_log, rtd.taken, rtd.not_terrain, rtd.last_skip[0] ? rtd.last_skip : "-", rtd.not_tris,
                 rtd.no_attr, rtd.small_stride, rtd.idle, num_draws_fwd());
-        /* the material byte Sodium packs beside the section index (alpha cutoff in bits 1-2), over the captured
-           vertices: shows whether cutout blocks carry a cutoff here */
-        unsigned long hist[256] = {0}, stride_seen = 0;
-        for (int i = 0; i < num_draws; i++) {
-            const unsigned char *base = mglb_buffer_ptr(draws[i].g.vbuf);
-            if (!base)
-                continue;
-            stride_seen = (unsigned long)draws[i].g.stride;
-            int nv = draws[i].g.count * 2 / 3;
-            for (int v = 0; v < nv; v++) {
-                const uint32_t *w = (const uint32_t *)(base + draws[i].g.vbase +
-                                                       (size_t)(draws[i].g.base_vertex + v) * (size_t)draws[i].g.stride);
-                hist[(w[4] >> 16) & 0xFF]++;
+        mgl_log("rt debug: %lu draws new to the capture: %lu same section with another index range, %lu another index "
+                "buffer, %lu a vertex buffer not seen before, %lu other", rtd.fresh, rtd.f_range, rtd.f_ibuf, rtd.f_vbuf,
+                rtd.f_other);
+        /* MGL_RT_DEBUG=2: the material byte Sodium packs beside the section index (alpha cutoff in bits 1-2), over
+           the captured vertices: shows whether cutout blocks carry a cutoff here (reads every vertex: slow) */
+        if (rt_debug() >= 2) {
+            unsigned long hist[256] = {0}, stride_seen = 0;
+            for (int i = 0; i < num_draws; i++) {
+                const unsigned char *base = mglb_buffer_ptr(draws[i].g.vbuf);
+                if (!base)
+                    continue;
+                stride_seen = (unsigned long)draws[i].g.stride;
+                int nv = draws[i].g.count * 2 / 3;
+                for (int v = 0; v < nv; v++) {
+                    const uint32_t *w = (const uint32_t *)(base + draws[i].g.vbase +
+                                                           (size_t)(draws[i].g.base_vertex + v) * (size_t)draws[i].g.stride);
+                    hist[(w[4] >> 16) & 0xFF]++;
+                }
             }
+            char line[512];
+            int o = snprintf(line, sizeof line, "rt debug: material bytes (stride %lu):", stride_seen);
+            for (int m = 0; m < 256 && o < (int)sizeof line - 24; m++)
+                if (hist[m])
+                    o += snprintf(line + o, sizeof line - (size_t)o, " 0x%02x x%lu", m, hist[m]);
+            mgl_log("%s", line);
         }
-        char line[512];
-        int o = snprintf(line, sizeof line, "rt debug: material bytes (stride %lu):", stride_seen);
-        for (int m = 0; m < 256 && o < (int)sizeof line - 24; m++)
-            if (hist[m])
-                o += snprintf(line + o, sizeof line - (size_t)o, " 0x%02x x%lu", m, hist[m]);
-        mgl_log("%s", line);
         memset(&rtd, 0, sizeof rtd);
         last_log = now;
     }
@@ -205,6 +211,26 @@ void mgl_rt_record(mgl_program *p, const mgl_draw *d)
             r->seen = t;
             goto recorded;
         }
+    }
+    if (rt_debug()) { /* why is this draw new: compare with a capture entry for the same vertices */
+        rtd.fresh++;
+        int same_vb = 0, why = 0;
+        for (int i = 0; i < num_draws && !why; i++) {
+            const mgl_rt_geom *o = &draws[i].g;
+            if (o->vbuf != key.g.vbuf)
+                continue;
+            same_vb = 1;
+            if (o->vbase == key.g.vbase && o->base_vertex == key.g.base_vertex && o->translucent == key.g.translucent)
+                why = o->ibuf != key.g.ibuf ? 2 : 1;
+        }
+        if (why == 1)
+            rtd.f_range++;
+        else if (why == 2)
+            rtd.f_ibuf++;
+        else if (!same_vb)
+            rtd.f_vbuf++;
+        else
+            rtd.f_other++;
     }
     if (num_draws == cap_draws) {
         cap_draws = cap_draws ? cap_draws * 2 : 1024;
