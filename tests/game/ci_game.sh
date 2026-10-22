@@ -59,7 +59,7 @@ fps_summary() { # label log skip count: Minecraft's fps counter (one line a seco
 # The mod's MCMETAL_CONTROL file runs the commands (time, weather, datapack reload for the look, shader reload).
 segments() { # phase
     local name=$1 ctl=$OUT/$1/control look_f="$G/saves/metal/datapacks/mcm-scene/data/mcm/function/look.mcfunction"
-    local opts_f="$G/shaderpacks/${PACK:-ComplementaryReimagined_r5.9.3.zip}.txt" base_opts= last_opts=- n=0
+    local opts_f="$G/shaderpacks/${PACK:-ComplementaryReimagined_r5.9.3.zip}.txt" base_opts= last_opts=- n=0 reloads=0
     [ -f "$opts_f" ] && base_opts=$(cat "$opts_f")
     local seg tm wx look opts shot
     while IFS='|' read -r seg tm wx look opts shot; do
@@ -74,8 +74,12 @@ segments() { # phase
         fi
         n=$((n + 1))
         printf '%smark segment %s\n' "$lines" "$seg" > "$ctl"
-        local k=0 # the mod polls twice a second; a shader reload can take a few seconds more
-        while [ $k -lt 60 ] && [ "$(grep -c "control done" "$WORK/client.log" 2>/dev/null)" -lt $n ]; do sleep 1; k=$((k + 1)); done
+        # the mod polls twice a second; a shader reload finishes on the render thread after "control done"
+        local k=0 done_re="control done"
+        [[ $lines == *shaders* ]] && { reloads=$((reloads + 1)); done_re="shaders reloaded|shader reload failed"; }
+        while [ $k -lt 90 ] && [ "$(grep -cE "$done_re" "$WORK/client.log" 2>/dev/null)" -lt "$([ "$done_re" = "control done" ] && echo $n || echo $reloads)" ]; do
+            sleep 1; k=$((k + 1))
+        done
         sleep "$wait"
         local from; from=$(grep -c '\] fps ' "$WORK/client.log" 2>/dev/null)
         echo "segment $seg: measuring ${GAME_BENCH_SECS:-30}s"
