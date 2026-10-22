@@ -106,6 +106,7 @@ scene() { # time [weather [stage]]: copy the test datapack into the world; it bu
     echo "function mcm:${3:-scene}" > "$f/build.mcfunction"
     [ "${3:-scene}" = showcase ] && echo 'tp @s ~ ~ ~ -90 0' > "$f/look.mcfunction"
     [ "${3:-scene}" = nether ] && echo 'tp @s 0.5 64 0.5 -90 7' > "$f/look.mcfunction" # held in the Nether room
+    [ "${3:-scene}" = dh ] && echo 'tp @s 0.5 150 0.5 -45 12' > "$f/look.mcfunction" # high up, looking at the horizon
     [ -n "${GAME_LOOK:-}" ] && echo "tp @s ~ ~ ~ $GAME_LOOK" > "$f/look.mcfunction" # GAME_LOOK="yaw pitch"
     return 0
 }
@@ -144,7 +145,7 @@ dh_phase() { # dh / dh-shaders: Distant Horizons at noon, without a pack or with
     IFS='|' read -r url sha <<< "$DH"
     python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import bare_mc; bare_mc.fetch(*sys.argv[2:])' \
         "$SRC/tools" "$url" "$G/mods/distanthorizons.jar" "$sha" || { echo "could not download Distant Horizons"; return; }
-    rm -rf "$G/saves/metal/datapacks/mcm-scene"
+    scene noon clear dh
     GAME_SHOTS=${GAME_SHOTS:-16} run_phase "$1" 360 metal "$2"
     rm -f "$G/mods/distanthorizons.jar"
 }
