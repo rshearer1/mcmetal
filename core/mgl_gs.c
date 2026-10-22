@@ -440,6 +440,8 @@ static int fs_used_comps(const char *fs, const char *type, const char *name, int
 {
     size_t n = strlen(name), tn = strlen(type);
     int hi = -1, bare = 0;
+    if (strstr(fs, "##")) /* token pasting can build a use this scan can't see */
+        return comps;
     for (const char *p = strstr(fs, name); p; p = strstr(p + 1, name)) {
         char a = p > fs ? p[-1] : ' ', b = p[n];
         if (isalnum((unsigned char)a) || a == '_' || isalnum((unsigned char)b) || b == '_')
@@ -579,10 +581,11 @@ static int const_output(const toks *ts, const stmts *ss, const char *name, char 
                          tok_is(a, "+");
                 for (int c = 0; !ok && a->kind == T_ID && ctor[c]; c++)
                     ok = tok_is(a, ctor[c]);
-                if (!ok || n + (size_t)a->n + 1 >= sizeof cur)
+                if (!ok || n + (size_t)a->n + 2 >= sizeof cur)
                     return 0;
                 memcpy(cur + n, a->p, (size_t)a->n);
                 n += (size_t)a->n;
+                cur[n++] = ' '; /* keeps `1.0 - -2.0` from becoming `1.0--2.0` */
             }
             cur[n] = 0;
             if (j >= st->end || !n || (found && strcmp(cur, rhs)))
@@ -829,6 +832,10 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
                 v->noperspective = (s->quals & Q_NOPERSP) != 0;
                 if (!type_info(v->type, &v->comps, &v->is_int, &v->is_uint)) {
                     err = "geometry emulation: unsupported varying type";
+                    break;
+                }
+                if ((s->quals & Q_OUT) && !strncmp(v->name, "mgl_", 4)) {
+                    err = "geometry emulation: outputs named mgl_* clash with the emulation's own names";
                     break;
                 }
                 if ((s->quals & Q_OUT) && s->name_arr[k]) {
