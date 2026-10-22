@@ -15,6 +15,11 @@ size_t mglb_buffer_size(mglb_buffer *b);
 void mglb_buffer_release(mglb_buffer *b);
 /* true while work that reads the buffer has been recorded but not finished by the GPU */
 int mglb_buffer_in_use(mglb_buffer *b);
+/* the CPU wrote into the buffer (every glBufferData / SubData / map / copy goes through here): caches keyed on its
+   contents start over */
+void mglb_buffer_written(mglb_buffer *b);
+/* mapped persistently: the CPU can write it at any time without telling us, so nothing may cache its contents */
+void mglb_buffer_volatile(mglb_buffer *b);
 
 /* ---- textures ---- */
 enum mgl_format {
