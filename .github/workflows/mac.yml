@@ -59,6 +59,10 @@ jobs:
           mkdir -p msl
           MGL_LOG=$PWD/smoke-mgl.log MGL_MSL_DUMP=$PWD/msl ./build/gl_smoke | tee smoke.txt
           cat smoke-mgl.log || true
+      - name: Smoke test, untracked GS records (MGL_GS_UNTRACKED=1)
+        run: |
+          MGL_LOG=$PWD/smoke-ut-mgl.log MGL_GS_UNTRACKED=1 ./build/gl_smoke | tee smoke-ut.txt
+          cat smoke-ut-mgl.log || true
       - name: Smoke test, smoothness options on
         run: |
           mkdir -p cache
