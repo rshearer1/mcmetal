@@ -32,6 +32,11 @@ const vec4 colortex10ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 
 uniform sampler2D colortex0, colortex1, colortex2, colortex3, colortex4, colortex5, colortex10, depthtex0;
 
+#ifdef DISTANT_HORIZONS
+uniform sampler2D dhDepthTex0;
+uniform mat4 dhProjectionInverse;
+#endif
+
 in vec2 texcoord;
 flat in vec3 sunCol, skyAmb, lightDir, sunDir;
 
@@ -74,6 +79,17 @@ void main() {
     vec3 p = playerFromDepth(texcoord, depth);
 
     vec3 col;
+#ifdef DISTANT_HORIZONS
+    if (depth >= 1.0 && mat == MAT_DH) {
+        // far LOD terrain: lit from its lightmap (sun where the sky is open), no rays
+        vec4 v = dhProjectionInverse * vec4(vec3(texcoord, texture(dhDepthTex0, texcoord).r) * 2.0 - 1.0, 1.0);
+        p = mat3(gbufferModelViewInverse) * (v.xyz / v.w) + gbufferModelViewInverse[3].xyz;
+        vec4 nl = texture(colortex1, texcoord);
+        vec3 a = toLinear(albedo.rgb);
+        col = a * surfaceLight(p, octDecode(nl.xy), nl.zw, 1.0, MAT_NONE, lightDir, sunCol, skyAmb,
+                               vec3(smoothstep(0.85, 0.97, nl.w))) + a * m.a * (4.0 * EMISSIVE_STRENGTH);
+    } else
+#endif
     if (depth >= 1.0) {
         vec3 dir = normalize(p);
         col = skyColor(dir, sunDir);

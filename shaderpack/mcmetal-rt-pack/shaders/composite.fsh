@@ -13,6 +13,12 @@ const vec4 colortex11ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 
 uniform sampler2D colortex0, colortex5, colortex8, colortex11, depthtex0, depthtex1;
 
+#ifdef DISTANT_HORIZONS
+uniform sampler2D dhDepthTex0;
+uniform mat4 dhProjectionInverse;
+uniform float dhRenderDistance;
+#endif
+
 in vec2 texcoord;
 
 #if defined CAUSTICS && defined USE_RT
@@ -42,6 +48,18 @@ void main() {
     vec4 v = gbufferProjectionInverse * vec4(vec3(texcoord, depth) * 2.0 - 1.0, 1.0);
     vec3 p = mat3(gbufferModelViewInverse) * (v.xyz / v.w);
     float dist = length(p);
+    float fogEnd = far;
+#ifdef DISTANT_HORIZONS
+    // Distant Horizons: the world goes on past the real chunks (dh_terrain), so fog uses the LOD's depth and range
+    fogEnd = max(dhRenderDistance, far);
+    float dhDepth = texture(dhDepthTex0, texcoord).r;
+    if (depth >= 1.0 && dhDepth < 1.0) {
+        vec4 vd = dhProjectionInverse * vec4(vec3(texcoord, dhDepth) * 2.0 - 1.0, 1.0);
+        p = mat3(gbufferModelViewInverse) * (vd.xyz / vd.w);
+        dist = length(p);
+        depth = 0.999999;   // fogged like terrain below, not left as sky
+    }
+#endif
 
 #if defined CAUSTICS && defined USE_RT
     // under water: seen through the water surface, or with the camera itself in water
@@ -65,7 +83,7 @@ void main() {
         col = mix(col, vec3(0.6, 0.7, 0.8) * (skyAmb * 0.4), 1.0 - exp(-dist * 2.0));
     } else if (depth < 1.0) {
         float haze = (1.0 - exp(-dist * 0.0012 * FOG_DENSITY * (1.0 + 5.0 * rainStrength)));
-        float edge = smoothstep(far * 0.8, far, dist);   // hide the edge of the loaded world
+        float edge = smoothstep(fogEnd * 0.8, fogEnd, dist);   // hide the edge of the loaded world
         float amount = max(haze, edge) * smoothstep(0.0, 0.2, float(eyeBrightnessSmooth.y) / 240.0 + edge);
         if (amount > 0.001) col = mix(col, skyColor(p / dist, sunDir), amount);
     }
