@@ -44,12 +44,14 @@ static void dump_msl(const mgl_link_job *j)
     for (int s = 0; s < MGL_NUM_STAGES; s++) {
         if (!j->msl[s])
             continue;
-        char path[1024];
+        char path[1024], tmp[1040];
         snprintf(path, sizeof path, "%s/%s-%u.%s.metal", dir, j->key[0] ? j->key : "nokey", n, ext[s]);
-        FILE *f = fopen(path, "w");
-        if (f) {
-            fputs(j->msl[s], f);
-            fclose(f);
+        snprintf(tmp, sizeof tmp, "%s.part", path);
+        FILE *f = fopen(tmp, "w");
+        if (f) { /* whole files only: a background compile can still be writing when a short test exits */
+            int ok = fputs(j->msl[s], f) >= 0;
+            if (fclose(f) == 0 && ok)
+                rename(tmp, path);
         }
     }
 }
