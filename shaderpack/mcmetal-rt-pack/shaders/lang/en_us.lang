@@ -84,3 +84,5 @@ value.STYLE.1=Cottage
 value.STYLE.2=Witchy
 value.STYLE.3=Storybook
 value.STYLE.4=Fairytale
+option.LABPBR_NORMAL_STRENGTH=PBR Depth
+option.LABPBR_NORMAL_STRENGTH.comment=How deep the bumps, cracks and mortar lines of a LabPBR resource pack look.
