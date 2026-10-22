@@ -13,11 +13,11 @@ fill ~12 ~1 ~-5 ~12 ~1 ~5 red_concrete
 fill ~12 ~3 ~-5 ~12 ~3 ~5 blue_concrete
 fill ~11 ~ ~-6 ~11 ~0 ~6 oak_planks
 setblock ~11 ~1 ~0 lantern
-# glowstone right behind the stained glass, up high: its light falls through the glass onto the floor in front
+# sea lanterns (near-white light) right behind the stained glass, up high: its light falls through the glass onto the floor in front
 # (ours-glass-night; lights on the floor only graze it)
-setblock ~6 ~2 ~0 glowstone
-setblock ~6 ~2 ~1 glowstone
-setblock ~6 ~2 ~2 glowstone
+setblock ~6 ~2 ~0 sea_lantern
+setblock ~6 ~2 ~1 sea_lantern
+setblock ~6 ~2 ~2 sea_lantern
 # a white floor in front of the glass, so the coloured light shows (red light on green grass looks black)
 fill ~1 ~-1 ~-2 ~4 ~-1 ~4 white_concrete
 fill ~5 ~ ~-4 ~5 ~3 ~-1 glass

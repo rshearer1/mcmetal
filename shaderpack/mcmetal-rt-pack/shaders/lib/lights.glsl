@@ -81,7 +81,9 @@ vec3 coloredBlockLight(vec3 p, vec3 n, int mat, float u1, float u2, float u3) {
     // torch light through stained glass (and water) takes its colour too
     vec3 transmit = vec3(1.0);
     if (dist > 0.9 && mcm_trace_tinted(o, dir, dist - 0.9, transmit) > 0.0) return vec3(0.0);
-    l *= transmit;
+    // the filter mcmetal gives back is pale (the glass texture is half see-through): deepen its colour, keep its
+    // brightness, so the floor behind red glass is clearly red
+    l *= max(mix(vec3(luma(transmit)), transmit, 3.0), vec3(0.0));
 #else
     if (dist > 0.9 && mcm_trace(o, dir, dist - 0.9) > 0.0) return vec3(0.0);
 #endif
