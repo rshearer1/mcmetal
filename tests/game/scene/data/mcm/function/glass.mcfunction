@@ -13,6 +13,9 @@ fill ~12 ~1 ~-5 ~12 ~1 ~5 red_concrete
 fill ~12 ~3 ~-5 ~12 ~3 ~5 blue_concrete
 fill ~11 ~ ~-6 ~11 ~0 ~6 oak_planks
 setblock ~11 ~1 ~0 lantern
+# lanterns right behind the stained glass: their light reaches the floor in front through it (ours-glass-night)
+setblock ~7 ~0 ~1 lantern
+setblock ~7 ~0 ~2 lantern
 fill ~5 ~ ~-4 ~5 ~3 ~-1 glass
 fill ~5 ~ ~0 ~5 ~3 ~0 red_stained_glass
 fill ~5 ~ ~1 ~5 ~3 ~1 lime_stained_glass
