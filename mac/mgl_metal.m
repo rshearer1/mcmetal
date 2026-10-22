@@ -293,10 +293,49 @@ static void tally_line(line_tally *t, int line)
     }
 }
 
+/* Deferred full clears (MGL_DEFER_CLEAR=0 turns them off): a glClear of a whole offscreen target opens no pass of
+   its own. The next pass that renders into a cleared image clears it with its load action; anything else that
+   could see the images first (another encoder, a commit, a texture release) replays the clears as passes, as
+   before. Iris clears the 4096x4096 shadow map's images one framebuffer at a time, and each clear pass loaded and
+   stored every attachment. */
+typedef struct { mgl_target t; unsigned colors; float rgba[4]; int depth; float depth_value; } pending_clear;
+static pending_clear pclear[8];
+static int npclear, keep_clears;
+static id<MTLRenderCommandEncoder> begin_pass_at(int line, const mgl_target *t, unsigned clear_colors, const float *rgba,
+                                                 int clear_depth, float depth);
+
+static void materialize_clears(void)
+{
+    if (!npclear)
+        return;
+    pending_clear list[8];
+    int n = npclear;
+    memcpy(list, pclear, sizeof list);
+    npclear = 0;
+    for (int i = 0; i < n; i++)
+        if (list[i].colors || list[i].depth)
+            begin_pass_at(__LINE__, &list[i].t, list[i].colors, list[i].rgba, list[i].depth, list[i].depth_value);
+}
+
+/* any image of a pending clear's target, cleared or only loaded */
+static int pending_clear_uses(const mglb_texture *x)
+{
+    for (int i = 0; i < npclear; i++) {
+        for (int a = 0; a < MGL_MAX_ATTACHMENTS; a++)
+            if (pclear[i].t.tex[a] == x)
+                return 1;
+        if (pclear[i].t.depth == x)
+            return 1;
+    }
+    return 0;
+}
+
 static void end_encoders_at(int line)
 {
     if (!gs_recording)
         gs_flush_at(line);
+    if (!keep_clears)
+        materialize_clears();
     if (renc && renc_target.width >= 2048 && renc_target.width == renc_target.height && flush_log_on()) {
         static line_tally big = {"square shadow-map passes ended"};
         tally_line(&big, line);
@@ -643,6 +682,8 @@ void mglb_texture_release(mglb_texture *t)
     if (!t)
         return;
     gs_flush(); /* a pending geometry-shader draw may still bind it */
+    if (pending_clear_uses(t))
+        materialize_clears();
     if (renc) {
         /* the open render pass may still reference it; Metal retains it for the command buffer */
     }
@@ -1847,6 +1888,39 @@ static id<MTLRenderCommandEncoder> begin_pass_at(int line, const mgl_target *t, 
 static id<MTLRenderCommandEncoder> begin_pass_at(int line, const mgl_target *t, unsigned clear_colors, const float *rgba,
                                                  int clear_depth, float depth)
 {
+    /* pending clears of this target's images become its load actions; other pending clears go first */
+    unsigned take_colors = 0;
+    float take_rgba[MGL_MAX_ATTACHMENTS][4];
+    int take_depth = 0;
+    float take_depth_value = 0;
+    if (npclear) {
+        pending_clear list[8];
+        int n = npclear;
+        memcpy(list, pclear, sizeof list);
+        npclear = 0;
+        for (int i = 0; i < n; i++) {
+            pending_clear *r = &list[i];
+            for (int a = 0; a < MGL_MAX_ATTACHMENTS; a++) {
+                if (!(r->colors & (1u << a)))
+                    continue;
+                for (int j = 0; j < MGL_MAX_ATTACHMENTS; j++)
+                    if (t->tex[j] == r->t.tex[a] && t->level[j] == r->t.level[a] && t->layer[j] == r->t.layer[a]) {
+                        take_colors |= 1u << j;
+                        memcpy(take_rgba[j], r->rgba, sizeof r->rgba);
+                        r->colors &= ~(1u << a);
+                        break;
+                    }
+            }
+            if (r->depth && t->depth == r->t.depth && t->depth_level == r->t.depth_level) {
+                take_depth = 1;
+                take_depth_value = r->depth_value;
+                r->depth = 0;
+            }
+        }
+        for (int i = 0; i < n; i++)
+            if (list[i].colors || list[i].depth)
+                begin_pass_at(__LINE__, &list[i].t, list[i].colors, list[i].rgba, list[i].depth, list[i].depth_value);
+    }
     if (t->width >= 2048 && t->width == t->height && flush_log_on()) {
         static line_tally big = {"square shadow-map passes opened"};
         tally_line(&big, line);
@@ -1863,17 +1937,21 @@ static id<MTLRenderCommandEncoder> begin_pass_at(int line, const mgl_target *t, 
         if (clear_colors & (1u << i)) {
             rp.colorAttachments[i].loadAction = MTLLoadActionClear;
             rp.colorAttachments[i].clearColor = MTLClearColorMake(rgba[0], rgba[1], rgba[2], rgba[3]);
+        } else if (take_colors & (1u << i)) {
+            rp.colorAttachments[i].loadAction = MTLLoadActionClear;
+            rp.colorAttachments[i].clearColor =
+                MTLClearColorMake(take_rgba[i][0], take_rgba[i][1], take_rgba[i][2], take_rgba[i][3]);
         }
     }
     if (t->depth) {
         set_attachment(rp.depthAttachment, t->depth, t->depth_level, 0);
-        if (clear_depth) {
+        if (clear_depth || take_depth) {
             rp.depthAttachment.loadAction = MTLLoadActionClear;
-            rp.depthAttachment.clearDepth = depth;
+            rp.depthAttachment.clearDepth = clear_depth ? depth : take_depth_value;
         }
         if (t->depth->pf == MTLPixelFormatDepth32Float_Stencil8) {
             set_attachment(rp.stencilAttachment, t->depth, t->depth_level, 0);
-            if (clear_depth)
+            if (clear_depth || take_depth)
                 rp.stencilAttachment.loadAction = MTLLoadActionClear;
         }
     }
@@ -1892,7 +1970,7 @@ static id<MTLRenderCommandEncoder> begin_pass_at(int line, const mgl_target *t, 
     }
     renc = [c renderCommandEncoderWithDescriptor:rp];
     prof.passes++;
-    if (same_target(t, &prof_last_target) && !clear_colors && !clear_depth)
+    if (same_target(t, &prof_last_target) && !clear_colors && !clear_depth && !take_colors && !take_depth)
         prof.reopened++;
     prof_last_target = *t;
     renc_target = *t;
@@ -2131,7 +2209,35 @@ void mglb_clear(const mgl_target *t, unsigned mask_color, const float rgba[4], i
                                scissor[1] + scissor[3] < t->height)) ||
                   (mask_color && cmask != 0xf);
     if (!partial) {
-        begin_pass(t, mask_color, rgba, clear_depth, depth);
+        static int defer = -1;
+        if (defer < 0)
+            defer = !getenv("MGL_DEFER_CLEAR") || atoi(getenv("MGL_DEFER_CLEAR")) != 0;
+        if (!defer || t->is_default || (!mask_color && !clear_depth)) {
+            begin_pass(t, mask_color, rgba, clear_depth, depth);
+            return;
+        }
+        gs_flush(); /* draws issued before the clear keep their place */
+        keep_clears = 1;
+        end_encoders();
+        keep_clears = 0;
+        /* a later clear of the same image wins */
+        for (int i = 0; i < npclear; i++) {
+            for (int a = 0; a < MGL_MAX_ATTACHMENTS; a++)
+                for (int j = 0; j < MGL_MAX_ATTACHMENTS; j++)
+                    if ((mask_color & (1u << j)) && (pclear[i].colors & (1u << a)) && pclear[i].t.tex[a] == t->tex[j] &&
+                        pclear[i].t.level[a] == t->level[j] && pclear[i].t.layer[a] == t->layer[j])
+                        pclear[i].colors &= ~(1u << a);
+            if (clear_depth && pclear[i].t.depth == t->depth && pclear[i].t.depth_level == t->depth_level)
+                pclear[i].depth = 0;
+        }
+        if (npclear == 8)
+            materialize_clears();
+        pending_clear *r = &pclear[npclear++];
+        r->t = *t;
+        r->colors = mask_color;
+        memcpy(r->rgba, rgba, sizeof r->rgba);
+        r->depth = clear_depth && t->depth;
+        r->depth_value = depth;
         return;
     }
     /* scissored or masked clear: draw a quad */
@@ -2493,8 +2599,16 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
         gs_batch = !getenv("MGL_GS_BATCH") || atoi(getenv("MGL_GS_BATCH")) != 0;
     if (!gs_batch || !same_target(&d->target, &gs_target) || gs_pending.count >= 2048)
         gs_flush();
+    /* the vertex and geometry stages run as compute: pending clears can wait for the strips' render pass unless
+       this draw also reads one of their images */
+    int reads_cleared = 0;
+    for (int st = 0; st < 3 && npclear && !reads_cleared; st++)
+        for (int i = 0; i < MGL_MAX_TEXTURES && !reads_cleared; i++)
+            reads_cleared = d->textures[st][i].tex && pending_clear_uses(d->textures[st][i].tex);
     gs_recording = 1;
+    keep_clears = !reads_cleared;
     id<MTLComputeCommandEncoder> c = compute_encoder();
+    keep_clears = 0;
     gs_recording = 0;
     [c setComputePipelineState:OBJ(id<MTLComputePipelineState>, d->program->compute)];
     bind_stage_resources(nil, c, d, 2);
