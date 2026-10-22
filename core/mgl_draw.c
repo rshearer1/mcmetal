@@ -577,6 +577,27 @@ void glMultiDrawElementsBaseVertex(GLenum mode, const GLsizei *count, GLenum typ
         mglb_draw(&d);
         return;
     }
+    /* Geometry-shader programs (SEUS's shadow terrain: ~30 sections per call): the state is the same for every
+       section, so assemble it once and only change the range per section. */
+    if (drawcount > 1 && p && p->x.gs_max_vertices && ib && ib->mem && mode == GL_TRIANGLES &&
+        (type == GL_UNSIGNED_SHORT || type == GL_UNSIGNED_INT)) {
+        mgl_draw d;
+        if (!build_draw(&d))
+            return;
+        d.primitive = (int)mode;
+        d.instances = 1;
+        d.index_buf = ib->mem;
+        d.index_type = (int)type;
+        for (GLsizei i = 0; i < drawcount; i++) {
+            if (count[i] <= 0)
+                continue;
+            d.count = count[i];
+            d.index_offset = (size_t)ind[i];
+            d.base_vertex = bv[i];
+            submit(&d);
+        }
+        return;
+    }
     for (GLsizei i = 0; i < drawcount; i++)
         draw(mode, count[i], type, ind[i], 0, bv[i], 1);
 }

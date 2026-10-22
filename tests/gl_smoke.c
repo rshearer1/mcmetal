@@ -805,6 +805,26 @@ int main(int argc, char **argv)
         snprintf(what, sizeof what, "geometry shader: constant and trimmed outputs reach the fragment shader (pixel %08x)",
                  px[32 * 64 + 32]);
         check(near(px[32 * 64 + 32], rgba(64, 128, 191, 255)), what);
+
+        /* the same through glMultiDrawElementsBaseVertex, one triangle per section (SEUS's shadow terrain path) */
+        static const GLushort tri_idx[6] = {0, 1, 2, 3, 4, 5};
+        GLuint ibuf;
+        glGenBuffers(1, &ibuf);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibuf);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof tri_idx, tri_idx, GL_STATIC_DRAW);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glUseProgram(p); /* read_texture left its compute program bound */
+        const GLsizei counts[2] = {3, 3};
+        const void *offs[2] = {(void *)0, (void *)(3 * sizeof(GLushort))};
+        const GLint bases[2] = {0, 0};
+        glMultiDrawElementsBaseVertex(GL_TRIANGLES, counts, GL_UNSIGNED_SHORT, offs, 2, bases);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+        read_texture(rb, tex, ssbo, px);
+        snprintf(what, sizeof what, "geometry shader through a multi-draw: both sections drawn (pixels %08x %08x)",
+                 px[32 * 64 + 60], px[32 * 64 + 3]);
+        check(near(px[32 * 64 + 60], rgba(64, 128, 191, 255)) && near(px[32 * 64 + 3], rgba(64, 128, 191, 255)), what);
     }
 
     /* 12. layout(binding) in a #version 330 shader with the SSBO extension (Complementary's world-space
