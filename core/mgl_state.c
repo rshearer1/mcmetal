@@ -1,4 +1,5 @@
 /* Name tables, context state defaults, state queries, glEnable/glDisable and friends. */
+#include <stdlib.h>
 #include <string.h>
 #include "mgl_state.h"
 
@@ -290,7 +291,21 @@ void glPolygonMode(GLenum face, GLenum mode)
         mgl_log("glPolygonMode(%s) ignored", mode == GL_LINE ? "GL_LINE" : "GL_POINT");
 }
 
-void glFlush(void) { mglb_flush(); }
+/* glFlush only promises the commands run eventually, and with one context everything is submitted at the frame's
+   end (or sooner, when the CPU waits on the GPU) anyway. Submitting here ended the render pass being drawn, so the
+   rest of the frame had to store and reload the whole framebuffer; Distant Horizons on a Mac flushes after every
+   256 KB of LOD upload, dozens of times a frame while it builds. MGL_FLUSH=1 submits at every glFlush again. */
+void glFlush(void)
+{
+    static int submit = -1;
+    if (submit < 0) {
+        submit = getenv("MGL_FLUSH") && atoi(getenv("MGL_FLUSH"));
+        mgl_log(submit ? "glFlush submits the GPU work drawn so far (MGL_FLUSH=1)"
+                       : "glFlush is left to the frame's end (MGL_FLUSH=1 submits at each one)");
+    }
+    if (submit)
+        mglb_flush();
+}
 void glFinish(void) { mglb_finish(); }
 
 /* ---- queries of current state ---- */

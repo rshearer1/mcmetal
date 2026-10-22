@@ -69,7 +69,15 @@ static void attach(mgl_framebuffer *f, GLenum attachment, GLuint tex, int level,
         a = &f->color[attachment - GL_COLOR_ATTACHMENT0];
     else if (attachment == GL_DEPTH_ATTACHMENT || attachment == GL_DEPTH_STENCIL_ATTACHMENT)
         a = &f->depth;
-    else {
+    else if (attachment == GL_STENCIL_ATTACHMENT) {
+        /* The stencil test isn't drawn (stencil state is kept for queries only), so a stencil-only attachment has
+           nothing to hold. Detaching (texture 0) is fine as it is: Distant Horizons does that every frame with
+           shader packs, before Iris attaches its depth texture. */
+        static int said;
+        if (tex && !said++)
+            mgl_log("stencil-only framebuffer attachment ignored (stencil test not emulated)");
+        return;
+    } else {
         mgl_log("framebuffer attachment 0x%04X not supported", attachment);
         return;
     }

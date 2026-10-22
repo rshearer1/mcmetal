@@ -6289,8 +6289,56 @@ static void draw_to_drawable(mgl_ctx *c, id<MTLTexture> src, id<CAMetalDrawable>
 }
 
 /* Copy GL framebuffer 0 into the window, flipping it the right way up. */
+/* MGL_FRAME_TIMES=N: every N seconds (1 = 10 s), the spread of whole-frame times (swap to swap, waits included):
+   average fps, "1% low" and "0.1% low" (the 99th and 99.9th percentile frame time, as fps), the worst frame and
+   how many took over 50 ms. Long frames are counted however long they are, unlike the present stats, so this is
+   the line for hitches (Distant Horizons building LODs, chunk loading). */
+static int cmp_double(const void *a, const void *b)
+{
+    double x = *(const double *)a, y = *(const double *)b;
+    return x < y ? -1 : x > y;
+}
+
+static void frame_times_tick(void)
+{
+    static int every_s = -1;
+    static uint64_t last, start;
+    static double ms[16384];
+    static unsigned n;
+    if (every_s < 0) {
+        const char *e = getenv("MGL_FRAME_TIMES");
+        every_s = e && atoi(e) > 0 ? (atoi(e) == 1 ? 10 : atoi(e)) : 0;
+    }
+    if (!every_s)
+        return;
+    uint64_t t = now_ns();
+    if (!last) {
+        last = start = t;
+        return;
+    }
+    if (n < sizeof ms / sizeof ms[0])
+        ms[n++] = (double)(t - last) * 1e-6;
+    last = t;
+    if (t - start < (uint64_t)every_s * 1000000000ull || n < 10)
+        return;
+    double sum = 0;
+    unsigned over = 0;
+    for (unsigned i = 0; i < n; i++) {
+        sum += ms[i];
+        over += ms[i] > 50.0;
+    }
+    qsort(ms, n, sizeof ms[0], cmp_double);
+    double p99 = ms[(unsigned)(n * 0.99)], p999 = ms[(unsigned)(n * 0.999)];
+    mgl_log("frame times (%.0f s): %u frames, %.1f fps avg, 1%% low %.1f fps (%.1f ms), 0.1%% low %.1f fps (%.1f ms), "
+            "worst %.1f ms, %u over 50 ms", (double)(t - start) * 1e-9, n, 1000.0 * n / sum, 1000.0 / p99, p99,
+            1000.0 / p999, p999, ms[n - 1], over);
+    n = 0;
+    start = t;
+}
+
 MGL_EXPORT void mgl_glfw_swap(void *ctx)
 {
+    frame_times_tick();
     mgl_ctx *c = ctx;
     update_size(c);
     mgl_rt_end_frame(); /* ray tracing: rebuild the scene from this frame's terrain sections */

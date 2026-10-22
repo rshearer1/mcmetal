@@ -7,6 +7,8 @@
    macOS:  -Dorg.lwjgl.opengl.libname=libglprof-mcmetal.dylib, MCMETAL_LIB=libglprof-mcmetal.dylib (our GLFW
            takes its mgl_glfw_* hooks from there, so frames and the time spent in swap are counted too) and
            GLPROF_REAL=libmcmetal.dylib. ci_game.sh does this for GAME_GLPROF=true.
+   GLPROF_FRAMES=FILE (macOS): one line per frame, "end_wall_ms frame_us gl_us swap_us": what each frame's time
+           went to (the rest is Java and everything else on the render thread), for tools/slow_frames.py.
    Linux:  -Dorg.lwjgl.opengl.libname=libglprof.so, GLPROF_REAL=libGL.so.1 (no frame count: swaps go through GLX). */
 #pragma once
 #include <stdint.h>
@@ -27,6 +29,7 @@ extern gp_stat gp_stats[];
 void *gp_real(const char *name);
 uint64_t gp_now(void);
 void gp_tick(void);
+extern uint64_t gp_frame_ns; /* time inside GL calls since the last swap (GLPROF_FRAMES) */
 
 #define GP_REAL(n) \
     if (!real_##n) real_##n = gp_real(#n)
@@ -34,8 +37,10 @@ void gp_tick(void);
 static inline void gp_add(int i, uint64_t t0, long aux)
 {
     gp_stat *s = &gp_stats[i];
+    uint64_t dt = gp_now() - t0;
     s->calls++;
-    s->ns += gp_now() - t0;
+    s->ns += dt;
+    gp_frame_ns += dt;
     s->aux += (uint64_t)(aux > 0 ? aux : 0);
     static unsigned n;
     if (!(++n & 4095))
