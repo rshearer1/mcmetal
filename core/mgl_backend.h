@@ -11,6 +11,7 @@ typedef struct mglb_program mglb_program;
 /* ---- buffers: always CPU-visible (unified memory on Apple GPUs) ---- */
 mglb_buffer *mglb_buffer_new(size_t size);
 void *mglb_buffer_ptr(mglb_buffer *b);
+size_t mglb_buffer_size(mglb_buffer *b);
 void mglb_buffer_release(mglb_buffer *b);
 /* true while work that reads the buffer has been recorded but not finished by the GPU */
 int mglb_buffer_in_use(mglb_buffer *b);

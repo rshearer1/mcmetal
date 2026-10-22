@@ -79,7 +79,8 @@ static void mat_mul(float *o, const float *a, const float *b) /* column-major o 
 static void snapshot(const char *path);
 
 /* MGL_RT_DEBUG=1: once a second, log what the capture saw (draws taken, skipped and why, sections kept). */
-static struct { unsigned long taken, not_terrain, not_tris, no_attr, small_stride, idle, fresh, f_range, f_ibuf, f_vbuf, f_other;
+static struct { unsigned long taken, not_terrain, not_tris, no_attr, small_stride, idle, fresh, f_range, f_ibuf, f_vbuf, f_other,
+                  f_sub, f_merged;
                 char last_skip[64]; } rtd;
 static int rt_debug(void)
 {
@@ -87,6 +88,108 @@ static int rt_debug(void)
     if (on < 0)
         on = getenv("MGL_RT_DEBUG") && atoi(getenv("MGL_RT_DEBUG"));
     return on;
+}
+
+static int rt_fold(void) /* MGL_RT_FOLD=0 keeps every draw as its own section */
+{
+    static int on = -1;
+    if (on < 0)
+        on = !getenv("MGL_RT_FOLD") || atoi(getenv("MGL_RT_FOLD")) != 0;
+    return on;
+}
+
+/* Sodium draws a section's faces as separate index ranges and leaves out those facing away from the camera, so
+   panning keeps producing new (base vertex, count) pairs for the same section, and each one cost an acceleration
+   structure build. Rays need every face anyway: a draw inside a kept section only refreshes it, and one next to
+   it (same section, vertices in between all its own) widens the kept range to cover both. */
+static int quad_range(const mgl_rt_geom *g, int *lo, int *hi)
+{
+    if (g->ioff || g->count <= 0 || g->count % 6)
+        return 0;
+    *lo = g->base_vertex;
+    *hi = g->base_vertex + g->count / 6 * 4;
+    return 1;
+}
+
+static int same_layout(const mgl_rt_geom *a, const mgl_rt_geom *b)
+{
+    return a->vbuf == b->vbuf && a->ibuf == b->ibuf && a->vbase == b->vbase && a->stride == b->stride &&
+           a->itype == b->itype && a->translucent == b->translucent;
+}
+
+/* every vertex in [lo, hi) carries the same section index, and the index buffer reaches far enough */
+static int one_section(const mgl_rt_geom *g, int lo, int hi)
+{
+    const unsigned char *base = mglb_buffer_ptr(g->vbuf);
+    size_t isz = (size_t)(g->itype == GL_UNSIGNED_SHORT ? 2 : 4);
+    if (!base || lo < 0 || (size_t)(hi - lo) / 4 * 6 * isz > mglb_buffer_size(g->ibuf) ||
+        g->vbase + (size_t)hi * (size_t)g->stride > mglb_buffer_size(g->vbuf))
+        return 0;
+    if (g->itype == GL_UNSIGNED_SHORT && hi - lo > 65536)
+        return 0;
+    uint32_t sec = ((const uint32_t *)(base + g->vbase + (size_t)lo * (size_t)g->stride))[4] >> 24;
+    for (int v = lo + 1; v < hi; v++)
+        if (((const uint32_t *)(base + g->vbase + (size_t)v * (size_t)g->stride))[4] >> 24 != sec)
+            return 0;
+    return 1;
+}
+
+static void touch(rt_draw *r, const rt_draw *key, double t)
+{
+    memcpy(r->g.region, key->g.region, sizeof r->g.region);
+    if (key->g.ent_off >= 0 && r->g.ent_off != key->g.ent_off) { /* passes without mc_Entity keep it */
+        r->g.ent_off = key->g.ent_off;
+        r->g.gen++;
+    }
+    r->seen = t;
+}
+
+/* 1 when the kept list already covers the draw (or now does, widened) */
+static int fold_into_section(const rt_draw *key, double t)
+{
+    int klo, khi;
+    if (!quad_range(&key->g, &klo, &khi))
+        return 0;
+    for (int i = 0; i < num_draws; i++) {
+        rt_draw *r = &draws[i];
+        int lo, hi;
+        if (!same_layout(&r->g, &key->g) || !quad_range(&r->g, &lo, &hi))
+            continue;
+        if (klo >= lo && khi <= hi) {
+            touch(r, key, t);
+            rtd.f_sub++;
+            return 1;
+        }
+    }
+    for (int i = 0; i < num_draws; i++) {
+        rt_draw *r = &draws[i];
+        int lo, hi;
+        if (!same_layout(&r->g, &key->g) || !quad_range(&r->g, &lo, &hi))
+            continue;
+        int ulo = lo < klo ? lo : klo, uhi = hi > khi ? hi : khi;
+        /* near enough to be the same section's other faces (a section holds at most a few 10k vertices) */
+        if (uhi - ulo > 4 * ((hi - lo) + (khi - klo)) + 4096 || !one_section(&key->g, ulo, uhi))
+            continue;
+        r->g.base_vertex = ulo;
+        r->g.count = (uhi - ulo) / 4 * 6;
+        touch(r, key, t);
+        rtd.f_merged++;
+        /* drop other kept ranges now inside this one */
+        int n = 0;
+        for (int j = 0; j < num_draws; j++) {
+            int jl, jh;
+            if (j != i && same_layout(&draws[j].g, &r->g) && quad_range(&draws[j].g, &jl, &jh) && jl >= ulo &&
+                jh <= uhi) {
+                if (draws[j].seen > r->seen)
+                    r->seen = draws[j].seen;
+                continue;
+            }
+            draws[n++] = draws[j];
+        }
+        num_draws = n;
+        return 1;
+    }
+    return 0;
 }
 
 static int num_draws_fwd(void);
@@ -102,8 +205,8 @@ static void rt_debug_tick(void)
                 now - last_log, rtd.taken, rtd.not_terrain, rtd.last_skip[0] ? rtd.last_skip : "-", rtd.not_tris,
                 rtd.no_attr, rtd.small_stride, rtd.idle, num_draws_fwd());
         mgl_log("rt debug: %lu draws new to the capture: %lu same section with another index range, %lu another index "
-                "buffer, %lu a vertex buffer not seen before, %lu other", rtd.fresh, rtd.f_range, rtd.f_ibuf, rtd.f_vbuf,
-                rtd.f_other);
+                "buffer, %lu a vertex buffer not seen before, %lu other; %lu inside a kept section, %lu merged into one",
+                rtd.fresh, rtd.f_range, rtd.f_ibuf, rtd.f_vbuf, rtd.f_other, rtd.f_sub, rtd.f_merged);
         /* MGL_RT_DEBUG=2: the material byte Sodium packs beside the section index (alpha cutoff in bits 1-2), over
            the captured vertices: shows whether cutout blocks carry a cutoff here (reads every vertex: slow) */
         if (rt_debug() >= 2) {
@@ -212,6 +315,8 @@ void mgl_rt_record(mgl_program *p, const mgl_draw *d)
             goto recorded;
         }
     }
+    if (rt_fold() && fold_into_section(&key, t))
+        goto recorded;
     if (rt_debug()) { /* why is this draw new: compare with a capture entry for the same vertices */
         rtd.fresh++;
         int same_vb = 0, why = 0;

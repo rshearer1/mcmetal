@@ -399,6 +399,19 @@ static id<MTLBlitCommandEncoder> blit_encoder(void)
     return benc;
 }
 
+/* A blit that touches neither texture of a pending clear leaves the clears pending, so the next pass into the
+   cleared images can still take them as load actions. One that does touch them replays the clears first. */
+static id<MTLBlitCommandEncoder> blit_encoder_for(const mglb_texture *a, const mglb_texture *b)
+{
+    int touches = (a && pending_clear_uses(a)) || (b && pending_clear_uses(b));
+    if (touches && benc)
+        end_encoders(); /* an open blit encoder would otherwise run this blit before the clears */
+    keep_clears = !touches;
+    id<MTLBlitCommandEncoder> e = blit_encoder();
+    keep_clears = 0;
+    return e;
+}
+
 static id<MTLComputeCommandEncoder> compute_encoder(void)
 {
     if (!gs_recording)
@@ -480,6 +493,7 @@ mglb_buffer *mglb_buffer_new(size_t size)
 }
 
 void *mglb_buffer_ptr(mglb_buffer *b) { return b ? b->ptr : NULL; }
+size_t mglb_buffer_size(mglb_buffer *b) { return b ? b->size : 0; }
 
 void mglb_buffer_release(mglb_buffer *b)
 {
@@ -709,7 +723,7 @@ void mglb_texture_upload(mglb_texture *t, int level, int x, int y, int z, int w,
         for (int yy = 0; yy < h; yy++)
             memcpy((char *)stage.ptr + (size_t)zz * img + (size_t)yy * row,
                    (const char *)data + (size_t)zz * bytes_per_image + (size_t)yy * bytes_per_row, row);
-    id<MTLBlitCommandEncoder> e = blit_encoder();
+    id<MTLBlitCommandEncoder> e = blit_encoder_for(t, NULL);
     id<MTLTexture> tex = OBJ(id<MTLTexture>, t->mtl);
     if (t->d.type == MGLT_3D) {
         [e copyFromBuffer:stage.buf sourceOffset:stage.off sourceBytesPerRow:row sourceBytesPerImage:img
@@ -728,7 +742,7 @@ void mglb_texture_generate_mipmaps(mglb_texture *t)
 {
     if (!t || t->d.levels < 2 || is_int_format(t->pf) || is_depth_format(t->pf))
         return;
-    [blit_encoder() generateMipmapsForTexture:OBJ(id<MTLTexture>, t->mtl)];
+    [blit_encoder_for(t, NULL) generateMipmapsForTexture:OBJ(id<MTLTexture>, t->mtl)];
 }
 
 void mglb_texture_clear(mglb_texture *t, int level, const void *texel)
@@ -749,7 +763,7 @@ void mglb_texture_clear(mglb_texture *t, int level, const void *texel)
     else
         for (size_t o = 0; o < img * (size_t)d; o += bpt)
             memcpy((char *)stage->ptr + o, texel, bpt);
-    id<MTLBlitCommandEncoder> e = blit_encoder();
+    id<MTLBlitCommandEncoder> e = blit_encoder_for(t, NULL);
     id<MTLTexture> tex = OBJ(id<MTLTexture>, t->mtl);
     if (t->d.type == MGLT_3D)
         [e copyFromBuffer:OBJ(id<MTLBuffer>, stage->mtl) sourceOffset:0 sourceBytesPerRow:row sourceBytesPerImage:img
@@ -811,7 +825,7 @@ void mglb_texture_copy(mglb_texture *src, int src_level, int sx, int sy, int sz,
         }
         stex = [stex newTextureViewWithPixelFormat:dst->pf];
     }
-    id<MTLBlitCommandEncoder> e = blit_encoder();
+    id<MTLBlitCommandEncoder> e = blit_encoder_for(src, dst);
     int s3 = src->d.type == MGLT_3D, d3 = dst->d.type == MGLT_3D;
     for (int i = 0; i < d; i++)
         [e copyFromTexture:stex sourceSlice:(NSUInteger)(s3 ? 0 : sz + i)
@@ -2953,7 +2967,7 @@ static void rt_build_lights(const mgl_rt_geom *g, RtSection *__strong *secs, con
         mglb_buffer_release(hash);
         return;
     }
-    id<MTLBlitCommandEncoder> b = blit_encoder();
+    id<MTLBlitCommandEncoder> b = blit_encoder_for(NULL, NULL);
     [b fillBuffer:OBJ(id<MTLBuffer>, lb->mtl) range:NSMakeRange(0, RT_LIGHTS_BYTES) value:0];
     [b fillBuffer:OBJ(id<MTLBuffer>, hash->mtl) range:NSMakeRange(0, 8192 * 4) value:0];
     id<MTLComputeCommandEncoder> c = compute_encoder();
