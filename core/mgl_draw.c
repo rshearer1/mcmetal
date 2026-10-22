@@ -631,11 +631,11 @@ void glMultiDrawElementsBaseVertex(GLenum mode, const GLsizei *count, GLenum typ
         /* GPU chunk culling: sections out of the pass's view are skipped (still recorded for ray tracing) */
         unsigned char keep_small[256], *keep = drawcount <= 256 ? keep_small : malloc((size_t)drawcount);
         int culled = keep && type == GL_UNSIGNED_INT && mgl_cull_take_cpu(count, drawcount, ib->mem, keep);
-        /* MGL_GS_BATCH_SECTIONS=0: one job per section. Default: one job per call, the sections packed as a table
-           (SEUS's shadow pass: ~1700 jobs a frame -> ~100) */
+        /* MGL_GS_BATCH_SECTIONS=1: one job per call, the sections packed as a table (SEUS's shadow pass: ~1700 jobs a
+           frame -> ~70). Off by default: on the M3 the concurrent small jobs were faster (75 vs 44 fps walking) */
         static int one_job = -1;
         if (one_job < 0)
-            one_job = !getenv("MGL_GS_BATCH_SECTIONS") || atoi(getenv("MGL_GS_BATCH_SECTIONS")) != 0;
+            one_job = getenv("MGL_GS_BATCH_SECTIONS") && atoi(getenv("MGL_GS_BATCH_SECTIONS")) != 0;
         int esize = type == GL_UNSIGNED_SHORT ? 2 : 4;
         int32_t (*sec)[4] = one_job ? malloc(sizeof *sec * (size_t)(drawcount + 1)) : NULL;
         int nsec = 0, slots = 0;
