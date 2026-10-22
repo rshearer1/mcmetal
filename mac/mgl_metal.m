@@ -4508,6 +4508,20 @@ static int upscale_on(void)
     return on;
 }
 
+/* MCMETAL_UPSCALE_SCALE=N: with the upscaler on, the game renders at N% of the Retina size each way (34-100,
+   default 50 = the window's point size). The patched GLFW reports the same size (see build_mac.sh), computed the
+   same way: floor(points * backing scale * N / 100). */
+static int render_pct(void)
+{
+    static int pct;
+    if (!pct) {
+        const char *e = getenv("MCMETAL_UPSCALE_SCALE");
+        pct = e ? atoi(e) : 50;
+        pct = pct < 34 ? 34 : pct > 100 ? 100 : pct;
+    }
+    return pct;
+}
+
 static void update_size(mgl_ctx *c)
 {
     CGSize pt = c->layer.bounds.size, px = pt;
@@ -4518,8 +4532,8 @@ static void update_size(mgl_ctx *c)
     if (!CGSizeEqualToSize(c->layer.drawableSize, px))
         c->layer.drawableSize = px;
     int up = upscale_on() && c->layer.contentsScale > 1;
-    c->w = (int)(up ? pt.width : px.width);
-    c->h = (int)(up ? pt.height : px.height);
+    c->w = (int)(up ? floor(pt.width * c->layer.contentsScale * render_pct() / 100.0) : px.width);
+    c->h = (int)(up ? floor(pt.height * c->layer.contentsScale * render_pct() / 100.0) : px.height);
 }
 
 static id<MTLTexture> upscaled; /* last MetalFX output, for test screenshots */
@@ -4642,6 +4656,7 @@ static struct {
     int failed, reset;         /* failed: the interpolator */
     int snap_failed;
     double hand;
+    const mglb_texture *depth_src; /* the main target's depth at the last snapshot: draws into it are the world */
 } fg;
 
 static const char *fg_msl =
@@ -4783,6 +4798,7 @@ static void fg_snapshot(const mgl_target *t)
             fg.cur ^= 1;
         }
         fg.snap_frame = frames_presented + 1;
+        fg.depth_src = t->depth;
         end_encoders();
         id<MTLBlitCommandEncoder> b = [current_cb() blitCommandEncoder];
         [b copyFromTexture:col toTexture:fg.color[fg.cur]];
@@ -4892,16 +4908,21 @@ static void fg_history_reset(void)
 
 /* ================================================================ MetalFX temporal upscaler (MCMETAL_UPSCALE=2)
 
-   Like MCMETAL_UPSCALE=1 the game renders at half the Retina size each way, but MetalFX's temporal upscaler
-   rebuilds the full-size world picture from this frame and the last ones (using the world snapshot's depth and
-   camera motion, the same as frame interpolation), instead of sharpening one frame on its own. The HUD isn't
-   in the snapshot: pixels where the finished frame differs from the world picture (and their neighbours) come
-   from the spatial upscaler instead, so text and the hotbar don't smear. Needs a shader pack (Iris's camera
-   uniforms); without one, and in menus, frames use the spatial upscaler. No jitter: packs do their own TAA.
-   Measured on an M3 Max (1728x965 -> 3456x1930, 2026-10-22): NOT worth it yet. ~2-4 ms more GPU (SEUS 25.4 ->
-   27.2 ms, Complementary 5.4 -> 9.8), so pacing drops a step (SEUS 40 -> 30, Complementary 118 -> 59), and the
-   picture is no sharper (very slightly softer on SEUS): without jitter there's no sub-pixel detail to gather.
-   Kept as an experiment for a jittered path. */
+   Like MCMETAL_UPSCALE=1 the game renders below the Retina size (MCMETAL_UPSCALE_SCALE, default half each way),
+   but MetalFX's temporal upscaler rebuilds the full-size world picture from this frame and the last ones, using
+   the world snapshot's depth and camera motion (the same as frame interpolation). Needs a shader pack (Iris's
+   camera uniforms); without one, and in menus, frames use the spatial upscaler.
+   Jitter: world draws (into the main depth, depth tested or written, before the snapshot) are moved by a sub-pixel
+   offset from a Halton(2,3) sequence that changes every frame (vertex shaders get it through mcm_jitter, see
+   mgl_program.c), and MetalFX is told the offset, so it gathers detail finer than the render resolution. Packs
+   with their own TAA jitter too; turning the pack's TAA off lets MetalFX do it instead. MCMETAL_TU_JITTER=0 off;
+   MCMETAL_TU_JX / MCMETAL_TU_JY = -1 flip the sign MetalFX is told (convention check).
+   The HUD isn't in the snapshot: output pixels whose input footprint (the 2x2 input pixels around it) differs
+   from the world picture are the HUD, taken from the finished frame with sharp-edged bilinear filtering (pixel
+   exact at whole-number scales); everything else is MetalFX's world. That pass writes straight into the window.
+   History (M3 Max, 1728x965 -> 3456x1930, 2026-10-22, no jitter, HUD via a second, spatial MetalFX pass): ~2-4 ms
+   more GPU (SEUS 25.4 -> 27.2 ms, Complementary 5.4 -> 9.8) and no sharper; the jitter and the cheaper HUD pass
+   are the fix for both. */
 static int tu_enabled(void)
 {
     static int on = -1;
@@ -4909,7 +4930,7 @@ static int tu_enabled(void)
         const char *e = getenv("MCMETAL_UPSCALE");
         on = e && atoi(e) == 2;
         if (on)
-            mgl_log("temporal upscaler: on (with a shader pack; spatial otherwise)");
+            mgl_log("temporal upscaler: on (with a shader pack; spatial otherwise), render scale %d%%", render_pct());
     }
     return on;
 }
@@ -4917,42 +4938,124 @@ static int tu_enabled(void)
 static struct {
     id fx; /* id<MTLFXTemporalScaler> */
     id<MTLTexture> out, final;
-    id<MTLRenderPipelineState> pipe;
-    MTLPixelFormat pipe_fmt;
+    id<MTLRenderPipelineState> pipe[2]; /* by output: window (BGRA8), test-screenshot copy (fg.fmt) */
+    MTLPixelFormat pipe_fmt[2];
     NSUInteger ow, oh;
     int failed, reset, logged;
+    uint64_t jittered_frame; /* frame number (frames_presented + 1) whose world draws got jitter */
 } tu = {.reset = 1};
+
+/* Halton(base) for index i >= 1, in [0, 1) */
+static float halton(unsigned i, unsigned base)
+{
+    float f = 1, r = 0;
+    for (; i; i /= base) {
+        f /= (float)base;
+        r += f * (float)(i % base);
+    }
+    return r;
+}
+
+/* Frame n's jitter in input pixels, each in [-0.5, 0.5): +x = later columns, +y = later rows (GL row order, as
+   the snapshot is stored). The cycle covers each output pixel ~8 times: 8 x (output / input pixels), at most 64. */
+static void tu_jitter_px(uint64_t n, float j[2])
+{
+    double ratio = 100.0 / render_pct();
+    unsigned len = (unsigned)(8.0 * ratio * ratio + 0.5);
+    len = len < 8 ? 8 : len > 64 ? 64 : len;
+    unsigned i = (unsigned)(n % len) + 1;
+    j[0] = halton(i, 2) - 0.5f;
+    j[1] = halton(i, 3) - 0.5f;
+}
+
+void mglb_tu_jitter(const mgl_target *t, float out[2])
+{
+    out[0] = out[1] = 0;
+    /* only on frames that will use the temporal path: the last frame had a snapshot (so this one is in the world
+       too), and only before this frame's snapshot (the HUD draws into the same depth afterwards) */
+    if (!tu_enabled() || tu.failed || !t->depth || t->depth != fg.depth_src || fg.snap_frame != frames_presented ||
+        t->width != fg.w || t->height != fg.h)
+        return;
+    float j[2];
+    tu_jitter_px(frames_presented + 1, j);
+    out[0] = 2.0f * j[0] / (float)t->width; /* clip x: +2/w moves one column */
+    out[1] = 2.0f * j[1] / (float)t->height; /* GL clip y: +2/h moves one row up = one later row */
+    tu.jittered_frame = frames_presented + 1;
+}
 
 static const char *tu_msl =
     "#include <metal_stdlib>\nusing namespace metal;\n"
+    "struct TuU { float2 in_per_out; float flip_h, sharp; };\n"
     "vertex float4 tu_vs(uint v [[vertex_id]]) { float2 p = float2((v << 1) & 2, v & 2); return float4(p * 2.0 - 1.0, 0.0, 1.0); }\n"
-    /* all textures in GL row order, the output too: row r of each is the same place */
-    "fragment float4 tu_fs(float4 pos [[position]], texture2d<float> world_up [[texture(0)]], texture2d<float> full_up [[texture(1)]],\n"
-    "                      texture2d<float> full [[texture(2)]], texture2d<float> world [[texture(3)]]) {\n"
-    "    uint2 o = uint2(pos.xy);\n"
+    /* world_up / full / world are in GL row order; flip_h > 0: the output is the window (top row first) */
+    "fragment float4 tu_fs(float4 pos [[position]], texture2d<float> world_up [[texture(0)]],\n"
+    "                      texture2d<float> full [[texture(1)]], texture2d<float> world [[texture(2)]], constant TuU &u [[buffer(0)]]) {\n"
+    "    float2 o = pos.xy;\n"
+    "    if (u.flip_h > 0.0) o.y = u.flip_h - o.y;\n"
     "    int2 isz = int2(full.get_width(), full.get_height());\n"
-    "    int2 c = int2(pos.xy / float2(world_up.get_width(), world_up.get_height()) * float2(isz));\n"
-    "    float m = 0.0;\n"
-    "    for (int y = -1; y <= 1; y++)\n"
-    "        for (int x = -1; x <= 1; x++) {\n"
-    "            uint2 q = uint2(clamp(c + int2(x, y), int2(0), isz - 1));\n"
-    "            float3 d = abs(full.read(q).rgb - world.read(q).rgb);\n"
-    "            m = max(m, max(d.r, max(d.g, d.b)));\n"
-    "        }\n"
-    "    float4 r = m > 0.002 ? full_up.read(o) : world_up.read(o);\n"
-    "    return float4(r.rgb, 1.0);\n"
+    "    float2 t = o * u.in_per_out - 0.5;\n"
+    "    float2 b = floor(t), f = t - b;\n"
+    "    int2 c0 = clamp(int2(b), int2(0), isz - 1), c1 = clamp(int2(b) + 1, int2(0), isz - 1);\n"
+    "    float4 h00 = full.read(uint2(c0)), h10 = full.read(uint2(c1.x, c0.y)), h01 = full.read(uint2(c0.x, c1.y)), h11 = full.read(uint2(c1));\n"
+    "    float3 d = max(max(abs(h00.rgb - world.read(uint2(c0)).rgb), abs(h10.rgb - world.read(uint2(c1.x, c0.y)).rgb)),\n"
+    "                   max(abs(h01.rgb - world.read(uint2(c0.x, c1.y)).rgb), abs(h11.rgb - world.read(uint2(c1)).rgb)));\n"
+    "    if (max(d.r, max(d.g, d.b)) <= 0.002) return float4(world_up.read(uint2(o)).rgb, 1.0);\n"
+    "    float2 k = clamp((f - 0.5) * u.sharp + 0.5, 0.0, 1.0);\n" /* sharp bilinear: hard texel edges, 1-pixel blend */
+    "    return float4(mix(mix(h00, h10, k.x), mix(h01, h11, k.x), k.y).rgb, 1.0);\n"
     "}\n";
 
-/* The finished frame (window_color, HUD included) upscaled to ow x oh with the world from the temporal upscaler,
-   or nil (off, no fresh snapshot, or MetalFX can't): then the caller uses the spatial upscaler. */
-static id<MTLTexture> tu_frame(mgl_ctx *c, id<MTLTexture> win, NSUInteger ow, NSUInteger oh)
+static id<MTLRenderPipelineState> tu_pipeline(int slot, MTLPixelFormat fmt)
+{
+    if (tu.pipe[slot] && tu.pipe_fmt[slot] == fmt)
+        return tu.pipe[slot];
+    NSError *e = nil;
+    id<MTLLibrary> lib = [dev newLibraryWithSource:[NSString stringWithUTF8String:tu_msl] options:nil error:&e];
+    MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
+    pd.vertexFunction = [lib newFunctionWithName:@"tu_vs"];
+    pd.fragmentFunction = [lib newFunctionWithName:@"tu_fs"];
+    pd.colorAttachments[0].pixelFormat = fmt;
+    tu.pipe[slot] = lib ? [dev newRenderPipelineStateWithDescriptor:pd error:&e] : nil;
+    tu.pipe_fmt[slot] = fmt;
+    if (!tu.pipe[slot])
+        mgl_log("temporal upscaler: HUD shader failed: %s", e.localizedDescription.UTF8String);
+    return tu.pipe[slot];
+}
+
+/* The world + HUD pass: into dst (ow x oh), the window's way up when flip */
+static int tu_compose(id<MTLTexture> win, id<MTLTexture> dst, int slot, int flip)
+{
+    id<MTLRenderPipelineState> ps = tu_pipeline(slot, dst.pixelFormat);
+    if (!ps)
+        return 0;
+    struct { float in_per_out[2], flip_h, sharp; } u = {
+        {(float)fg.w / (float)dst.width, (float)fg.h / (float)dst.height}, flip ? (float)dst.height : 0.0f,
+        (float)dst.width / (float)fg.w};
+    MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
+    rp.colorAttachments[0].texture = dst;
+    rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+    rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+    id<MTLRenderCommandEncoder> e = [current_cb() renderCommandEncoderWithDescriptor:rp];
+    [e setRenderPipelineState:ps];
+    [e setFragmentTexture:tu.out atIndex:0];
+    [e setFragmentTexture:win atIndex:1];
+    [e setFragmentTexture:fg.color[fg.cur] atIndex:2];
+    [e setFragmentBytes:&u length:sizeof u atIndex:0];
+    [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    [e endEncoding];
+    return 1;
+}
+
+/* The finished frame (window_color, HUD included) upscaled into the drawable with the world from the temporal
+   upscaler. 0 (nothing drawn) when off, no fresh snapshot, or MetalFX can't: then the caller uses the spatial one. */
+static int tu_frame(id<MTLTexture> win, id<MTLTexture> drawable)
 {
     if (!tu_enabled() || tu.failed)
-        return nil;
+        return 0;
+    NSUInteger ow = drawable.width, oh = drawable.height;
     if (fg.snap_frame != frames_presented + 1 || !fg.color[0] || (int)win.width != fg.w || (int)win.height != fg.h ||
         win.pixelFormat != fg.fmt) {
         tu.reset = 1;
-        return nil;
+        return 0;
     }
     if (!tu.fx || tu.ow != ow || tu.oh != oh || [(id<MTLFXTemporalScaler>)tu.fx colorTextureFormat] != fg.fmt ||
         [(id<MTLFXTemporalScaler>)tu.fx inputWidth] != (NSUInteger)fg.w || [(id<MTLFXTemporalScaler>)tu.fx inputHeight] != (NSUInteger)fg.h) {
@@ -4970,35 +5073,29 @@ static id<MTLTexture> tu_frame(mgl_ctx *c, id<MTLTexture> win, NSUInteger ow, NS
         if (!fx) {
             mgl_log("temporal upscaler: MetalFX wouldn't make one for %dx%d -> %lux%lu, using the spatial one", fg.w, fg.h,
                     (unsigned long)ow, (unsigned long)oh);
+            if (@available(macOS 14.4, *))
+                mgl_log("temporal upscaler: this Mac takes %.2fx to %.2fx (output / input)",
+                        [MTLFXTemporalScalerDescriptor supportedInputContentMinScaleForDevice:dev],
+                        [MTLFXTemporalScalerDescriptor supportedInputContentMaxScaleForDevice:dev]);
             tu.failed = 1;
-            return nil;
+            return 0;
         }
         tu.fx = fx;
         tu.ow = ow;
         tu.oh = oh;
         tu.out = fg_texture(fg.fmt, (int)ow, (int)oh, fx.outputTextureUsage);
-        tu.final = fg_texture(fg.fmt, (int)ow, (int)oh, MTLTextureUsageRenderTarget);
+        tu.final = nil;
         tu.reset = 1;
         mgl_log("temporal upscaler: %dx%d -> %lux%lu", fg.w, fg.h, (unsigned long)ow, (unsigned long)oh);
     }
-    if (!tu.pipe || tu.pipe_fmt != fg.fmt) {
-        NSError *e = nil;
-        id<MTLLibrary> lib = [dev newLibraryWithSource:[NSString stringWithUTF8String:tu_msl] options:nil error:&e];
-        MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
-        pd.vertexFunction = [lib newFunctionWithName:@"tu_vs"];
-        pd.fragmentFunction = [lib newFunctionWithName:@"tu_fs"];
-        pd.colorAttachments[0].pixelFormat = fg.fmt;
-        tu.pipe = lib ? [dev newRenderPipelineStateWithDescriptor:pd error:&e] : nil;
-        tu.pipe_fmt = fg.fmt;
-        if (!tu.pipe) {
-            mgl_log("temporal upscaler: HUD shader failed: %s", e.localizedDescription.UTF8String);
-            tu.failed = 1;
-            return nil;
-        }
+    float j[2] = {0, 0};
+    if (tu.jittered_frame == fg.snap_frame)
+        tu_jitter_px(fg.snap_frame, j);
+    static float sx, sy;
+    if (!sx) {
+        sx = getenv("MCMETAL_TU_JX") && atoi(getenv("MCMETAL_TU_JX")) < 0 ? -1.0f : 1.0f;
+        sy = getenv("MCMETAL_TU_JY") && atoi(getenv("MCMETAL_TU_JY")) < 0 ? -1.0f : 1.0f;
     }
-    id<MTLTexture> hud = upscale(c, win, ow, oh); /* the whole frame, spatially, for the HUD's pixels */
-    if (!hud)
-        return nil;
     id<MTLFXTemporalScaler> fx = tu.fx;
     fx.colorTexture = fg.color[fg.cur];
     fx.depthTexture = fg.depth;
@@ -5006,8 +5103,8 @@ static id<MTLTexture> tu_frame(mgl_ctx *c, id<MTLTexture> win, NSUInteger ow, NS
     fx.outputTexture = tu.out;
     fx.inputContentWidth = fg.w;
     fx.inputContentHeight = fg.h;
-    fx.jitterOffsetX = 0;
-    fx.jitterOffsetY = 0;
+    fx.jitterOffsetX = sx * j[0];
+    fx.jitterOffsetY = sy * j[1];
     fx.motionVectorScaleX = (float)fg.w;
     fx.motionVectorScaleY = (float)fg.h;
     fx.depthReversed = NO;
@@ -5015,24 +5112,24 @@ static id<MTLTexture> tu_frame(mgl_ctx *c, id<MTLTexture> win, NSUInteger ow, NS
     tu.reset = 0;
     [fx encodeToCommandBuffer:current_cb()];
 
-    MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
-    rp.colorAttachments[0].texture = tu.final;
-    rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
-    rp.colorAttachments[0].storeAction = MTLStoreActionStore;
-    id<MTLRenderCommandEncoder> e = [current_cb() renderCommandEncoderWithDescriptor:rp];
-    [e setRenderPipelineState:tu.pipe];
-    [e setFragmentTexture:tu.out atIndex:0];
-    [e setFragmentTexture:hud atIndex:1];
-    [e setFragmentTexture:win atIndex:2];
-    [e setFragmentTexture:fg.color[fg.cur] atIndex:3];
-    [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
-    [e endEncoding];
-    upscaled = tu.final; /* test screenshots */
+    if (!tu_compose(win, drawable, 0, 1)) {
+        tu.failed = 1;
+        return 0;
+    }
+    static int shots = -1;
+    if (shots < 0)
+        shots = getenv("MGL_SHOT_DIR") != NULL;
+    if (shots) { /* test screenshots read the shown frame back: the window can't be read, so draw it once more */
+        if (!tu.final || tu.final.width != ow || tu.final.height != oh)
+            tu.final = fg_texture(fg.fmt, (int)ow, (int)oh, MTLTextureUsageRenderTarget);
+        if (tu_compose(win, tu.final, 1, 0))
+            upscaled = tu.final;
+    }
     if (!tu.logged) {
         tu.logged = 1;
-        mgl_log("temporal upscaler: first frame drawn");
+        mgl_log("temporal upscaler: first frame drawn (jitter %s)", tu.jittered_frame == fg.snap_frame ? "on" : "off");
     }
-    return tu.final;
+    return 1;
 }
 
 void mglb_window_size(int *w, int *h)
@@ -5288,10 +5385,9 @@ static void watch_drawable(id<CAMetalDrawable> drawable)
 static void draw_to_drawable(mgl_ctx *c, id<MTLTexture> src, id<CAMetalDrawable> drawable)
 {
     if (upscale_on()) {
-        NSUInteger ow = drawable.texture.width, oh = drawable.texture.height;
-        id<MTLTexture> up = src == OBJ(id<MTLTexture>, mgl->window_color->mtl) ? tu_frame(c, src, ow, oh) : nil;
-        if (!up)
-            up = upscale(c, src, ow, oh);
+        if (src == OBJ(id<MTLTexture>, mgl->window_color->mtl) && tu_frame(src, drawable.texture))
+            return;
+        id<MTLTexture> up = upscale(c, src, drawable.texture.width, drawable.texture.height);
         if (up)
             src = up;
     }

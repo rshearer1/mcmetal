@@ -206,6 +206,13 @@ typedef struct mgl_camera {
 } mgl_camera;
 extern mgl_camera mgl_cam;
 
+/* MetalFX temporal upscaler (MCMETAL_UPSCALE=2): world geometry is drawn shifted by a sub-pixel amount that changes
+   every frame, so MetalFX can gather detail finer than the render resolution. mgl_tu_jitter_on: vertex shaders get
+   the shift (mgl_program.c); mglb_tu_jitter: the shift for a draw into t, in GL clip units (x, y), or 0, 0 when this
+   draw isn't part of the world picture MetalFX gets. */
+int mgl_tu_jitter_on(void);
+void mglb_tu_jitter(const mgl_target *t, float out[2]);
+
 void mglb_draw(const mgl_draw *d);
 void mglb_dispatch(const mgl_draw *d, int gx, int gy, int gz); /* uses program, uniforms, ubo, textures[2] */
 /* Geometry-shader program (see mgl_gs.c): run the compute stage over `triangles` input triangles, fetching

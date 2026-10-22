@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include "mgl_state.h"
 #include "mgl_cache.h"
 #include <pthread.h>
@@ -551,6 +552,93 @@ static void add_photon_rt(mgl_shader *s)
     mgl_log("Photon: ray-traced shadows for its coloured block light (MCMETAL_PHOTON_RT), shader %d", ++patched);
 }
 
+static void write_uniform(mgl_program *p, GLint loc, int n, int cols, GLsizei count, const void *data, int is_int);
+
+/* MCMETAL_UPSCALE=2 (MetalFX temporal upscaler): every vertex shader's main() becomes mcm_main(), and a new main()
+   moves gl_Position by mcm_jitter, a sub-pixel shift that changes every frame (set per draw by mgl_draw.c, zero for
+   draws outside the world picture). Comments are skipped, so a "void main" in one doesn't count.
+   MCMETAL_TU_JITTER=0 turns it off; frame interpolation (MCMETAL_FRAMEGEN) does too, its pictures must hold still. */
+int mgl_tu_jitter_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *up = getenv("MCMETAL_UPSCALE"), *j = getenv("MCMETAL_TU_JITTER"), *fg = getenv("MCMETAL_FRAMEGEN");
+        on = up && atoi(up) == 2 && !(j && atoi(j) == 0) && !(fg && atoi(fg) > 0);
+        if (on)
+            mgl_log("temporal upscaler: world drawn with sub-pixel jitter");
+    }
+    return on;
+}
+
+static void add_jitter(mgl_shader *s)
+{
+    if (s->type != GL_VERTEX_SHADER || !mgl_tu_jitter_on() || strstr(s->source, "mcm_jitter"))
+        return;
+    size_t n = strlen(s->source);
+    int renamed = 0;
+    for (char *p = s->source; *p;) {
+        if (p[0] == '/' && p[1] == '/') {
+            p += strcspn(p, "\n");
+            continue;
+        }
+        if (p[0] == '/' && p[1] == '*') {
+            char *e = strstr(p + 2, "*/");
+            p = e ? e + 2 : p + strlen(p);
+            continue;
+        }
+        if (!strncmp(p, "void", 4) && (p == s->source || !(isalnum((unsigned char)p[-1]) || p[-1] == '_'))) {
+            char *q = p + 4;
+            if (*q != ' ' && *q != '\t' && *q != '\n' && *q != '\r') {
+                p++;
+                continue;
+            }
+            while (*q == ' ' || *q == '\t' || *q == '\n' || *q == '\r')
+                q++;
+            char *r = q + 4;
+            while (*r == ' ' || *r == '\t')
+                r++;
+            if (!strncmp(q, "main", 4) && *r == '(') { /* "main" -> "mcm_main": 4 more bytes */
+                size_t at = (size_t)(q - s->source);
+                char *grown = realloc(s->source, n + 5);
+                if (!grown)
+                    return;
+                s->source = grown;
+                memmove(s->source + at + 4, s->source + at, n - at + 1);
+                memcpy(s->source + at, "mcm_", 4);
+                n += 4;
+                renamed++;
+                p = s->source + at + 8;
+                continue;
+            }
+        }
+        p++;
+    }
+    if (!renamed)
+        return;
+    static const char tail[] = "\nuniform vec2 mcm_jitter;\n"
+                               "void main() { mcm_main(); gl_Position.xy += mcm_jitter * gl_Position.w; }\n";
+    char *grown = realloc(s->source, n + sizeof tail);
+    if (!grown)
+        return;
+    s->source = grown;
+    memcpy(s->source + n, tail, sizeof tail);
+}
+
+/* Per draw: this frame's jitter for programs that have mcm_jitter (see add_jitter). */
+void mgl_program_jitter(mgl_program *p, GLuint name, const mgl_target *t, int world)
+{
+    if (!p->jitter_loc) {
+        GLint l = glGetUniformLocation(name, "mcm_jitter");
+        p->jitter_loc = l < 0 ? -1 : l + 1;
+    }
+    if (p->jitter_loc < 0)
+        return;
+    float j[2] = {0, 0};
+    if (world && !p->x.gs_max_vertices) /* geometry shaders make their own positions */
+        mglb_tu_jitter(t, j);
+    write_uniform(p, p->jitter_loc - 1, 2, 1, 1, j, 0);
+}
+
 void glShaderSource(GLuint name, GLsizei count, const GLchar *const *strings, const GLint *lengths)
 {
     mgl_shader *s = shader_obj(name);
@@ -582,6 +670,7 @@ void glShaderSource(GLuint name, GLsizei count, const GLchar *const *strings, co
     }
     add_photon_rt(s);
     add_ray_tracing(s);
+    add_jitter(s);
 }
 
 void glCompileShader(GLuint name)
@@ -854,6 +943,7 @@ void glLinkProgram(GLuint prog)
         p->ssbo_binding[i] = p->x.ssbos[i].binding;
     assign_attribs(p);
     mgl_rt_link(p);
+    p->jitter_loc = 0;
     if (p->x.log)
         mgl_log("program %u notes: %s", prog, p->x.log);
     p->linked = 1;
