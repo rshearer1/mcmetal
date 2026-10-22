@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
-#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders
+#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-off ours-caustics ours-caustics-mask ours-underwater
 #   pack-NAME packnight-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
 #   glcount-pack-NAME (the pack on Apple's OpenGL, draws counted by tools/glcount.c)
 #   ab-pack-NAME ab-packnight-NAME (the pack three times in one job: new, old = with GAME_AB_OFF's env, new)
@@ -33,7 +33,13 @@ if [ "${GAME_BENCH:-}" = true ]; then
     sed -i.bak 's/^enableVsync:.*/enableVsync:false/; s/^maxFps:.*/maxFps:260/; s/^renderDistance:.*/renderDistance:12/' "$G/options.txt"
     export MCMETAL_FPS_LOG=1 MCMETAL_FPS_EVERY=1 MGL_SHOT_EVERY=0 # screenshots only after measuring: each one stalls the GPU
 fi
-mkdir -p "$G/shaderpacks" && rm -rf "$G/shaderpacks/mcmetal-rt-"* && cp -r "$SRC/tests/game/packs/"mcmetal-rt-* "$G/shaderpacks/"
+# GAME_RP=labpbr-test: our own LabPBR test textures (tests/game/rp/make_labpbr_test.py) as the resource pack
+rm -f "$G/resourcepacks/mcm-labpbr-test.zip"
+if [ "${GAME_RP:-}" = labpbr-test ]; then
+    mkdir -p "$G/resourcepacks" && python3 -I "$SRC/tests/game/rp/make_labpbr_test.py" "$G/resourcepacks/mcm-labpbr-test.zip" > /dev/null
+    sed -i.bak 's|^resourcePacks:.*|resourcePacks:["vanilla","file/mcm-labpbr-test.zip"]|' "$G/options.txt"
+fi
+mkdir -p "$G/shaderpacks" && find "$G/shaderpacks" -maxdepth 1 -name "mcmetal-rt-*" ! -name "*.txt" -exec rm -rf {} + && cp -r "$SRC/tests/game/packs/"mcmetal-rt-* "$SRC/shaderpack/mcmetal-rt-pack" "$G/shaderpacks/"
 rm -rf "$G/saves/metal" && tar xzf "$SRC/tests/game/world-metal.tgz" -C "$G/saves"
 # The game loads mcmetal the way players will: through the mod jar in mods/, no JVM arguments.
 # GAME_JVM_ARGS=true uses the old -Dorg.lwjgl.*.libname route instead.
@@ -128,6 +134,11 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     printf 'enableShaders=%s\nshaderPack=%s\ncolorSpace=SRGB\ndisableUpdateMessage=true\n' \
         "$shaders" "${PACK:-ComplementaryReimagined_r5.9.3.zip}" > "$G/config/iris.properties"
     mkdir -p "$OUT/$name"
+    # PACK_OPTS="A=1 B=false": options for the pack in use (Iris reads shaderpacks/<pack>.txt)
+    # our packs' option files are rewritten every phase, so one phase's options never leak into the next
+    case ${PACK:-} in mcmetal-rt-*) rm -f "$G/shaderpacks/$PACK.txt" ;; esac
+    [ -n "${PACK_OPTS:-}" ] && printf '%s\n' $PACK_OPTS > "$G/shaderpacks/${PACK:-ComplementaryReimagined_r5.9.3.zip}.txt"
+    [ -f "$G/shaderpacks/${PACK:-ComplementaryReimagined_r5.9.3.zip}.txt" ] && echo "pack options: $(tr '\n' ' ' < "$G/shaderpacks/${PACK:-ComplementaryReimagined_r5.9.3.zip}.txt")"
     local wargs=(--xmx 3G --size "${GAME_SIZE:-$([ "${GAME_BENCH:-}" = true ] && echo 1920x1200 || echo 1280x720)}")
     [ -n "$world" ] && wargs+=(--world "$world")
     mkdir -p "$OUT/$name/glsl"
@@ -217,6 +228,14 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     ls "$G"/hs_err_pid*.log >/dev/null 2>&1 && mv "$G"/hs_err_pid*.log "$OUT/$name/"
     ls -d "$G"/crash-reports/* >/dev/null 2>&1 && cp -r "$G/crash-reports" "$OUT/$name/"
     echo "screenshots: $(ls "$OUT/$name"/shot-*.png 2>/dev/null | wc -l)"
+    # our own pack: keep the source of programs that failed to link (pack code + Iris's wrapper; skip anything with
+    # Sodium's terrain code) outside glsl/, so it lands in the uploaded artifact
+    if [ "${PACK:-}" = mcmetal-rt-pack ]; then
+        for n in $(grep -o 'link of program [0-9]*' "$OUT/$name/mgl.log" 2>/dev/null | awk '{print $4}' | sort -u); do
+            mkdir -p "$OUT/$name/failed"
+            for f in "$OUT/$name/glsl/prog$n".*; do grep -q u_RegionOffset "$f" || cp "$f" "$OUT/$name/failed/"; done
+        done
+    fi
     grep -E "GPU fault|debug:|validation|failed" "$OUT/$name/client.log" 2>/dev/null | head -10 | cut -c1-300
     grep -vE "^\s*$" "$OUT/$name/mgl.log" 2>/dev/null | sort | uniq -c | sort -rn | head -15 | cut -c1-220
     grep -E "joined the game|ERROR|Exception" "$OUT/$name/latest.log" 2>/dev/null | grep -viE "sound|openal" | head -8 | cut -c1-220
@@ -229,7 +248,11 @@ scene() { # time [weather [stage]]: copy the test datapack into the world; it bu
     local f="$G/saves/metal/datapacks/mcm-scene/data/mcm/function"
     printf 'time set %s\nweather %s 100000\n' "$1" "${2:-clear}" > "$f/time.mcfunction"
     echo "function mcm:${3:-scene}" > "$f/build.mcfunction"
+    # a fresh tag per phase: the player keeps tags in the shared save, so a fixed tag would skip the build (and its
+    # time of day) in every phase after the first
+    perl -pi -e "s/(tag=!?|add )mcm\\b/\$1mcm$RANDOM$RANDOM/g" "$f/tick.mcfunction"
     [ "${3:-scene}" = showcase ] && echo 'tp @s ~ ~ ~ -90 0' > "$f/look.mcfunction"
+    [ "${3:-scene}" = room ] && echo 'tp @s ~ ~ ~ -90 12' > "$f/look.mcfunction"
     [ "${3:-scene}" = nether ] && echo 'tp @s 0.5 64 0.5 -90 7' > "$f/look.mcfunction" # held in the Nether room
     [ "${3:-scene}" = dh ] && echo 'tp @s 0.5 150 0.5 -45 12' > "$f/look.mcfunction" # high up, looking at the horizon
     [ -n "${GAME_LOOK:-}" ] && echo "tp @s ~ ~ ~ $GAME_LOOK" > "$f/look.mcfunction" # GAME_LOOK="yaw pitch"
@@ -336,6 +359,35 @@ for p in $PHASES; do
     rt-debug) scene 1500; PACK=mcmetal-rt-debug run_phase rt-debug 180 metal true ;; # rays drawn as hit (green) / miss (red)
     showcase-plain) scene midnight clear showcase; act plain; run_phase showcase-plain 240 metal true MCMETAL_KEEP_MAC_FLAG=1 ;; # like-for-like with Apple GL, no error screen
     showcase-rain) scene 13800 rain showcase; act showcase; run_phase showcase-rain 240 metal true ;;  # + improved rain, puddles
+    # our own pack (shaderpack/mcmetal-rt-pack): morning, noon, sunset, night with lights, rain, and on Apple GL
+    ours) scene 1500; PACK=mcmetal-rt-pack run_phase ours 180 metal true ;;
+    ours-noon) scene noon; PACK=mcmetal-rt-pack run_phase ours-noon 180 metal true ;;
+    ours-sunset) scene 12300; PACK=mcmetal-rt-pack run_phase ours-sunset 180 metal true ;;
+    ours-night) scene midnight clear showcase; PACK=mcmetal-rt-pack run_phase ours-night 180 metal true ;;
+    ours-rain) scene 3000 rain; PACK=mcmetal-rt-pack run_phase ours-rain 180 metal true ;;
+    ours-shadow|ours-ao|ours-gi) scene 1500; v=${p#ours-}; v=$( [ $v = shadow ] && echo 1 || ([ $v = ao ] && echo 2 || echo 3))
+        PACK_OPTS="DEBUG_VIEW=$v ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase $p 180 metal true ;;  # debug views of the rays
+    ours-room) scene noon clear room; PACK=mcmetal-rt-pack run_phase ours-room 180 metal true ;;  # GI test room
+    ours-room-gi) scene noon clear room; PACK_OPTS="DEBUG_VIEW=3 ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-room-gi 180 metal true ;;
+    ours-room-off) scene noon clear room; PACK_OPTS="RT_GI=false ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-room-off 180 metal true ;;  # GI off
+    ours-room-plain) scene noon clear room; PACK_OPTS="COLORED_SHADOWS=false ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-room-plain 180 metal true ;;  # plain mcm_trace shadows
+    ours-lights) scene midnight clear showcase; PACK_OPTS="DEBUG_VIEW=3 ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-lights 180 metal true ;;  # GI view: coloured block light + bounce
+    ours-pool-night) scene midnight; PACK=mcmetal-rt-pack run_phase ours-pool-night 180 metal true ;;  # torches, soul and redstone lights by the pool
+    ours-shafts) scene noon clear room; PACK_OPTS="DEBUG_VIEW=5 ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-shafts 180 metal true ;;  # light shafts only
+    ours-puddles) GAME_LOOK="-90 50" scene 3000 rain room; PACK=mcmetal-rt-pack run_phase ours-puddles 180 metal true ;;  # open ground in rain
+    ours-puddle-mask) GAME_LOOK="-90 50" scene 3000 rain room; PACK_OPTS="DEBUG_VIEW=6 ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-puddle-mask 180 metal true ;;
+    ours-pbr) GAME_LOOK="-90 10" scene 3000 clear pbr; PACK=mcmetal-rt-pack run_phase ours-pbr 180 metal true ;;  # with GAME_RP=labpbr-test
+    ours-low|ours-ultra)   # the Low / Ultra presets (shaders.properties profile.LOW / profile.ULTRA) in the test room
+        [ $p = ours-low ] && o="RT_GI=false LIGHT_SLOTS=2 LIGHT_SHAFTS=false LIGHT_SHAFTS_STEPS=4 RT_REFLECT_DISTANCE=32.0 RT_GI_DISTANCE=16.0 RT_AO_FRAMES=32.0" \
+                          || o="LIGHT_SLOTS=8 LIGHT_SHAFTS_STEPS=12 RT_REFLECT_DISTANCE=256.0 RT_GI_DISTANCE=64.0 RT_AO_FRAMES=32.0"
+        scene noon clear room; PACK_OPTS="$o ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase $p 180 metal true ;;
+    ours-glass) GAME_LOOK="-90 8" scene 6000 clear glass; PACK=mcmetal-rt-pack run_phase ours-glass 180 metal true ;;  # refraction
+    ours-glass-off) GAME_LOOK="-90 8" scene 6000 clear glass; PACK_OPTS="GLASS_REFRACTION=false ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-glass-off 180 metal true ;;
+    ours-caustics) GAME_LOOK="-90 45" scene 6000 clear pool; PACK=mcmetal-rt-pack run_phase ours-caustics 180 metal true ;;  # deep pool from above
+    ours-caustics-mask) GAME_LOOK="-90 45" scene 6000 clear pool; PACK_OPTS="DEBUG_VIEW=7 ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-caustics-mask 180 metal true ;;
+    ours-underwater) GAME_LOOK="-90 -10" scene 6000 clear pool_under; PACK=mcmetal-rt-pack run_phase ours-underwater 180 metal true ;;
+    ours-sky) GAME_LOOK="-60 -25" scene 2000; PACK=mcmetal-rt-pack run_phase ours-sky 180 metal true ;;  # clouds
+    ours-gl) scene 1500; PACK=mcmetal-rt-pack run_phase ours-gl 180 metal true MCMETAL_DISABLE=1 ;; # shadow-map fallback on Apple GL
     nether) scene noon clear nether; run_phase nether 180 metal false ;;                       # Nether room, Sodium
     nether-shaders) scene noon clear nether; run_phase nether-shaders 240 metal true ;;      # Nether room, Complementary
     dh) dh_phase dh false ;;                    # Distant Horizons, Sodium
