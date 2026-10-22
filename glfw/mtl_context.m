@@ -43,11 +43,21 @@ static void makeContextCurrentNSGL(_GLFWwindow* window)
     _glfwPlatformSetTls(&_glfw.contextSlot, window);
 }
 
+/* The game's render thread never drains an autorelease pool of its own, so anything autoreleased by GL calls
+   between swaps (command buffers, encoders, and every buffer they hold) piled up for good: one pool per frame,
+   popped and pushed again here, outside any other pool. */
+extern void* objc_autoreleasePoolPush(void);
+extern void objc_autoreleasePoolPop(void* pool);
+static void* framePool;
+
 static void swapBuffersNSGL(_GLFWwindow* window)
 {
     @autoreleasepool {
     mgl_glfw_swap(mglContext(window));
     }
+    if (framePool)
+        objc_autoreleasePoolPop(framePool);
+    framePool = objc_autoreleasePoolPush();
 }
 
 static void swapIntervalNSGL(int interval)

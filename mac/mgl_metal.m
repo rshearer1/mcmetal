@@ -566,7 +566,7 @@ static void use_buffer(mglb_buffer *b)
    allocated two fresh buffers: with ~190 of them in flight per frame the pool had nothing free, and the kernel
    call behind each new buffer grew to 88% of the render thread (SEUS at 1x slid from 49 to 15 fps in 90 s). */
 #define TR_CHUNK ((size_t)32 << 20)
-#define TR_MAX 48
+#define TR_MAX 128 /* SEUS while turning: ~800 MB of records per frame, 2-3 frames in flight */
 static struct { mglb_buffer *b; size_t used; } tr_chunk[TR_MAX];
 static int tr_n, tr_cur = -1;
 
