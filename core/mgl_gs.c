@@ -767,7 +767,7 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
        per threadgroup (default 64). Both change the generated shader: run with MGL_CACHE_DIR unset. */
     int probe = getenv("MGL_GS_PROBE") ? atoi(getenv("MGL_GS_PROBE")) : 0;
     int local = getenv("MGL_GS_LOCAL") ? atoi(getenv("MGL_GS_LOCAL")) : 64;
-    if (local < 1 || local > 1024)
+    if (local < 2 || local > 1024 || (local & 1))
         local = 64;
     const char *prelude = strstr(compute_prelude, "\n") + 1; /* past "#version 450" */
     prelude = strstr(prelude, "\n") + 1;                     /* past the default local size */
@@ -822,40 +822,62 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
     }
     sb_puts(&comp, "}\n");
     const char *gs_call = probe == 1 ? "" : "  mgl_g_main();\n";
-    /* MGL_GS_PAIR=0: one thread per triangle. Default: one thread per pair of consecutive triangles, which reuses
-       the vertex-stage results of shared corners (Sodium's quads are 0 1 2, 2 3 0: four runs instead of six). The
-       dispatch still has a thread per triangle; the second half returns at once. */
-    int pair = !getenv("MGL_GS_PAIR") || atoi(getenv("MGL_GS_PAIR")) != 0;
-    if (!pair) {
+    /* MGL_GS_SHARE=0: every thread runs the vertex stage for its own three corners. Default: when two neighbouring
+       triangles form a quad the way Sodium indexes them (0 1 2, 2 3 0), the pair runs the vertex stage once per
+       corner, two corners per thread, and swaps the results through threadgroup memory (4 runs instead of 6). */
+    int share = !getenv("MGL_GS_SHARE") || atoi(getenv("MGL_GS_SHARE")) != 0;
+    int sh_bytes = 32; /* threadgroup bytes per corner: mgl_gin_t plus each fed input, at Metal's alignment */
+    for (int i = 0; i < ngin; i++)
+        if (fed[i])
+            sh_bytes += gin[i].comps >= 3 ? 16 : gin[i].comps * 4;
+    if (sh_bytes * local * 2 > 28 * 1024) /* stay well inside Apple GPUs' 32 KB */
+        share = 0;
+    if (!share) {
         sb_printf(&comp, "void main() {\n  uint prim = gl_GlobalInvocationID.x;\n  if (prim >= uint(mgl_draw_info.x)) return;\n"
-                         "  mgl_prim_id = int(prim);\n  mgl_emitted = 0u;\n  mgl_strip = 0u;\n"
                          "  for (int c = 0; c < 3; c++)\n    mgl_run_vs(mgl_index(prim * 3u + uint(c)) + uint(mgl_draw_info.z), c);\n"
+                         "  mgl_prim_id = int(prim);\n  mgl_emitted = 0u;\n  mgl_strip = 0u;\n"
                          "%s  mgl_oc[prim] = mgl_emitted;\n}\n", gs_call);
     } else {
-        sb_puts(&comp, "mgl_gin_t mgl_gprev[3];\n");
+        sb_printf(&comp, "shared mgl_gin_t mgl_gin_sh[%d];\n", local * 2);
         for (int i = 0; i < ngin; i++)
             if (fed[i])
-                sb_printf(&comp, "%s %s_mgl_prev[3];\n", gin[i].type, gin[i].name);
-        sb_printf(&comp, "void main() {\n  uint prim = gl_GlobalInvocationID.x * 2u;\n  if (prim >= uint(mgl_draw_info.x)) return;\n"
-                         "  uint first[3];\n"
-                         "  for (int c = 0; c < 3; c++) {\n"
-                         "    first[c] = mgl_index(prim * 3u + uint(c)) + uint(mgl_draw_info.z);\n    mgl_run_vs(first[c], c);\n  }\n"
+                sb_printf(&comp, "shared %s %s_mgl_sh[%d];\n", gin[i].type, gin[i].name, local * 2);
+        sb_puts(&comp, "void mgl_put_sh(uint slot, int c) {\n  mgl_gin_sh[slot] = mgl_gin[c];\n");
+        for (int i = 0; i < ngin; i++)
+            if (fed[i])
+                sb_printf(&comp, "  %s_mgl_sh[slot] = %s[c];\n", gin[i].name, gin[i].name);
+        sb_puts(&comp, "}\nvoid mgl_get_sh(uint slot, int c) {\n  mgl_gin[c] = mgl_gin_sh[slot];\n");
+        for (int i = 0; i < ngin; i++)
+            if (fed[i])
+                sb_printf(&comp, "  %s[c] = %s_mgl_sh[slot];\n", gin[i].name, gin[i].name);
+        sb_printf(&comp, "}\n"
+                         "void main() {\n"
+                         "  uint ntri = uint(mgl_draw_info.x), bv = uint(mgl_draw_info.z);\n"
+                         "  uint prim = gl_GlobalInvocationID.x;\n"
+                         "  uint lt = gl_LocalInvocationID.x;\n"
+                         "  bool odd = (lt & 1u) != 0u;\n"
+                         "  uint pa = prim & ~1u;\n" /* the pair's first triangle; local size is even, so the pair shares a group */
+                         "  bool quad = pa + 1u < ntri;\n"
+                         "  uint a0 = 0u, a1 = 0u, a2 = 0u, b1 = 0u;\n"
+                         "  if (quad) {\n"
+                         "    a0 = mgl_index(pa * 3u); a1 = mgl_index(pa * 3u + 1u); a2 = mgl_index(pa * 3u + 2u);\n"
+                         "    b1 = mgl_index(pa * 3u + 4u);\n"
+                         "    quad = mgl_index(pa * 3u + 3u) == a2 && mgl_index(pa * 3u + 5u) == a0;\n"
+                         "  }\n"
+                         "  uint s = (lt & ~1u) * 2u;\n" /* the pair's four slots: a0 a1 a2 b1 */
+                         "  if (quad) {\n"
+                         "    mgl_run_vs((odd ? a2 : a0) + bv, 0);\n    mgl_put_sh(s + (odd ? 2u : 0u), 0);\n"
+                         "    mgl_run_vs((odd ? b1 : a1) + bv, 0);\n    mgl_put_sh(s + (odd ? 3u : 1u), 0);\n"
+                         "  }\n"
+                         "  barrier();\n"
+                         "  if (prim >= ntri) return;\n"
+                         "  if (quad) {\n"
+                         "    mgl_get_sh(odd ? s + 2u : s, 0);\n    mgl_get_sh(odd ? s + 3u : s + 1u, 1);\n"
+                         "    mgl_get_sh(odd ? s : s + 2u, 2);\n"
+                         "  } else {\n"
+                         "    for (int c = 0; c < 3; c++)\n      mgl_run_vs(mgl_index(prim * 3u + uint(c)) + bv, c);\n"
+                         "  }\n"
                          "  mgl_prim_id = int(prim);\n  mgl_emitted = 0u;\n  mgl_strip = 0u;\n"
-                         "%s  mgl_oc[prim] = mgl_emitted;\n"
-                         "  prim++;\n  if (prim >= uint(mgl_draw_info.x)) return;\n"
-                         "  mgl_gprev = mgl_gin;\n", gs_call);
-        for (int i = 0; i < ngin; i++)
-            if (fed[i])
-                sb_printf(&comp, "  %s_mgl_prev = %s;\n", gin[i].name, gin[i].name);
-        sb_puts(&comp, "  for (int c = 0; c < 3; c++) {\n"
-                       "    uint vtx = mgl_index(prim * 3u + uint(c)) + uint(mgl_draw_info.z);\n"
-                       "    int j = vtx == first[0] ? 0 : vtx == first[1] ? 1 : vtx == first[2] ? 2 : -1;\n"
-                       "    if (j < 0) {\n      mgl_run_vs(vtx, c);\n      continue;\n    }\n"
-                       "    mgl_gin[c] = mgl_gprev[j];\n");
-        for (int i = 0; i < ngin; i++)
-            if (fed[i])
-                sb_printf(&comp, "    %s[c] = %s_mgl_prev[j];\n", gin[i].name, gin[i].name);
-        sb_printf(&comp, "  }\n  mgl_prim_id = int(prim);\n  mgl_emitted = 0u;\n  mgl_strip = 0u;\n"
                          "%s  mgl_oc[prim] = mgl_emitted;\n}\n", gs_call);
     }
 
