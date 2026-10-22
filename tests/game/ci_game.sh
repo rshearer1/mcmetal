@@ -2,6 +2,7 @@
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
 #   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain
 #   pack-NAME packnight-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
+#   archive-NAME (pipeline binary archive: cold, warm, warm without archive)
 #   (default: the first three)
 # WORK holds the game install (cacheable), OUT gets screenshots and logs. Needs Java 21 as `java` or $JAVA.
 set -uo pipefail
@@ -161,9 +162,10 @@ bsl|MULTICOLORED_BLOCKLIGHT=true
 unbound|COLORED_LIGHTING=128
 complementary|COLORED_LIGHTING=128"
 
-third_party() { # pack-NAME / packnight-NAME: one third-party pack in the pool scene, at noon (pack settings as
-                # shipped) or midnight (coloured block light on)
-    local p=$1 name=${1#*-} file url sha extra=
+third_party() { # pack-NAME / packnight-NAME [OUTNAME [VAR=value ...]]: one third-party pack in the pool scene, at
+                # noon (pack settings as shipped) or midnight (coloured block light on)
+    local p=$1 out=${2:-$1} name=${1#*-} file url sha extra=
+    shift; [ $# -gt 0 ] && shift
     case $name in *@*) extra=${name#*@}; name=${name%%@*} ;; esac # pack-bliss@OPT=value,OPT2=value: extra options
     IFS='|' read -r _ file url sha <<< "$(grep "^${name%%+*}|" <<< "$PACKS")"
     [ -n "$file" ] || { echo "unknown pack $name"; return; }
@@ -183,7 +185,7 @@ third_party() { # pack-NAME / packnight-NAME: one third-party pack in the pool s
     *) scene noon ;;
     esac
     [ -n "$extra" ] && tr ',' '\n' <<< "$extra" >> "$opts"
-    PACK=$file run_phase "$p" 240 metal true
+    PACK=$file run_phase "$out" 240 metal true "$@"
     rm -f "$opts"
     rm -f "$G/mods/euphoria-patcher.jar"
     [ "$url" != - ] && rm -rf "$G/shaderpacks/$file"
@@ -214,5 +216,13 @@ for p in $PHASES; do
     showcase-plain) scene midnight clear showcase; act plain; run_phase showcase-plain 240 metal true MCMETAL_KEEP_MAC_FLAG=1 ;; # like-for-like with Apple GL, no error screen
     showcase-rain) scene 13800 rain showcase; act showcase; run_phase showcase-rain 240 metal true ;;  # + improved rain, puddles
     pack-*|packnight-*) third_party "$p" ;; # compatibility sweep: pack-photon, packnight-bsl, pack-complementary+euphoria, ...
+    archive-*) # Metal pipeline binary archive: the pack from an empty shader cache (archive written), again with the
+               # archive, and again with the shader cache but no archive. Run with bench=true settle=0 so the fps
+               # samples cover the first seconds in the world, where pipeline compiles show up as stalls
+        rm -rf "$WORK/cache"
+        third_party "pack-${p#archive-}" "$p-cold" MGL_BINARY_ARCHIVE=1
+        third_party "pack-${p#archive-}" "$p-warm" MGL_BINARY_ARCHIVE=1
+        third_party "pack-${p#archive-}" "$p-warm-noarchive"
+        ls -la "$WORK/cache" | tail -3 ;;
     esac
 done
