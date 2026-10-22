@@ -209,15 +209,27 @@ static void note_started(unsigned long draws)
         mgl_log("started fine, cleared the mod's start marker");
 }
 /* MGL_FRAME_DUMP=N: log every clear, blit and draw of frame N (order, targets, depth state) */
+/* MGL_FRAME_DUMP=n[,n2,...] (up to 8 frame numbers): log every clear, draw and blit of those frames */
 static int dump_this_frame(void)
 {
-    static long n = -2;
-    if (n == -2) {
+    static long n[8];
+    static int count = -1;
+    if (count < 0) {
+        count = 0;
         const char *e = getenv("MGL_FRAME_DUMP");
-        n = e ? atol(e) : -1;
+        while (e && *e && count < 8) {
+            char *end;
+            n[count++] = strtol(e, &end, 10);
+            e = *end == ',' ? end + 1 : "";
+        }
     }
-    return n >= 0 && (long long)frames_presented == n;
+    for (int i = 0; i < count; i++)
+        if ((long long)frames_presented == n[i])
+            return 1;
+    return 0;
 }
+
+
 static int opt_archive = -1, opt_async_pipes = -1, opt_pacing = -1;
 static void read_options(void)
 {
@@ -665,6 +677,53 @@ void mglb_texture_generate_mipmaps(mglb_texture *t)
     [blit_encoder() generateMipmapsForTexture:OBJ(id<MTLTexture>, t->mtl)];
 }
 
+/* glClearTexImage source: one GPU-only buffer holding the clear pattern, refilled on the GPU only when the pattern
+   changes or it has to grow. It used to be a new shared buffer filled by the CPU on every call: Iris clears packs'
+   images every frame, and Rethinking Voxels' three cleared voxel volumes (~200 MB at its default size) cost about
+   600 ms of CPU per frame, 1-2 fps. */
+static id<MTLBuffer> clear_src;
+static size_t clear_filled;         /* bytes of clear_src holding clear_pattern */
+static unsigned char clear_pattern[16];
+static size_t clear_bpt;
+
+static void clear_source(size_t bytes, const unsigned char *texel, size_t bpt)
+{
+    if (clear_src && bytes <= clear_filled && bpt == clear_bpt && !memcmp(texel, clear_pattern, bpt))
+        return;
+    if (!clear_src || clear_src.length < bytes) {
+        clear_src = [dev newBufferWithLength:bytes options:MTLResourceStorageModePrivate];
+        clear_filled = 0;
+        if (!clear_src)
+            return;
+    }
+    int same_bytes = 1;
+    for (size_t i = 1; i < bpt; i++)
+        same_bytes &= texel[i] == texel[0];
+    end_encoders(); /* earlier clears in this command buffer read clear_src: refill it in a later encoder */
+    id<MTLBlitCommandEncoder> e = blit_encoder();
+    size_t n = clear_src.length;
+    if (same_bytes) {
+        [e fillBuffer:clear_src range:NSMakeRange(0, n) value:texel[0]];
+    } else { /* one texel from the CPU, then doubled on the GPU */
+        mglb_buffer *one = mglb_buffer_new(bpt);
+        if (!one)
+            return;
+        memcpy(one->ptr, texel, bpt);
+        [e copyFromBuffer:OBJ(id<MTLBuffer>, one->mtl) sourceOffset:0 toBuffer:clear_src destinationOffset:0 size:bpt];
+        use_buffer(one);
+        mglb_buffer_release(one);
+        for (size_t have = bpt; have < n; have *= 2) {
+            end_encoders(); /* each doubling reads the last one: a new encoder orders them */
+            [blit_encoder() copyFromBuffer:clear_src sourceOffset:0 toBuffer:clear_src destinationOffset:have
+                                      size:have * 2 <= n ? have : n - have];
+        }
+    }
+    end_encoders(); /* the texture copies that read it go in a later encoder */
+    memcpy(clear_pattern, texel, bpt);
+    clear_bpt = bpt;
+    clear_filled = n - n % bpt;
+}
+
 void mglb_texture_clear(mglb_texture *t, int level, const void *texel)
 {
     if (!t || t->pf == MTLPixelFormatDepth32Float_Stencil8)
@@ -675,27 +734,24 @@ void mglb_texture_clear(mglb_texture *t, int level, const void *texel)
     if (h < 1) h = 1;
     if (d < 1) d = 1;
     size_t bpt = (size_t)bytes_per_texel(t->pf), row = bpt * (size_t)w, img = row * (size_t)h;
-    mglb_buffer *stage = mglb_buffer_new(img * (size_t)d);
-    if (!stage)
+    static const unsigned char zero[16];
+    if (bpt > 16)
         return;
-    if (!texel)
-        memset(stage->ptr, 0, img * (size_t)d);
-    else
-        for (size_t o = 0; o < img * (size_t)d; o += bpt)
-            memcpy((char *)stage->ptr + o, texel, bpt);
+    size_t bytes = t->d.type == MGLT_3D ? img * (size_t)d : img; /* layers and cube faces reuse one image */
+    clear_source(bytes, texel ? texel : zero, bpt);
+    if (!clear_src || clear_filled < bytes)
+        return;
     id<MTLBlitCommandEncoder> e = blit_encoder();
     id<MTLTexture> tex = OBJ(id<MTLTexture>, t->mtl);
     if (t->d.type == MGLT_3D)
-        [e copyFromBuffer:OBJ(id<MTLBuffer>, stage->mtl) sourceOffset:0 sourceBytesPerRow:row sourceBytesPerImage:img
+        [e copyFromBuffer:clear_src sourceOffset:0 sourceBytesPerRow:row sourceBytesPerImage:img
                  sourceSize:MTLSizeMake((NSUInteger)w, (NSUInteger)h, (NSUInteger)d) toTexture:tex destinationSlice:0
            destinationLevel:(NSUInteger)level destinationOrigin:MTLOriginMake(0, 0, 0)];
     else
         for (int s = 0; s < d; s++)
-            [e copyFromBuffer:OBJ(id<MTLBuffer>, stage->mtl) sourceOffset:(NSUInteger)s * img sourceBytesPerRow:row
-                sourceBytesPerImage:img sourceSize:MTLSizeMake((NSUInteger)w, (NSUInteger)h, 1) toTexture:tex
-                   destinationSlice:(NSUInteger)s destinationLevel:(NSUInteger)level destinationOrigin:MTLOriginMake(0, 0, 0)];
-    use_buffer(stage);
-    mglb_buffer_release(stage);
+            [e copyFromBuffer:clear_src sourceOffset:0 sourceBytesPerRow:row sourceBytesPerImage:img
+                   sourceSize:MTLSizeMake((NSUInteger)w, (NSUInteger)h, 1) toTexture:tex destinationSlice:(NSUInteger)s
+             destinationLevel:(NSUInteger)level destinationOrigin:MTLOriginMake(0, 0, 0)];
 }
 
 enum mgl_format mglb_texture_format(mglb_texture *t) { return t ? t->d.format : MGLF_COUNT; }
@@ -1185,8 +1241,12 @@ mglb_program *mglb_program_new(const char *msl_vertex, const char *msl_fragment,
                 ps = [dev newComputePipelineStateWithFunction:f error:&e];
             }
             if (!ps) {
+                /* the backend compiler's message is often just "Compilation failed": say which stage failed and
+                   pass on whatever else the error carries */
                 if (err && !*err)
-                    *err = strdup(e.localizedDescription.UTF8String);
+                    *err = strdup([NSString stringWithFormat:@"compute pipeline: %@ (code %ld) %@", e.localizedDescription,
+                                                             (long)e.code, e.userInfo ?: @{}]
+                                      .UTF8String);
                 free(p);
                 return NULL;
             }
@@ -2097,6 +2157,68 @@ static id<MTLFunction> clear_fragment(const mgl_target *t)
 static void fg_snapshot(const mgl_target *t);
 static int fg_enabled(void);
 static int tu_enabled(void);
+/* frame dump: every colour target of a pass as "slot:texture/format", plus which slots blend */
+static const char *dump_targets(const mgl_target *t, const mgl_blend *blend)
+{
+    static char buf[512];
+    int n = 0;
+    buf[0] = 0;
+    for (int i = 0; i < MGL_MAX_ATTACHMENTS && n < (int)sizeof buf - 48; i++)
+        if (t->tex[i])
+            n += snprintf(buf + n, sizeof buf - (size_t)n, " %d:%p/%d%s", i, (void *)t->tex[i], (int)t->tex[i]->pf,
+                          blend && blend[i].enabled ? "b" : "");
+    return buf;
+}
+
+/* frame dump: the textures a draw's fragment stage samples */
+static const char *dump_textures(const mgl_draw *d)
+{
+    static char buf[512];
+    int n = 0;
+    buf[0] = 0;
+    for (int i = 0; i < d->num_textures[1] && n < (int)sizeof buf - 32; i++)
+        if (d->textures[1][i].tex)
+            n += snprintf(buf + n, sizeof buf - (size_t)n, " %d:%p", i, (void *)d->textures[1][i].tex);
+    return buf;
+}
+
+/* frame dump: the centre texel (and one 20% above it) of each texture a full-screen draw samples, read back from
+   the GPU (finishes all work so far; debug only) */
+static void dump_texels(const mgl_draw *d)
+{
+    for (int i = 0; i < d->num_textures[1]; i++) {
+        mglb_texture *t = d->textures[1][i].tex;
+        if (!t || t->d.type != MGLT_2D || is_depth_format(t->pf))
+            continue;
+        for (int k = 0; k < 2; k++) {
+            int x = t->d.width / 2, y = k ? t->d.height * 7 / 10 : t->d.height / 2;
+            unsigned char px[16] = {0};
+            float v[4] = {0};
+            int n = 4;
+            mglb_texture_read(t, 0, x, y, 1, 1, px);
+            switch (t->pf) {
+            case MTLPixelFormatRGBA16Unorm:
+                for (int c = 0; c < 4; c++) v[c] = ((uint16_t *)px)[c] / 65535.0f;
+                break;
+            case MTLPixelFormatRGBA16Float:
+                for (int c = 0; c < 4; c++) v[c] = (float)((_Float16 *)px)[c];
+                break;
+            case MTLPixelFormatRGBA8Unorm: case MTLPixelFormatBGRA8Unorm:
+                for (int c = 0; c < 4; c++) v[c] = px[c] / 255.0f;
+                break;
+            case MTLPixelFormatRGBA32Float:
+                memcpy(v, px, 16);
+                break;
+            default:
+                n = 0;
+            }
+            if (n)
+                mgl_log("frame dump:   texel %d:%p at %d,%d = %.5f %.5f %.5f %.5f", i, (void *)t, x, y, v[0], v[1], v[2], v[3]);
+            else
+                mgl_log("frame dump:   texel %d:%p format %d not decoded", i, (void *)t, (int)t->pf);
+        }
+    }
+}
 
 void mglb_clear(const mgl_target *t, unsigned mask_color, const float rgba[4], int clear_depth, float depth,
                 const int *scissor, uint8_t cmask)
@@ -2106,8 +2228,9 @@ void mglb_clear(const mgl_target *t, unsigned mask_color, const float rgba[4], i
     if (clear_depth && !mask_color && !scissor && !t->is_default && t->tex[0] && t->depth && (fg_enabled() || tu_enabled()))
         fg_snapshot(t);
     if (dump_this_frame())
-        mgl_log("frame dump: clear target %p%s depth %p, colour mask 0x%x (write 0x%x), depth %d (%g), scissor %d", (void *)t->tex[0],
-                t->is_default ? " (window)" : "", (void *)t->depth, mask_color, cmask, clear_depth, depth, scissor != NULL);
+        mgl_log("frame dump: clear target%s%s depth %p, colour mask 0x%x (write 0x%x) to %g %g %g %g, depth %d (%g), scissor %d",
+                dump_targets(t, NULL), t->is_default ? " (window)" : "", (void *)t->depth, mask_color, cmask,
+                rgba ? rgba[0] : 0, rgba ? rgba[1] : 0, rgba ? rgba[2] : 0, rgba ? rgba[3] : 0, clear_depth, depth, scissor != NULL);
     int partial = (scissor && (scissor[0] > 0 || scissor[1] > 0 || scissor[0] + scissor[2] < t->width ||
                                scissor[1] + scissor[3] < t->height)) ||
                   (mask_color && cmask != 0xf);
@@ -2324,6 +2447,8 @@ void mglb_draw(const mgl_draw *d)
         return;
     if (skip_program(d))
         return;
+    if (dump_this_frame() && getenv("MGL_FRAME_DUMP_TEXELS") && d->multi_n == 0 && d->count <= 6)
+        dump_texels(d);
     id<MTLRenderPipelineState> ps = get_pipeline(d, &d->target);
     if (!ps)
         return;
@@ -2371,11 +2496,13 @@ void mglb_draw(const mgl_draw *d)
     frame_draws++;
     frame_probes += (unsigned long)probe;
     if (dump_this_frame())
-        mgl_log("frame dump: draw %lu: %s, target %p%s %dx%d depth %p, depth test %d write %d func 0x%x, cull %d, blend %d "
-                "mask 0x%x, prim 0x%x, count %d multi %d", frame_draws, d->program->label, (void *)d->target.tex[0],
+        mgl_log("frame dump: draw %lu: %s, target%s%s %dx%d depth %p, depth test %d write %d func 0x%x, cull %d, blend %d "
+                "mask 0x%x, prim 0x%x, count %d multi %d", frame_draws, d->program->label, dump_targets(&d->target, d->blend),
                 d->target.is_default ? " (window)" : "", d->target.width, d->target.height, (void *)d->target.depth,
                 d->depth_test, d->depth_write, d->depth_func, d->cull, d->blend[0].enabled, d->blend[0].color_mask,
                 d->primitive, d->count, d->multi_n);
+    if (dump_this_frame())
+        mgl_log("frame dump:   samples%s", dump_textures(d));
     if (probe || log_program(d))
         log_probe_draw(d);
     frame_sections += d->multi_n > 0 ? d->multi_n : 0;

@@ -224,12 +224,132 @@ static void match_varyings(spvc_compiler comp, spvc_resources res, int stage, va
     }
 }
 
+/* Bytes of one threadgroup variable's MSL type: scalars, vectors and nested spvUnsafeArray<T, N> (0 = unknown). */
+static long tg_type_size(const char *t, const char *end)
+{
+    while (t < end && *t == ' ')
+        t++;
+    if (!strncmp(t, "spvUnsafeArray<", 15)) {
+        const char *comma = end; /* the array length is after the last top-level comma */
+        int depth = 0;
+        for (const char *c = t + 15; c < end; c++) {
+            depth += *c == '<' ? 1 : *c == '>' ? -1 : 0;
+            if (*c == ',' && depth == 0)
+                comma = c;
+            if (depth < 0)
+                break;
+        }
+        if (comma == end)
+            return 0;
+        return tg_type_size(t + 15, comma) * atol(comma + 1);
+    }
+    static const struct { const char *name; int size; } types[] = {
+        {"packed_float3", 12}, {"packed_int3", 12}, {"packed_uint3", 12}, {"float4", 16}, {"float3", 16},
+        {"float2", 8}, {"float", 4}, {"int4", 16}, {"int3", 16}, {"int2", 8}, {"uint4", 16}, {"uint3", 16},
+        {"uint2", 8}, {"uint", 4}, {"int", 4}, {"half4", 8}, {"half3", 8}, {"half2", 4}, {"half", 2}, {"bool", 1},
+    };
+    for (size_t k = 0; k < sizeof types / sizeof types[0]; k++)
+        if (!strncmp(t, types[k].name, strlen(types[k].name)))
+            return types[k].size;
+    return 0;
+}
+
+/* GLSL lays out shared vec3 in 12 bytes, Metal's threadgroup float3 takes 16, and Metal allows 32 KB of threadgroup
+   memory: Photon's sky light job (shared vec3 [256][9], 27 KB in GL) became 36 KB and Apple's compiler failed the
+   pipeline with only "Compilation failed". Over the limit, threadgroup float3/int3/uint3 become packed_ types
+   (12 bytes; arithmetic and conversions to float3 work the same). */
+static char *pack_threadgroup_vec3(char *msl)
+{
+    long total = 0;
+    int has3 = 0;
+    for (const char *p = strstr(msl, "threadgroup "); p; p = strstr(p + 12, "threadgroup ")) {
+        const char *semi = strchr(p, ';'), *nl = strchr(p, '\n');
+        if (!semi || (nl && nl < semi) || (p > msl && p[-1] != ' ')) /* declarations only, not parameters */
+            continue;
+        const char *name = semi;
+        while (name > p && name[-1] != ' ')
+            name--;
+        total += tg_type_size(p + 12, name - 1);
+        for (const char *v = p; (v = strchr(v, '3')) && v < semi; v++)
+            has3 |= v - p >= 5 && (!strncmp(v - 5, "float", 5) || !strncmp(v - 3, "int", 3));
+    }
+    if (total <= 32768 || !has3)
+        return msl;
+    size_t n = strlen(msl);
+    char *out = malloc(n * 2 + 1), *o = out;
+    const char *p = msl;
+    while (*p) {
+        const char *tg = strstr(p, "threadgroup ");
+        if (!tg) {
+            strcpy(o, p);
+            o += strlen(p);
+            break;
+        }
+        const char *semi = strchr(tg, ';');
+        memcpy(o, p, (size_t)(tg - p));
+        o += tg - p;
+        p = tg;
+        if (!semi || (tg > msl && tg[-1] != ' ') || (strchr(tg, '\n') && strchr(tg, '\n') < semi)) {
+            memcpy(o, p, 12);
+            o += 12;
+            p += 12;
+            continue;
+        }
+        while (p < semi) { /* the declaration, with its 3-vectors packed */
+            if ((p[0] == '<' || p[0] == ' ') &&
+                (!strncmp(p + 1, "float3", 6) || !strncmp(p + 1, "int3", 4) || !strncmp(p + 1, "uint3", 5))) {
+                *o++ = *p++;
+                o += sprintf(o, "packed_");
+                continue;
+            }
+            *o++ = *p++;
+        }
+    }
+    *o = 0;
+    free(msl);
+    return out;
+}
+
+/* Names of the fragment outputs declared narrower than vec4 (vec3, float), one per line. */
+static char *narrow_outputs(spvc_compiler comp)
+{
+    spvc_resources res;
+    const spvc_reflected_resource *list;
+    size_t count, len = 0;
+    if (spvc_compiler_create_shader_resources(comp, &res) != SPVC_SUCCESS ||
+        spvc_resources_get_resource_list_for_type(res, SPVC_RESOURCE_TYPE_STAGE_OUTPUT, &list, &count) != SPVC_SUCCESS)
+        return NULL;
+    for (size_t i = 0; i < count; i++)
+        len += strlen(list[i].name) + 1;
+    char *names = calloc(1, len + 1);
+    if (!names)
+        return NULL;
+    for (size_t i = 0; i < count; i++)
+        if (spvc_type_get_vector_size(spvc_compiler_get_type_handle(comp, list[i].type_id)) < 4) {
+            strcat(names, list[i].name);
+            strcat(names, "\n");
+        }
+    return names;
+}
+
+static int in_list(const char *list, const char *name, size_t n)
+{
+    for (const char *p = list; p && *p; p = strchr(p, '\n') + 1)
+        if (!strncmp(p, name, n) && p[n] == '\n')
+            return 1;
+    return 0;
+}
+
 /* SPIRV-Cross pads narrow fragment outputs (vec3, float) to float4 but writes only out.x.xyz, leaving alpha 0:
    with blending that made SEUS PTGI's passes transparent. GL's missing components read as (0, 0, 0, 1), so
-   every padded output starts as that before the shader's own write. */
-static char *msl_dup(const char *msl, int stage)
+   every padded output starts as that before the shader's own write. A vec4 output the shader only partly writes
+   (Bliss's final passes write .rgb of colortex7) keeps 0 in the rest, as GL drivers leave it: alpha 1 there made
+   Bliss read its glass as water the next frame (no tint, milky haze). narrow: from narrow_outputs(). */
+static char *msl_dup(const char *msl, int stage, const char *narrow)
 {
     const char *init = stage == MGL_FRAGMENT ? strstr(msl, "main0_out out = {};\n") : NULL;
+    if (stage == MGL_COMPUTE)
+        return pack_threadgroup_vec3(strdup(msl));
     if (!init)
         return strdup(msl);
     char names[16][128];
@@ -240,7 +360,7 @@ static char *msl_dup(const char *msl, int stage)
             e++;
         if (strncmp(e, ".x = ", 5) && strncmp(e, ".xy = ", 6) && strncmp(e, ".xyz = ", 7))
             continue;
-        if (e - q >= 128)
+        if (e - q >= 128 || !in_list(narrow, q, (size_t)(e - q)))
             continue;
         int dup = 0;
         for (int k = 0; k < n; k++)
@@ -264,6 +384,19 @@ static char *msl_dup(const char *msl, int stage)
     return out;
 }
 
+/* Whether the module declares a 1D image or sampler (OpTypeImage with Dim1D). */
+static int uses_1d_images(const uint32_t *words, size_t nwords)
+{
+    for (size_t i = 5; i < nwords;) {
+        uint32_t len = words[i] >> 16, op = words[i] & 0xffff;
+        if (!len)
+            break;
+        if (op == 25 /* OpTypeImage */ && i + 3 < nwords && words[i + 3] == 0 /* Dim1D */)
+            return 1;
+        i += len;
+    }
+    return 0;
+}
 
 static spvc_bool cross_stage(mgl_xlate_result *r, int stage, const uint32_t *words, size_t nwords, int *next_tex,
                              varying_map *vm)
@@ -290,7 +423,10 @@ static spvc_bool cross_stage(mgl_xlate_result *r, int stage, const uint32_t *wor
         spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_FLIP_VERTEX_Y, SPVC_TRUE);
         spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_FIXUP_DEPTH_CONVENTION, SPVC_TRUE);
     }
-    spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_MSL_TEXTURE_1D_AS_2D, SPVC_TRUE); /* see glTexImage1D */
+    /* see glTexImage1D; only where needed (it changes how SPIRV-Cross writes image code, and is the suspect for the one
+       Photon program Apple's compiler rejects) */
+    if (uses_1d_images(words, nwords))
+        spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_MSL_TEXTURE_1D_AS_2D, SPVC_TRUE);
     /* GL lets a shader write a vec3 or float into an RGBA target; Metal needs as many components as the format */
     if (stage == MGL_FRAGMENT)
         spvc_compiler_options_set_bool(opts, SPVC_COMPILER_OPTION_MSL_PAD_FRAGMENT_OUTPUT_COMPONENTS, SPVC_TRUE);
@@ -453,7 +589,9 @@ static spvc_bool cross_stage(mgl_xlate_result *r, int stage, const uint32_t *wor
         xlog(r, "%s: SPIRV-Cross: %s", stage_name[stage], spvc_context_get_last_error_string(ctx));
         goto done;
     }
-    r->msl[stage] = msl_dup(msl, stage);
+    char *narrow = stage == MGL_FRAGMENT ? narrow_outputs(comp) : NULL;
+    r->msl[stage] = msl_dup(msl, stage, narrow);
+    free(narrow);
     ok = SPVC_TRUE;
 done:
     spvc_context_destroy(ctx);
@@ -860,7 +998,9 @@ int mgl_xlate_emit(void *pending[MGL_NUM_STAGES], char *msl[MGL_NUM_STAGES], cha
             continue;
         const char *out = NULL;
         if (ok && spvc_compiler_compile(ps->comp, &out) == SPVC_SUCCESS) {
-            msl[s] = msl_dup(out, ps->stage);
+            char *narrow = ps->stage == MGL_FRAGMENT ? narrow_outputs(ps->comp) : NULL;
+            msl[s] = msl_dup(out, ps->stage, narrow);
+            free(narrow);
         } else if (ok) {
             ok = 0;
             mgl_xlate_result tmp = {0};
