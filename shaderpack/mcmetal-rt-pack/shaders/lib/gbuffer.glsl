@@ -119,8 +119,9 @@ void main() {
 #if defined OPAQUE
     float puddle = 0.0;
   #if defined TERRAIN && defined RAIN_PUDDLES
-    // rain wets what the sky reaches: darker, richer colours; on flat ground, water gathers in patches
-    float wet = wetness * smoothstep(0.75, 0.95, lmcoord.y) * float(mat == MAT_NONE);
+    // rain wets what the sky reaches (full sky light only: the lightmap fades in diamonds, which drew straight
+    // diagonal puddle edges near roofs): darker, richer colours; on flat ground, water gathers in patches
+    float wet = wetness * smoothstep(0.93, 0.99, lmcoord.y) * float(mat == MAT_NONE);
     if (wet > 0.001) {
         vec2 w = playerPos.xz + cameraPosition.xz;
         // two noise layers add up to a narrow range around 0.5: stretch it, then keep the top ~quarter as puddles
