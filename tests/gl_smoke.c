@@ -807,6 +807,24 @@ int main(int argc, char **argv)
         check(near(px[32 * 64 + 32], rgba(64, 128, 191, 255)), what);
     }
 
+    /* 14. GL_RGB textures live in RGBA8: whatever alpha the uploaded texels carry, GL samples alpha as 1 */
+    {
+        static unsigned texels[64 * 64];
+        for (int i = 0; i < 64 * 64; i++)
+            texels[i] = rgba(10, 20, 30, 64);
+        GLuint rgbtex;
+        glGenTextures(1, &rgbtex);
+        glBindTexture(GL_TEXTURE_2D, rgbtex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, texels);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        read_texture(rb, rgbtex, ssbo, px);
+        char what[160];
+        snprintf(what, sizeof what, "GL_RGB8 texture samples alpha 1 (pixel %08x)", px[32 * 64 + 32]);
+        check(near(px[32 * 64 + 32], rgba(10, 20, 30, 255)), what);
+        glDeleteTextures(1, &rgbtex);
+    }
+
     /* 12. layout(binding) in a #version 330 shader with the SSBO extension (Complementary's world-space
        reflections): GL drivers accept it, glslang only with GL_ARB_shading_language_420pack */
     check(really_linked(program("#version 330 core\nlayout(location = 0) in vec2 pos;\n"

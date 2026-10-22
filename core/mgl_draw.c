@@ -214,6 +214,16 @@ static mglb_buffer *zero_attrib_buffer(void)
     return z;
 }
 
+/* RGB internal formats live in RGBA textures (Metal has no 3-channel formats); GL samples their alpha as 1 */
+static int rgb_only(GLenum internal)
+{
+    switch (internal) {
+    case GL_RGB: case GL_RGB8: case 3: case GL_SRGB8: case GL_RGB8_SNORM: case GL_RGB16F: case GL_RGB32F: case GL_RGB16:
+        return 1;
+    }
+    return 0;
+}
+
 static void gather_textures(mgl_draw *d, mgl_program *p, int compute)
 {
     for (int i = 0; i < p->x.num_textures && i < MGL_MAX_TEXTURES * 3; i++) {
@@ -245,8 +255,13 @@ static void gather_textures(mgl_draw *d, mgl_program *p, int compute)
                     continue;
                 mgl_texture *t = mgl_texture_obj(mgl->bound_tex[unit][tex_index_for_dim(slot->dim)]);
                 bt->tex = t ? t->mem : NULL;
-                if (t && t->has_swizzle) {
-                    memcpy(bt->swizzle, t->swizzle, sizeof bt->swizzle);
+                int no_alpha = t && rgb_only(t->internal_format);
+                if (t && (t->has_swizzle || no_alpha)) {
+                    static const int ident[4] = {GL_RED, GL_GREEN, GL_BLUE, GL_ALPHA};
+                    memcpy(bt->swizzle, t->has_swizzle ? t->swizzle : ident, sizeof bt->swizzle);
+                    for (int c = 0; no_alpha && c < 4; c++)
+                        if (bt->swizzle[c] == GL_ALPHA)
+                            bt->swizzle[c] = GL_ONE;
                     mglb_texture_need_view(bt->tex);
                 }
                 mgl_sampler *so = mgl_table_get(&mgl->samplers, mgl->bound_sampler[unit]);
