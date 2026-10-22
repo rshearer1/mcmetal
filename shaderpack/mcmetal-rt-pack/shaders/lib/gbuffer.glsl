@@ -65,6 +65,7 @@ void main() {
     else if (id >= 10100 && id < 10200) mat = MAT_EMISSIVE;
     else if (id >= 10200 && id < 10300) mat = MAT_GLOW;
     else if (id == 10002) mat = MAT_WATER;
+    else if (id == 10003) mat = MAT_GLASS;
 #endif
 #if defined FORWARD && !defined UNLIT
     lightColors(sunCol, skyAmb);
@@ -85,6 +86,9 @@ void main() {
     #include "/lib/reflect.glsl"
 #endif
 uniform sampler2D gtexture;
+#if defined WATER && defined GLASS_REFRACTION
+uniform sampler2D colortex12;   // deferred2.fsh: the lit scene before glass and water, a distance
+#endif
 in vec2 texcoord;
 in vec2 lmcoord;
 in vec4 tint;
@@ -208,6 +212,25 @@ void main() {
         n = normalize(vec3(-slope.x, 1.0, -slope.y) * vec3(WAVE_HEIGHT, 1.0, WAVE_HEIGHT));
         c.a = 0.55;    // clearer than vanilla water: you see the bottom
     }
+      #ifdef GLASS_REFRACTION
+    if (mat == MAT_GLASS) {
+        // Glass: we draw what's behind it ourselves (colortex12, the lit scene before glass), bent by the glass's own
+        // streaks and tinted by its colour, instead of letting the texture lie flat on top. The streaks become bumps:
+        // their brightness slope across the texture pushes the view sideways, more up close than far away.
+        vec2 ts = 1.0 / vec2(textureSize(gtexture, 0));
+        float h0 = luma(texture(gtexture, texcoord).rgb), hx = luma(texture(gtexture, texcoord + vec2(ts.x, 0.0)).rgb),
+              hy = luma(texture(gtexture, texcoord + vec2(0.0, ts.y)).rgb);
+        float dist = length(playerPos);
+        vec2 suv = gl_FragCoord.xy / vec2(viewWidth, viewHeight);
+        vec2 ruv = clamp(suv + vec2(hx - h0, hy - h0) * (0.06 * GLASS_REFRACTION_STRENGTH / max(dist, 1.0)), 0.001, 0.999);
+        vec4 behind = texture(colortex12, ruv);
+        if (behind.a < dist) behind = texture(colortex12, suv);   // the bent view landed on something in front
+        // tint: clear glass barely tints, stained glass by its colour; the streaks keep a little of their own look
+        vec3 tintCol = mix(vec3(1.0), albedo / max(max(albedo.r, max(albedo.g, albedo.b)), 1e-3), clamp(c.a * 1.6, 0.0, 1.0));
+        col = behind.rgb * tintCol * (1.0 - 0.15 * c.a) + col * c.a * 0.35;
+        c.a = 1.0;
+    }
+      #endif
     // reflections: a hardware ray finds what the surface mirrors (on or off screen); otherwise just the sky
     vec3 v = normalize(playerPos);
     float f = 0.02 + 0.98 * pow(1.0 - clamp(dot(-v, n), 0.0, 1.0), 5.0);

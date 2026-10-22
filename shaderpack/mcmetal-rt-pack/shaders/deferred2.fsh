@@ -8,6 +8,8 @@ const bool colortex1Clear = true;
 const bool colortex2Clear = true;
 const vec4 colortex1ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 const vec4 colortex2ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
+const int colortex12Format = RGBA16F;   // lit opaque scene + distance, read by glass for refraction
+const bool colortex12Clear = false;
 const int colortex10Format = RGBA16;   // xy normal with the normal map, z smoothness, w F0/metal (LabPBR)
 const bool colortex10Clear = true;
 const vec4 colortex10ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
@@ -40,8 +42,9 @@ uniform mat4 dhProjectionInverse;
 in vec2 texcoord;
 flat in vec3 sunCol, skyAmb, lightDir, sunDir;
 
-/* RENDERTARGETS: 0 */
+/* RENDERTARGETS: 0,12 */
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outBehind;   // colortex12: the lit scene before glass and water, a distance (refraction)
 
 vec3 playerFromDepth(vec2 uv, float depth) {
     vec4 v = gbufferProjectionInverse * vec4(vec3(uv, depth) * 2.0 - 1.0, 1.0);
@@ -205,4 +208,5 @@ void main() {
 #endif
     }
     outColor = vec4(col, 1.0);
+    outBehind = vec4(col, depth >= 1.0 && mat != MAT_DH ? 1e4 : length(p));
 }
