@@ -136,6 +136,8 @@ void main() {
         col = vec3(ao);
 #elif DEBUG_VIEW == 3 && defined USE_RT && defined RT_GI
         col = gi / (gi + 1.0);
+#elif DEBUG_VIEW == 6
+        col = vec3(m.b, nl.w * 0.3, 0.0);   // red: puddle, green: sky light
 #elif DEBUG_VIEW == 4
         col = n * 0.5 + 0.5;
 #endif
