@@ -3005,15 +3005,16 @@ static void gsc_end_frame(void)
     gsc_frame++;
     if (gsc_nslabs) { /* give back slabs at the end that stayed empty for 120 frames (walking empties them) */
         gsc_reclaim();
+        for (int k = 0; k < gsc_nslabs; k++) { /* every slab's timer, so ones behind a busy slab age too */
+            gsc_slab *s = &gsc_slabs[k];
+            if (!(s->nfree == 1 && s->free[0].len == (uint32_t)GSC_SLAB))
+                s->empty_since = 0;
+            else if (!s->empty_since)
+                s->empty_since = gsc_frame;
+        }
         while (gsc_nslabs) {
             gsc_slab *s = &gsc_slabs[gsc_nslabs - 1];
-            if (!(s->nfree == 1 && s->free[0].len == (uint32_t)GSC_SLAB)) {
-                s->empty_since = 0;
-                break;
-            }
-            if (!s->empty_since)
-                s->empty_since = gsc_frame;
-            if (gsc_frame - s->empty_since < 120)
+            if (!s->empty_since || gsc_frame - s->empty_since < 120)
                 break;
             s->buf = nil;
             free(s->free);
