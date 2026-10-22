@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
-#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders
+#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders
 #   pack-NAME packnight-NAME (third-party packs, see PACKS below) (default: the first three)
 # WORK holds the game install (cacheable), OUT gets screenshots and logs. Needs Java 21 as `java` or $JAVA.
 set -uo pipefail
@@ -136,6 +136,19 @@ complementary|ComplementaryReimagined_r5.9.3.zip|-|-"
 EUPHORIA="https://cdn.modrinth.com/data/4H6sumDB/versions/QMsRXtSJ/EuphoriaPatcher-1.10.5-r5.9.3-neoforge.jar|2b3f92878d6867fa0199937da25ba882b9db7902"
 EUPHORIA_PACK="ComplementaryReimagined_r5.9.3 + EuphoriaPatches_1.10.5"
 
+# Distant Horizons (LOD terrain past the render distance), fetched at run time like the packs and removed after
+DH="https://cdn.modrinth.com/data/uCdwusMi/versions/9w34y8ai/DistantHorizons-3.3.3-1.21.1-fabric-neoforge.jar|4357b4d19fab818780c94f0e43dad1cc931634b2"
+dh_phase() { # dh / dh-shaders: Distant Horizons at noon, without a pack or with Complementary (it has DH support);
+             # 16 screenshots (~160 s) so DH has time to build its distant terrain
+    local url sha
+    IFS='|' read -r url sha <<< "$DH"
+    python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import bare_mc; bare_mc.fetch(*sys.argv[2:])' \
+        "$SRC/tools" "$url" "$G/mods/distanthorizons.jar" "$sha" || { echo "could not download Distant Horizons"; return; }
+    rm -rf "$G/saves/metal/datapacks/mcm-scene"
+    GAME_SHOTS=${GAME_SHOTS:-16} run_phase "$1" 360 metal "$2"
+    rm -f "$G/mods/distanthorizons.jar"
+}
+
 # packnight-NAME turns each pack's coloured block light on (all ship with it off except Solas and RV)
 PACK_LIGHT="photon|COLORED_LIGHTS=true
 bliss|LPV_ENABLED=true
@@ -195,6 +208,8 @@ for p in $PHASES; do
     showcase-rain) scene 13800 rain showcase; act showcase; run_phase showcase-rain 240 metal true ;;  # + improved rain, puddles
     nether) scene noon clear nether; run_phase nether 180 metal false ;;                       # Nether room, Sodium
     nether-shaders) scene noon clear nether; run_phase nether-shaders 240 metal true ;;      # Nether room, Complementary
+    dh) dh_phase dh false ;;                    # Distant Horizons, Sodium
+    dh-shaders) dh_phase dh-shaders true ;;     # Distant Horizons + Complementary
     pack-*|packnight-*) third_party "$p" ;; # compatibility sweep: pack-photon, packnight-bsl, pack-complementary+euphoria, ...
     esac
 done
