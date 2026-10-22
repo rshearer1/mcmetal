@@ -23,6 +23,9 @@ on:
       settle:
         description: 'bench: seconds to wait after joining before measuring (heavy packs keep compiling for 30 s or more)'
         default: '10'
+      segments:
+        description: 'bench: more scenes in the same launch after each phase, a file in tests/game/segments/ (e.g. times)'
+        default: ''
 defaults:
   run:
     shell: bash  # bash -eo pipefail: a failing build isn't hidden by `| tee`
@@ -137,6 +140,7 @@ jobs:
           GAME_BENCH_SETTLE: ${{ github.event.inputs.settle || 10 }}
           GAME_LONG: ${{ github.event.inputs.long }}
           GAME_ENV: ${{ github.event.inputs.env }}
+          GAME_SEGMENTS: ${{ github.event.inputs.segments }}
           PHASE: ${{ matrix.phase }}
         run: bash tests/game/ci_game.sh ~/mcgame game-out "$PHASE"
       - uses: actions/upload-artifact@v4

@@ -1,0 +1,4 @@
+# name|time|weather|look|options|shot (see segments() in ci_game.sh): after the phase's own scene, in the same launch
+sunset|12300||||yes
+midnight|18000||||yes
+pan|6000||~2 7|||

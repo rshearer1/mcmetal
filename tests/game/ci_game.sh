@@ -19,6 +19,9 @@ cp "$SRC/tests/game/options.txt" "$G/options.txt"
 # GAME_BENCH=true: frame-rate runs. No vsync or frame cap, 12 chunks, Minecraft's fps logged every second by the mod
 # (also on Apple's OpenGL: GAME_ENV=MCMETAL_DISABLE=1), window GAME_SIZE (default 1920x1200). Once the world is on
 # screen it settles for GAME_BENCH_SETTLE s (default 10), then measures GAME_BENCH_SECS s (default 30) and stops
+# GAME_SEGMENTS: a file, or a name in tests/game/segments/ (see segments() below)
+[ -n "${GAME_SEGMENTS:-}" ] && [ ! -f "$GAME_SEGMENTS" ] && GAME_SEGMENTS=$SRC/tests/game/segments/$GAME_SEGMENTS.txt
+[ -n "${GAME_SEGMENTS:-}" ] && { [ -f "$GAME_SEGMENTS" ] || { echo "no segments file $GAME_SEGMENTS"; exit 1; }; GAME_SEGMENTS=$(cd "$(dirname "$GAME_SEGMENTS")" && pwd)/$(basename "$GAME_SEGMENTS"); }
 case "${GAME_BENCH_SETTLE:-10}" in ''|*[!0-9]*) echo "GAME_BENCH_SETTLE must be a whole number of seconds"; exit 1 ;; esac
 if [ "${GAME_BENCH:-}" = true ]; then
     sed -i.bak 's/^enableVsync:.*/enableVsync:false/; s/^maxFps:.*/maxFps:260/; s/^renderDistance:.*/renderDistance:12/' "$G/options.txt"
@@ -41,6 +44,54 @@ shots_in_world() { # screenshots taken after the first frame that drew terrain (
     awk -v title="$2" '/presented frame/ && (title || !/\(0 terrain/) {on=1} on && /screenshot/ {n++} END {print n+0}' "$1" 2>/dev/null
 }
 
+fps_summary() { # label log skip count: Minecraft's fps counter (one line a second in bench mode), lines skip+1..skip+count
+    local fps; fps=$(grep -ho '\] fps [0-9]*' "$2" 2>/dev/null | awk '{print $3}' | tail -n +$(($3 + 1)) | head -n "$4")
+    [ -n "$fps" ] && echo "fps $1: $(echo "$fps" | sort -n | awk '{a[NR]=$1; s+=$1} END {if (NR) printf "median %d, mean %.0f, low %d, high %d over %d samples", a[int((NR+1)/2)], s/NR, a[1], a[NR], NR}')" | tee -a "$OUT/fps.txt"
+}
+
+# GAME_SEGMENTS=FILE (bench mode): after the phase's own measurement, the same launch measures more scenes, one per
+# line of FILE, instead of relaunching the game (JVM, NeoForge and world load) for each. A line is
+#   name|time|weather|look|options|shot
+# time: "time set" value (noon, 12300, midnight); weather: clear/rain; look: "yaw pitch" or "~2 7" (pan), as
+# GAME_LOOK; options: shader pack options added to the phase's own (e.g. "LIGHT_SLOTS=8 RT_GI=false"), "-" for the
+# phase's own; shot: yes for one screenshot at the end (in OUT/PHASE/NAME/). Empty fields keep the last segment's
+# value. Only things that can change in a running game: env vars (MGL_*) and the stage still need their own launch.
+# The mod's MCMETAL_CONTROL file runs the commands (time, weather, datapack reload for the look, shader reload).
+segments() { # phase
+    local name=$1 ctl=$OUT/$1/control look_f="$G/saves/metal/datapacks/mcm-scene/data/mcm/function/look.mcfunction"
+    local opts_f="$G/shaderpacks/${PACK:-ComplementaryReimagined_r5.9.3.zip}.txt" base_opts= last_opts=- n=0
+    [ -f "$opts_f" ] && base_opts=$(cat "$opts_f")
+    local seg tm wx look opts shot
+    while IFS='|' read -r seg tm wx look opts shot; do
+        case $seg in ''|'#'*) continue ;; esac
+        local t0=$SECONDS lines= wait=${GAME_SEG_SETTLE:-5}
+        [ -n "$tm" ] && lines+="cmd time set $tm"$'\n'
+        [ -n "$wx" ] && lines+="cmd weather $wx 100000"$'\n'
+        [ -n "$look" ] && { echo "tp @s ~ ~ ~ $look" > "$look_f"; lines+="cmd reload"$'\n'; }
+        if [ -n "$opts" ] && [ "$opts" != "$last_opts" ]; then
+            { [ -n "$base_opts" ] && echo "$base_opts"; [ "$opts" != - ] && tr ' ' '\n' <<< "$opts"; } > "$opts_f"
+            lines+="shaders"$'\n'; wait=${GAME_SEG_SETTLE_SHADERS:-10}; last_opts=$opts
+        fi
+        n=$((n + 1))
+        printf '%smark segment %s\n' "$lines" "$seg" > "$ctl"
+        local k=0 # the mod polls twice a second; a shader reload can take a few seconds more
+        while [ $k -lt 60 ] && [ "$(grep -c "control done" "$WORK/client.log" 2>/dev/null)" -lt $n ]; do sleep 1; k=$((k + 1)); done
+        sleep "$wait"
+        local from; from=$(grep -c '\] fps ' "$WORK/client.log" 2>/dev/null)
+        echo "segment $seg: measuring ${GAME_BENCH_SECS:-30}s"
+        sleep "${GAME_BENCH_SECS:-30}"
+        fps_summary "$name/$seg" "$WORK/client.log" "$from" "${GAME_BENCH_SECS:-30}"
+        if [ "$shot" = yes ]; then
+            mkdir -p "$OUT/$name/$seg"
+            local before; before=$(ls "$OUT/$name"/shot-*.png 2>/dev/null)
+            touch "$OUT/$name/shoot"; sleep 3; rm -f "$OUT/$name/shoot"
+            for f in "$OUT/$name"/shot-*.png; do grep -qxF "$f" <<< "$before" || mv "$f" "$OUT/$name/$seg/"; done
+        fi
+        echo "segment $seg took $((SECONDS - t0)) s"
+    done < "$GAME_SEGMENTS"
+    [ -n "$base_opts" ] && echo "$base_opts" > "$opts_f" || rm -f "$opts_f"
+}
+
 run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this phase
     local name=$1 secs=$2 world=$3 shaders=$4; shift 4
     # by default a phase ends once it has GAME_SHOTS screenshots of the loaded world; GAME_LONG=true plays the
@@ -54,6 +105,9 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     [ -n "$world" ] && wargs+=(--world "$world")
     mkdir -p "$OUT/$name/glsl"
     echo "=== phase $name: ${secs}s, world=${world:-none}, shaders=$shaders"
+    local started=$SECONDS
+    rm -f "$OUT/$name/control"
+    MCMETAL_CONTROL=$([ -n "${GAME_SEGMENTS:-}" ] && echo "$OUT/$name/control") \
     MCMETAL_BACKGROUND=${MCMETAL_BACKGROUND-behind} \
     MGL_LOG="$OUT/$name/mgl.log" MGL_SHOT_DIR="$OUT/$name" MGL_SHOT_EVERY=${MGL_SHOT_EVERY-10} \
     MGL_CACHE_DIR="$WORK/cache" MGL_DUMP_DIR="$OUT/$name/glsl" env ${GAME_ENV:-} "$@" \
@@ -74,7 +128,7 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
                 # after measuring: where the CPU goes (native stacks, mcmetal symbolised) and what the Java render
                 # thread is doing, for phases whose frame time isn't GPU time
                 pid=$(cat "$WORK/client.pid" 2>/dev/null)
-                if [ -n "$pid" ]; then
+                if [ -n "$pid" ] && [ "${GAME_SAMPLE:-1}" != 0 ]; then # GAME_SAMPLE=0: skip (saves ~24 s a run)
                     echo "sampling CPU stacks"
                     # each tool gets a time limit (macOS has no timeout command) and no handle on the step's output:
                     # jcmd can't attach to a 1 fps game and would otherwise keep the CI step open forever
@@ -88,7 +142,9 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
                     rm -f "$OUT/$name"/jstack-*.txt
                     echo "sampling done"
                 fi
-                touch "$OUT/$name/shoot"; sleep 3; rm -f "$OUT/$name/shoot"; break
+                [ "${GAME_SHOT:-1}" != 0 ] && { touch "$OUT/$name/shoot"; sleep 3; rm -f "$OUT/$name/shoot"; }
+                [ -n "${GAME_SEGMENTS:-}" ] && segments "$name"
+                break
             fi
             continue
         fi
@@ -105,9 +161,9 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     grep -q 'last launch on Metal did not' "$OUT/$name/client.log" 2>/dev/null && echo "WARNING: this phase ran on Apple's OpenGL (fallback)"
     grep -h '\[mcmetal\]' "$OUT/$name/client.log" 2>/dev/null | grep -v 'presented frame\|screenshot\|\] fps ' | head -5
     # fps: Minecraft's counter every second (bench mode), only the samples from the measured window
-    local fps; fps=$(grep -ho '\] fps [0-9]*' "$OUT/$name/client.log" 2>/dev/null | awk '{print $3}' | tail -n +$((${bench_from:-12} + 1)) | head -n "$([ -n "${bench_from:-}" ] && echo "${GAME_BENCH_SECS:-30}" || echo 100000)")
+    fps_summary "$name" "$OUT/$name/client.log" "${bench_from:-12}" "$([ -n "${bench_from:-}" ] && echo "${GAME_BENCH_SECS:-30}" || echo 100000)"
     bench_from=
-    [ -n "$fps" ] && echo "fps $name: $(echo "$fps" | sort -n | awk '{a[NR]=$1; s+=$1} END {if (NR) printf "median %d, mean %.0f, low %d, high %d over %d samples", a[int((NR+1)/2)], s/NR, a[1], a[NR], NR}')" | tee -a "$OUT/fps.txt"
+    echo "phase $name took $((SECONDS - started)) s"
     cp "$G/logs/latest.log" "$OUT/$name/latest.log" 2>/dev/null
     ls "$G"/hs_err_pid*.log >/dev/null 2>&1 && mv "$G"/hs_err_pid*.log "$OUT/$name/"
     ls -d "$G"/crash-reports/* >/dev/null 2>&1 && cp -r "$G/crash-reports" "$OUT/$name/"

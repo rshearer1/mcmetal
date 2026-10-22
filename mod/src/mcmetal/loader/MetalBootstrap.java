@@ -30,6 +30,8 @@ public final class MetalBootstrap implements GraphicsBootstrapper {
     public void bootstrap(String[] args) {
         if (System.getenv("MCMETAL_FPS_LOG") != null || Boolean.getBoolean("mcmetal.fpsLog"))
             FpsLog.start(); // also with Apple's OpenGL, for comparisons
+        if (System.getenv("MCMETAL_CONTROL") != null)
+            TestControl.start(System.getenv("MCMETAL_CONTROL")); // test rig: several scenes in one launch
         try {
             enable(args);
         } catch (Throwable t) {
