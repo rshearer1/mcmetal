@@ -420,6 +420,18 @@ static char *preprocess(const char *src, glslang_stage_t stage, char **log)
     return out;
 }
 
+/* does text contain name as a whole identifier (comments and inactive #if blocks count: erring on keeping) */
+static int mentions(const char *text, const char *name)
+{
+    size_t n = strlen(name);
+    for (const char *p = strstr(text, name); p; p = strstr(p + 1, name)) {
+        char a = p > text ? p[-1] : ' ', b = p[n];
+        if (!(isalnum((unsigned char)a) || a == '_') && !(isalnum((unsigned char)b) || b == '_'))
+            return 1;
+    }
+    return 0;
+}
+
 /* ------------------------------------------------------------------ varyings */
 typedef struct {
     char type[32], name[96];
@@ -754,8 +766,14 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
         goto out;
     }
 
-    int R = 5, voff[64]; /* record floats: position, each varying's components, strip id */
+    /* record floats: position, the components of each varying the fragment shader mentions (the rest are never
+       stored, voff -1; MGL_GS_KEEP_ALL=1 keeps them), strip id */
+    int R = 5, voff[64];
+    int keep_all = !src[MGL_FRAGMENT] || (getenv("MGL_GS_KEEP_ALL") && atoi(getenv("MGL_GS_KEEP_ALL")));
     for (int i = 0; i < ngout; i++) {
+        voff[i] = -1;
+        if (!keep_all && !mentions(src[MGL_FRAGMENT], gout[i].name))
+            continue;
         voff[i] = R - 1;
         R += gout[i].comps;
     }
@@ -789,7 +807,8 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
                      "  mgl_ov[rec + 2u] = mgl_g_Position.z;\n  mgl_ov[rec + 3u] = mgl_g_Position.w;\n",
               max_vertices, max_vertices, R);
     for (int i = 0; i < ngout; i++)
-        pack_store(&comp, &gout[i], gout[i].name, voff[i]);
+        if (voff[i] >= 0)
+            pack_store(&comp, &gout[i], gout[i].name, voff[i]);
     sb_printf(&comp, "  mgl_ov[rec + %du] = uintBitsToFloat(mgl_strip);\n  mgl_emitted++;\n}\n"
                      "void mgl_end_primitive() { mgl_strip++; }\n", R - 1);
     /* one vertex-stage run: fetch the attributes of vtx, run the vertex shader, store the results as input c */
@@ -886,7 +905,8 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
                    "layout(std430, binding = 26) readonly buffer mgl_i6_ { float mgl_ov[]; };\n"
                    "layout(std430, binding = 27) readonly buffer mgl_i7_ { uint mgl_oc[]; };\n");
     for (int i = 0; i < ngout; i++)
-        sb_printf(&pass, "%sout %s %s;\n",
+        if (voff[i] >= 0)
+            sb_printf(&pass, "%sout %s %s;\n",
                   gout[i].flat || gout[i].is_int || gout[i].is_uint || !strcmp(gout[i].type, "bool") ? "flat "
                   : gout[i].noperspective                                                            ? "noperspective "
                                                                                                      : "",
@@ -904,6 +924,8 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
               max_vertices, R);
     sb_puts(&pass, "  if (!ok) return; /* unused slot or strip join: off-screen, its varyings never read */\n");
     for (int i = 0; i < ngout; i++) {
+        if (voff[i] < 0)
+            continue;
         sb_printf(&pass, "  %s = ", gout[i].name);
         unpack_expr(&pass, &gout[i], voff[i]);
         sb_puts(&pass, ";\n");
