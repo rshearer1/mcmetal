@@ -246,9 +246,11 @@ void main() {
       #ifdef GLASS_REFRACTION
     if (mat == MAT_GLASS) {
         // clear glass barely tints and its streaks stay faint; stained glass tints by its colour like real glass
-        vec3 tintCol = mix(vec3(1.0), albedo / max(max(albedo.r, max(albedo.g, albedo.b)), 1e-3), clamp(c.a * 1.6, 0.0, 1.0));
-        through = tintCol * (1.0 - 0.15 * c.a) * (1.0 - f);
-        own = col * c.a * 0.35 * (1.0 - f) + refl * f;
+        // (stained glass is ~half opaque in its texture: that's already full tint; squared for a deeper colour)
+        vec3 hue = albedo / max(max(albedo.r, max(albedo.g, albedo.b)), 1e-3);
+        vec3 tintCol = mix(vec3(1.0), hue * hue, clamp(c.a * 2.5, 0.0, 1.0));
+        through = tintCol * (1.0 - 0.3 * c.a) * (1.0 - f);
+        own = col * c.a * 0.5 * (1.0 - f) + refl * f;
     }
       #endif
     #endif
