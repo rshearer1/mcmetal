@@ -12,7 +12,7 @@
 #include "mgl_log.h"
 
 #define MAGIC 0x4D43534Du /* "MSCM" */
-static const char build_tag[] = "mcmetal-xlate-2 " __DATE__ " " __TIME__;
+static const char build_tag[] = "mcmetal-xlate-3 " __DATE__ " " __TIME__;
 
 static const char *cache_dir(void)
 {

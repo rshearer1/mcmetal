@@ -119,6 +119,8 @@ typedef struct mgl_program {
     int ssbo_binding[8];        /* GL binding point per x.ssbos[] entry */
     int delete_pending;
     char debug_name[64];        /* glObjectLabel (Iris names its programs, e.g. "gbuffers_water") */
+    int *name_hash;             /* glGetUniformLocation: open-addressed table of x.uniforms/x.textures indices + 1, built on first use */
+    unsigned name_hash_mask;
 } mgl_program;
 
 typedef struct mgl_query {

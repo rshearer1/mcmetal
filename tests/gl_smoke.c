@@ -155,8 +155,48 @@ int main(int argc, char **argv)
     check(v && v[0] == 1 && v[10] == 31 && v[63] == 190, "compute shader results read back");
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
+    /* 1b. shared vec3 [256][9] is 27 KB in GL but 36 KB as Metal float3 (limit 32 KB): Photon's sky light job */
+    GLuint big = program(NULL, NULL,
+                         "#version 430\nlayout(local_size_x = 256) in;\n"
+                         "layout(std430, binding = 0) buffer B { float o[]; };\n"
+                         "shared vec3 sm[256][9];\n"
+                         "void main() { uint i = gl_LocalInvocationID.x;\n"
+                         "  for (uint b = 0u; b < 9u; ++b) sm[i][b] = vec3(1.0, float(b), 2.0);\n"
+                         "  barrier();\n"
+                         "  for (uint s = 128u; s > 0u; s >>= 1) { if (i < s) for (uint b = 0u; b < 9u; ++b) sm[i][b] += sm[i + s][b]; barrier(); }\n"
+                         "  if (i == 0u) { vec3 t = sm[0][8]; o[0] = t.x; o[1] = t.y; o[2] = t.z; } }\n");
+    check(really_linked(big), "compute program with 36 KB of Metal float3 shared memory links (packed)");
+    glUseProgram(big);
+    glDispatchCompute(1, 1, 1);
+    glMemoryBarrier(GL_ALL_BARRIER_BITS);
+    glFinish();
+    float *fo = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, 12, GL_MAP_READ_BIT);
+    check(fo && fo[0] == 256.0f && fo[1] == 2048.0f && fo[2] == 512.0f, "packed shared vec3 reduction sums right");
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
     GLuint rb = program(NULL, NULL, readback_cs);
     check(really_linked(rb), "texture readback program links");
+
+    /* 1c. glClearTexImage (Iris clears packs' images every frame): a mixed pattern, all-equal bytes, zero, and the
+       same pattern again (the GPU-side clear source is reused) */
+    {
+        GLuint ct;
+        glGenTextures(1, &ct);
+        glBindTexture(GL_TEXTURE_2D, ct);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, 64, 64);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        static const unsigned char red[4] = {255, 0, 0, 255}, grey[4] = {7, 7, 7, 7}, none[4] = {0};
+        const unsigned char *pat[4] = {red, grey, none, red};
+        const unsigned want[4] = {rgba(255, 0, 0, 255), rgba(7, 7, 7, 7), rgba(0, 0, 0, 0), rgba(255, 0, 0, 255)};
+        int ok = 1;
+        for (int k = 0; k < 4; k++) {
+            glClearTexImage(ct, 0, GL_RGBA, GL_UNSIGNED_BYTE, pat[k]);
+            read_texture(rb, ct, ssbo, px);
+            ok &= px[0] == want[k] && px[63 * 64 + 63] == want[k] && px[17 * 64 + 40] == want[k];
+        }
+        check(ok, "glClearTexImage: pattern, equal bytes, zero, pattern again");
+        glDeleteTextures(1, &ct);
+    }
 
     /* 2. framebuffer: clear, then a triangle with a uniform colour over the left half */
     GLuint tex, fbo;
@@ -200,6 +240,92 @@ int main(int argc, char **argv)
     glReadPixels(0, 0, 64, 64, GL_RGBA, GL_UNSIGNED_BYTE, rp);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
     check(!memcmp(rp, px, sizeof rp), "glReadPixels matches the compute readback");
+
+    /* 2b. Bliss's translucent pass: four targets (RGBA16F, RGBA8, RGBA16, RGBA16), blending SRC_ALPHA
+       ONE_MINUS_SRC_ALPHA ONE_MINUS_DST_ALPHA ONE except on draw buffer 2 (glDisablei), two layers drawn. Buffer 2
+       carries two 8-bit values packed in each 16-bit channel and must come back exactly */
+    {
+        static const GLenum fmt[4] = {GL_RGBA16F, GL_RGBA8, GL_RGBA16, GL_RGBA16};
+        GLuint mt[4], mfbo;
+        glGenTextures(4, mt);
+        glGenFramebuffers(1, &mfbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, mfbo);
+        for (int i = 0; i < 4; i++) {
+            glBindTexture(GL_TEXTURE_2D, mt[i]);
+            glTexStorage2D(GL_TEXTURE_2D, 1, fmt[i], 64, 64);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + (GLenum)i, GL_TEXTURE_2D, mt[i], 0);
+        }
+        static const GLenum bufs[4] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
+        glDrawBuffers(4, bufs);
+        check(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE, "four-target framebuffer complete");
+        glClearColor(0, 0, 0, 0);
+        glClear(GL_COLOR_BUFFER_BIT);
+        GLuint mrt = program("#version 330 core\nlayout(location = 0) in vec2 pos;\n"
+                             "void main() { gl_Position = vec4(pos, 0.0, 1.0); }\n",
+                             "#version 330 core\nuniform float layer;\n"
+                             "layout(location = 0) out vec4 o0; layout(location = 1) out vec4 o1;\n"
+                             "layout(location = 2) out vec4 o2; layout(location = 3) out vec4 o3;\n"
+                             "float encodeVec2(vec2 a) { const vec2 c = vec2(1.0, 256.0) / 65535.0; vec2 t = floor(a * 255.0);"
+                             " return t.x * c.x + t.y * c.y; }\n"
+                             "void main() {\n"
+                             "  o0 = vec4(0.5, 0.2, 0.1, 0.4);\n"
+                             "  o1 = vec4(0.0, 0.0, 0.0, 0.7);\n"
+                             "  o2 = vec4(encodeVec2(vec2(0.5, 0.5)), encodeVec2(vec2(0.8, 0.1 + layer * 0.1)),"
+                             " encodeVec2(vec2(0.1, 0.45)), 1.0);\n"
+                             "  o3 = vec4(0.0, 0.0, 0.0, 0.9);\n"
+                             "}\n", NULL);
+        check(really_linked(mrt), "four-target translucent program links");
+        float full[] = {-1, -1, 3, -1, -1, 3};
+        GLuint fvbo;
+        glGenBuffers(1, &fvbo);
+        glBindBuffer(GL_ARRAY_BUFFER, fvbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof full, full, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8, (void *)0);
+        glUseProgram(mrt);
+        glEnable(GL_BLEND);
+        glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE_MINUS_DST_ALPHA, GL_ONE);
+        glDisablei(GL_BLEND, 2);
+        for (int l = 0; l < 2; l++) {
+            glUniform1f(glGetUniformLocation(mrt, "layer"), (float)l);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+        }
+        glDisable(GL_BLEND);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8, (void *)0);
+        /* read back buffers 0 and 2 as raw floats, decoded the way Bliss's composite does */
+        GLuint fr = program(NULL, NULL,
+                            "#version 430\nlayout(local_size_x = 1) in;\n"
+                            "uniform sampler2D t0; uniform sampler2D t2;\n"
+                            "layout(std430, binding = 0) buffer Out { float o[]; };\n"
+                            "vec2 decodeVec2(float a) { return fract(a * (65535.0 / vec2(256.0, 65536.0))) * (256.0 / 255.0); }\n"
+                            "void main() { vec4 a = texelFetch(t0, ivec2(20, 20), 0); vec4 b = texelFetch(t2, ivec2(20, 20), 0);\n"
+                            "  o[0] = a.a; o[1] = decodeVec2(b.g).y; o[2] = decodeVec2(b.b).y; o[3] = b.a; o[4] = decodeVec2(b.r).x; }\n");
+        glUseProgram(fr);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, mt[0]);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, mt[2]);
+        glActiveTexture(GL_TEXTURE0);
+        glUniform1i(glGetUniformLocation(fr, "t0"), 0);
+        glUniform1i(glGetUniformLocation(fr, "t2"), 1);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo);
+        glDispatchCompute(1, 1, 1);
+        glMemoryBarrier(GL_ALL_BARRIER_BITS);
+        glFinish();
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
+        float *mo = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, 20, GL_MAP_READ_BIT);
+        if (mo)
+            printf("      four targets: buffer 0 alpha %.4f (want 0.64), buffer 2: %.5f %.5f %.4f %.4f (want 0.2 0.4471 1 0.498)\n",
+                   mo[0], mo[1], mo[2], mo[3], mo[4]);
+        check(mo && mo[0] > 0.63f && mo[0] < 0.65f, "four targets: blended alpha accumulates over two layers");
+        check(mo && mo[1] > 0.19f && mo[1] < 0.21f && mo[2] > 0.44f && mo[2] < 0.455f && mo[3] == 1.0f && mo[4] > 0.49f && mo[4] < 0.51f,
+              "four targets: unblended RGBA16 buffer keeps packed values exactly");
+        glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+        glDeleteFramebuffers(1, &mfbo);
+        glDeleteTextures(4, mt);
+    }
 
     /* 3. texture upload + sampling: a 2x2 texture stretched over the target, nearest filtering */
     unsigned char texels[] = {255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255};
