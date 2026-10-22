@@ -37,6 +37,7 @@ typedef struct cull_region {
     int n;
     mglb_buffer *ib;
     int cmd;            /* first command + 1, 0 = not culled */
+    int first;          /* its first entry in cull.draws */
 } cull_region;
 
 static struct {
@@ -47,8 +48,9 @@ static struct {
     mgl_cull_draw *draws;
     int cap_draws;
     mglb_buffer **ibufs;
+    mgl_cull_pass pass;
     /* stats, logged now and then */
-    unsigned long passes, prepared, matched, unmatched, sub_draws, refused, bad_tables;
+    unsigned long passes, prepared, matched, unmatched, sub_draws, refused, bad_tables, cpu_regions, cpu_kept, cpu_tested;
 } cull = {.on = -1};
 
 static int cull_enabled(void)
@@ -78,9 +80,25 @@ static void log_stats(void)
     if (cull.passes % 2000)
         return;
     mgl_log("GPU chunk culling: last 2000 passes: %lu regions prepared, %lu drawn from culled commands, %lu drawn "
-            "normally, %lu section draws, %lu passes refused, %lu bad section tables", cull.prepared, cull.matched,
-            cull.unmatched, cull.sub_draws, cull.refused, cull.bad_tables);
+            "normally, %lu section draws, %lu passes refused, %lu bad section tables; geometry-shader regions culled "
+            "on the CPU: %lu, keeping %lu of %lu sections", cull.prepared, cull.matched, cull.unmatched,
+            cull.sub_draws, cull.refused, cull.bad_tables, cull.cpu_regions, cull.cpu_kept, cull.cpu_tested);
     cull.prepared = cull.matched = cull.unmatched = cull.sub_draws = cull.refused = cull.bad_tables = 0;
+    cull.cpu_regions = cull.cpu_kept = cull.cpu_tested = 0;
+}
+
+/* the backend's test, on the CPU: keep a 16-block box unless it is wholly outside one plane */
+static int box_visible(const mgl_cull_pass *p, const float *mn)
+{
+    for (int j = 0; j < 6; j++) {
+        const float *q = p->planes[j];
+        float d = q[3];
+        for (int c = 0; c < 3; c++)
+            d += q[c] * (mn[c] + (q[c] > 0.0f ? 16.0f : 0.0f));
+        if (d < 0.0f)
+            return 0;
+    }
+    return 1;
 }
 
 /* Called by the mod through LWJGL (JNI.invokePP). Returns the number of regions prepared (0: draw normally). */
@@ -145,7 +163,7 @@ GLAPI int64_t mcmGpuCull(const void *cmd)
             cull.bad_tables++;
             continue;
         }
-        cull.regions[nr] = (cull_region){count, g->n, ib->mem, start + 1}; /* made absolute below */
+        cull.regions[nr] = (cull_region){count, g->n, ib->mem, start + 1, start}; /* cmd made absolute below */
         cull.ibufs[nr] = ib->mem;
         nr++;
     }
@@ -154,6 +172,7 @@ GLAPI int64_t mcmGpuCull(const void *cmd)
     mgl_cull_pass p;
     planes_from(h->mvp, p.planes);
     p.flags = h->flags;
+    cull.pass = p;
     int first = mglb_cull_run(&p, cull.draws, nd, cull.ibufs, nr);
     if (first < 0) {
         cull.refused++;
@@ -169,20 +188,50 @@ GLAPI int64_t mcmGpuCull(const void *cmd)
     return nr;
 }
 
+static cull_region *find_region(const int *count, int n, mglb_buffer *ib)
+{
+    for (int r = cull.next; r < cull.nregions; r++) {
+        cull_region *g = &cull.regions[r];
+        if (g->count == (const int32_t *)count && g->n == n && g->ib == ib) {
+            cull.next = r + 1;
+            return g;
+        }
+    }
+    return NULL;
+}
+
 /* For a multi-draw about to run: its prepared commands (first + 1), or 0 to draw it normally. Regions are drawn in
    the order they were prepared; one that Sodium skipped (nothing to draw after all) is passed over. */
 int mgl_cull_take(const int *count, int n, mglb_buffer *ib)
 {
     if (!cull.active)
         return 0;
-    for (int r = cull.next; r < cull.nregions; r++) {
-        cull_region *g = &cull.regions[r];
-        if (g->count == (const int32_t *)count && g->n == n && g->ib == ib) {
-            cull.next = r + 1;
-            cull.matched++;
-            return g->cmd;
-        }
+    cull_region *g = find_region(count, n, ib);
+    if (!g) {
+        cull.unmatched++;
+        return 0;
     }
-    cull.unmatched++;
-    return 0;
+    cull.matched++;
+    return g->cmd;
+}
+
+/* The same for a multi-draw that goes through geometry-shader emulation (SEUS's shadow terrain), which runs a
+   compute pass per section and can't draw from the culled arguments: keep[i] says whether to draw section i,
+   tested on the CPU. Returns 0 (keep untouched) when the draw wasn't prepared. */
+int mgl_cull_take_cpu(const int *count, int n, mglb_buffer *ib, unsigned char *keep)
+{
+    if (!cull.active)
+        return 0;
+    cull_region *g = find_region(count, n, ib);
+    if (!g) {
+        cull.unmatched++;
+        return 0;
+    }
+    cull.cpu_regions++;
+    for (int i = 0; i < n; i++) {
+        keep[i] = (unsigned char)box_visible(&cull.pass, cull.draws[g->first + i].min);
+        cull.cpu_kept += keep[i];
+    }
+    cull.cpu_tested += (unsigned long)n;
+    return 1;
 }

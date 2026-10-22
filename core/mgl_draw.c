@@ -4,6 +4,7 @@
 
 mgl_program *mgl_current_program(void);
 int mgl_cull_take(const int *count, int n, mglb_buffer *ib); /* mgl_cull.c */
+int mgl_cull_take_cpu(const int *count, int n, mglb_buffer *ib, unsigned char *keep);
 
 /* ---------------------------------------------------------------- vertex arrays */
 
@@ -609,14 +610,22 @@ void glMultiDrawElementsBaseVertex(GLenum mode, const GLsizei *count, GLenum typ
         d.instances = 1;
         d.index_buf = ib->mem;
         d.index_type = (int)type;
+        /* GPU chunk culling: sections out of the pass's view are skipped (still recorded for ray tracing) */
+        unsigned char keep_small[256], *keep = drawcount <= 256 ? keep_small : malloc((size_t)drawcount);
+        int culled = keep && type == GL_UNSIGNED_INT && mgl_cull_take_cpu(count, drawcount, ib->mem, keep);
         for (GLsizei i = 0; i < drawcount; i++) {
             if (count[i] <= 0)
                 continue;
             d.count = count[i];
             d.index_offset = (size_t)ind[i];
             d.base_vertex = bv[i];
-            submit(&d);
+            if (culled && !keep[i])
+                mgl_rt_record(p, &d);
+            else
+                submit(&d);
         }
+        if (keep != keep_small)
+            free(keep);
         return;
     }
     for (GLsizei i = 0; i < drawcount; i++)
