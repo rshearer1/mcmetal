@@ -3489,7 +3489,10 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
             else
                 sr = (MTLScissorRect){(NSUInteger)x0, (NSUInteger)y0, (NSUInteger)(x1 - x0), (NSUInteger)(y1 - y0)};
         }
-        if (visible) {
+        static int no_pass = -1; /* MGL_GS_PROBE=6 (timing only): no passthrough draws, the compute stage alone */
+        if (no_pass < 0)
+            no_pass = getenv("MGL_GS_PROBE") && atoi(getenv("MGL_GS_PROBE")) == 6;
+        if (visible && !no_pass) {
             [e setScissorRect:sr];
             [e setCullMode:!p->cull ? MTLCullModeNone : p->cull_face == GL_FRONT ? MTLCullModeFront : MTLCullModeBack];
             [e setFrontFacingWinding:p->front_face == GL_CW ? MTLWindingCounterClockwise : MTLWindingClockwise];

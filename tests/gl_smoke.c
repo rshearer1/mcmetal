@@ -772,6 +772,41 @@ int main(int argc, char **argv)
         check(near(px[32 * 64 + 32], rgba(100, 200, 0, 255)), what);
     }
 
+    /* 13. geometry shader emulation: an output set only to a constant (k) and one whose last two components the
+       fragment shader never reads (tc.zw) are left out of the records; the picture must not change */
+    {
+        GLuint p = glCreateProgram();
+        glAttachShader(p, shader(GL_VERTEX_SHADER, "#version 330 core\nlayout(location = 0) in vec2 pos;\nout vec4 vt;\n"
+                                                   "void main() { vt = vec4(0.25, 0.5, 0.9, 0.9); gl_Position = vec4(pos, 0.0, 1.0); }\n"));
+        glAttachShader(p, shader(GL_GEOMETRY_SHADER, "#version 330 core\nlayout(triangles) in;\n"
+                                                     "layout(triangle_strip, max_vertices = 3) out;\nin vec4 vt[];\nout vec4 tc;\nout float k;\n"
+                                                     "void main() {\n  k = 0.75;\n  for (int i = 0; i < 3; i++) {\n"
+                                                     "    tc = vt[i];\n    gl_Position = gl_in[i].gl_Position;\n    EmitVertex();\n  }\n"
+                                                     "  EndPrimitive();\n}\n"));
+        glAttachShader(p, shader(GL_FRAGMENT_SHADER, "#version 330 core\nin vec4 tc;\nin float k;\nout vec4 frag;\n"
+                                                     "void main() { frag = vec4(tc.x, tc.y, k, 1.0); }\n"));
+        glLinkProgram(p);
+        GLint ok = 0;
+        glGetProgramiv(p, GL_LINK_STATUS, &ok);
+        check(ok, "geometry-shader program links");
+        glBindVertexArray(vao);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof quad, quad, GL_STATIC_DRAW);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_BLEND);
+        glClearColor(0, 0, 0, 1);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glUseProgram(p);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        read_texture(rb, tex, ssbo, px);
+        char what[160];
+        snprintf(what, sizeof what, "geometry shader: constant and trimmed outputs reach the fragment shader (pixel %08x)",
+                 px[32 * 64 + 32]);
+        check(near(px[32 * 64 + 32], rgba(64, 128, 191, 255)), what);
+    }
+
     /* 12. layout(binding) in a #version 330 shader with the SSBO extension (Complementary's world-space
        reflections): GL drivers accept it, glslang only with GL_ARB_shading_language_420pack */
     check(really_linked(program("#version 330 core\nlayout(location = 0) in vec2 pos;\n"

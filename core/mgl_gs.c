@@ -433,9 +433,53 @@ static int mentions(const char *text, const char *name)
 }
 
 /* ------------------------------------------------------------------ varyings */
+/* How many leading components of fragment input `name` the fragment shader reads: when every use is swizzled
+   (SEUS reads only texcoord.xy and viewPos.xyz), the highest component named; otherwise all of them. The one
+   unswizzled occurrence allowed is its declaration, `<type> name`. */
+static int fs_used_comps(const char *fs, const char *type, const char *name, int comps)
+{
+    size_t n = strlen(name), tn = strlen(type);
+    int hi = -1, bare = 0;
+    for (const char *p = strstr(fs, name); p; p = strstr(p + 1, name)) {
+        char a = p > fs ? p[-1] : ' ', b = p[n];
+        if (isalnum((unsigned char)a) || a == '_' || isalnum((unsigned char)b) || b == '_')
+            continue;
+        const char *q = p + n;
+        while (*q == ' ' || *q == '\t')
+            q++;
+        if (*q != '.') {
+            const char *t = p;
+            while (t > fs && (t[-1] == ' ' || t[-1] == '\t'))
+                t--;
+            if (++bare > 1 || (size_t)(t - fs) < tn || strncmp(t - tn, type, tn) ||
+                (t - tn > fs && (isalnum((unsigned char)t[-(ptrdiff_t)tn - 1]) || t[-(ptrdiff_t)tn - 1] == '_')))
+                return comps;
+            continue;
+        }
+        const char *a2 = p;
+        while (a2 > fs && (a2[-1] == ' ' || a2[-1] == '\t'))
+            a2--;
+        if (a2 > fs && a2[-1] == '.') /* a member of something else */
+            return comps;
+        int len = 0;
+        for (q++; isalpha((unsigned char)*q); q++, len++) {
+            const char *c = strchr("xyzwrgbastpq", *q);
+            if (!c)
+                return comps;
+            int idx = (int)(c - "xyzwrgbastpq") % 4;
+            hi = idx > hi ? idx : hi;
+        }
+        if (!len || len > 4)
+            return comps;
+    }
+    return hi < 0 ? comps : hi + 1 < comps ? hi + 1 : comps;
+}
+
+
 typedef struct {
     char type[32], name[96];
     int comps, is_int, is_uint, flat, noperspective;
+    int stored; /* leading components kept in the records (the rest are never read: written as 0) */
 } varying;
 
 static int type_info(const char *t, int *comps, int *is_int, int *is_uint)
@@ -459,24 +503,24 @@ static const char *swz[5] = {"", ".x", ".xy", ".xyz", ""};
 
 /* value of a varying packed into a vec4 (ints as bits) */
 /* Records are tightly packed floats: position (4), then each varying's own components, then the strip id (1).
-   SEUS's shadow pass (8 varyings, 18 components) writes 23 floats per vertex instead of 10 vec4s: the record
-   traffic was most of the geometry stage's cost. */
+   SEUS's shadow pass writes 20 floats per vertex instead of 10 vec4s: the record traffic was most of the geometry
+   stage's cost. Outputs set only to a constant and components the fragment shader never reads are left out. */
 static void pack_store(sb *o, const varying *v, const char *expr, int off)
 {
-    for (int j = 0; j < v->comps; j++) {
+    for (int j = 0; j < v->stored; j++) {
         char c[160];
         if (v->comps == 1)
             snprintf(c, sizeof c, "%s", expr);
         else
             snprintf(c, sizeof c, "%s[%d]", expr, j);
         if (!strcmp(v->type, "bool"))
-            sb_printf(o, "  mgl_ov[rec + %du] = %s ? 1.0 : 0.0;\n", off + j, c);
+            sb_printf(o, "  mgl_ov[mgl_rec + %du] = %s ? 1.0 : 0.0;\n", off + j, c);
         else if (v->is_int)
-            sb_printf(o, "  mgl_ov[rec + %du] = intBitsToFloat(%s);\n", off + j, c);
+            sb_printf(o, "  mgl_ov[mgl_rec + %du] = intBitsToFloat(%s);\n", off + j, c);
         else if (v->is_uint)
-            sb_printf(o, "  mgl_ov[rec + %du] = uintBitsToFloat(%s);\n", off + j, c);
+            sb_printf(o, "  mgl_ov[mgl_rec + %du] = uintBitsToFloat(%s);\n", off + j, c);
         else
-            sb_printf(o, "  mgl_ov[rec + %du] = %s;\n", off + j, c);
+            sb_printf(o, "  mgl_ov[mgl_rec + %du] = %s;\n", off + j, c);
     }
 }
 
@@ -484,13 +528,16 @@ static void unpack_expr(sb *o, const varying *v, int off)
 {
     const char *conv = v->is_int && strcmp(v->type, "bool") ? "floatBitsToInt" : v->is_uint ? "floatBitsToUint" : "";
     if (!strcmp(v->type, "bool")) {
-        sb_printf(o, "(mgl_ov[rec + %du] > 0.5 ? 1 : 0)", off);
+        sb_printf(o, "(mgl_ov[mgl_rec + %du] > 0.5 ? 1 : 0)", off);
         return;
     }
     if (v->comps > 1)
         sb_printf(o, "%s(", v->type);
     for (int j = 0; j < v->comps; j++)
-        sb_printf(o, "%s%s(mgl_ov[rec + %du])", j ? ", " : "", conv, off + j);
+        if (j < v->stored)
+            sb_printf(o, "%s%s(mgl_ov[mgl_rec + %du])", j ? ", " : "", conv, off + j);
+        else
+            sb_printf(o, "%s%s", j ? ", " : "", v->is_int || v->is_uint ? "0" : "0.0");
     if (v->comps > 1)
         sb_puts(o, ")");
 }
@@ -500,6 +547,56 @@ typedef struct {
     char type[32], name[96], renamed[112];
     int location, comps, is_int, is_uint;
 } vs_attr;
+
+/* A geometry output the shader only ever sets to one constant, such as Iris's `isWater = 0.0f;` in SEUS's shadow
+   pass: it needs no space in the records, the passthrough stage writes the constant itself. Returns 1 and the
+   constant's text when every use of the name outside its declaration is `name = <literal or constructor of
+   literals>;` with the same right-hand side. */
+static int const_output(const toks *ts, const stmts *ss, const char *name, char *rhs, size_t cap)
+{
+    static const char *const ctor[] = {"float", "int", "uint", "vec2", "vec3", "vec4", "ivec2", "ivec3", "ivec4",
+                                       "uvec2", "uvec3", "uvec4", NULL};
+    int found = 0;
+    rhs[0] = 0;
+    for (int i = 0; i < ss->n; i++) {
+        const stmt *st = &ss->s[i];
+        if (st->kind == S_DECL && (st->quals & (Q_IN | Q_OUT)))
+            continue;
+        for (int k = st->start; k < st->end; k++) {
+            const tok *t = &ts->t[k];
+            if (t->kind != T_ID || (int)strlen(name) != t->n || memcmp(t->p, name, (size_t)t->n) ||
+                (k > 0 && tok_is(&ts->t[k - 1], ".")))
+                continue;
+            if (k + 1 >= st->end || !tok_is(&ts->t[k + 1], "=") || (k > 0 && !tok_is(&ts->t[k - 1], ";") &&
+                                                                     !tok_is(&ts->t[k - 1], "{") && !tok_is(&ts->t[k - 1], "}")))
+                return 0; /* read, swizzled, compound-assigned, passed on, or part of a larger expression */
+            char cur[256];
+            size_t n = 0;
+            int j = k + 2;
+            for (; j < st->end && !tok_is(&ts->t[j], ";"); j++) {
+                const tok *a = &ts->t[j];
+                int ok = a->kind == T_NUM || tok_is(a, "(") || tok_is(a, ")") || tok_is(a, ",") || tok_is(a, "-") ||
+                         tok_is(a, "+");
+                for (int c = 0; !ok && a->kind == T_ID && ctor[c]; c++)
+                    ok = tok_is(a, ctor[c]);
+                if (!ok || n + (size_t)a->n + 1 >= sizeof cur)
+                    return 0;
+                memcpy(cur + n, a->p, (size_t)a->n);
+                n += (size_t)a->n;
+            }
+            cur[n] = 0;
+            if (j >= st->end || !n || (found && strcmp(cur, rhs)))
+                return 0;
+            if (!found && strlen(cur) < cap)
+                memcpy(rhs, cur, n + 1);
+            else if (!found)
+                return 0;
+            found = 1;
+            k = j;
+        }
+    }
+    return found;
+}
 
 static void fail(mgl_xlate_result *r, const char *msg)
 {
@@ -769,19 +866,25 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
     /* record floats: position, the components of each varying the fragment shader mentions (the rest are never
        stored, voff -1; MGL_GS_KEEP_ALL=1 keeps them), strip id */
     int R = 5, voff[64];
+    char konst[64][96]; /* outputs only ever set to one constant (voff -2): written by the passthrough stage */
     int keep_all = !src[MGL_FRAGMENT] || (getenv("MGL_GS_KEEP_ALL") && atoi(getenv("MGL_GS_KEEP_ALL")));
     for (int i = 0; i < ngout; i++) {
         voff[i] = -1;
         if (!keep_all && !mentions(src[MGL_FRAGMENT], gout[i].name))
             continue;
+        if (!keep_all && strcmp(gout[i].type, "bool") && const_output(&tg, &sg, gout[i].name, konst[i], sizeof konst[i])) {
+            voff[i] = -2;
+            continue;
+        }
+        gout[i].stored = keep_all ? gout[i].comps : fs_used_comps(src[MGL_FRAGMENT], gout[i].type, gout[i].name, gout[i].comps);
         voff[i] = R - 1;
-        R += gout[i].comps;
+        R += gout[i].stored;
     }
 
     /* ---- compute shader ---- */
     /* MGL_GS_PROBE (timing experiments only, the picture is wrong): 1 = no geometry stage (nothing emitted),
        2 = no vertex stage (attributes straight to the geometry stage), 3 = no record writes, 4 = constant attributes (no fetch),
-       5 = attribute fetch only (no vertex stage). MGL_GS_LOCAL = threads
+       5 = attribute fetch only (no vertex stage), 6 = no passthrough draws (mgl_metal.m). MGL_GS_LOCAL = threads
        per threadgroup (default 64). Both change the generated shader: run with MGL_CACHE_DIR unset. */
     int probe = getenv("MGL_GS_PROBE") ? atoi(getenv("MGL_GS_PROBE")) : 0;
     int local = getenv("MGL_GS_LOCAL") ? atoi(getenv("MGL_GS_LOCAL")) : 64;
@@ -799,17 +902,17 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
     sb_add(&comp, gs.s, gs.n);
     if (probe == 3)
         sb_printf(&comp, "void mgl_emit() {\n  if (mgl_emitted < %du) mgl_emitted++;\n}\nvoid mgl_emit_unused() {\n"
-                         "  uint rec = 0u;\n", max_vertices);
+                         "  uint mgl_rec = 0u;\n", max_vertices);
     else
     sb_printf(&comp, "void mgl_emit() {\n  if (mgl_emitted >= %du) return;\n"
-                     "  uint rec = (uint(mgl_prim_id) * %du + mgl_emitted) * %du;\n"
-                     "  mgl_ov[rec] = mgl_g_Position.x;\n  mgl_ov[rec + 1u] = mgl_g_Position.y;\n"
-                     "  mgl_ov[rec + 2u] = mgl_g_Position.z;\n  mgl_ov[rec + 3u] = mgl_g_Position.w;\n",
+                     "  uint mgl_rec = (uint(mgl_prim_id) * %du + mgl_emitted) * %du;\n"
+                     "  mgl_ov[mgl_rec] = mgl_g_Position.x;\n  mgl_ov[mgl_rec + 1u] = mgl_g_Position.y;\n"
+                     "  mgl_ov[mgl_rec + 2u] = mgl_g_Position.z;\n  mgl_ov[mgl_rec + 3u] = mgl_g_Position.w;\n",
               max_vertices, max_vertices, R);
     for (int i = 0; i < ngout; i++)
         if (voff[i] >= 0)
             pack_store(&comp, &gout[i], gout[i].name, voff[i]);
-    sb_printf(&comp, "  mgl_ov[rec + %du] = uintBitsToFloat(mgl_strip);\n  mgl_emitted++;\n}\n"
+    sb_printf(&comp, "  mgl_ov[mgl_rec + %du] = uintBitsToFloat(mgl_strip);\n  mgl_emitted++;\n}\n"
                      "void mgl_end_primitive() { mgl_strip++; }\n", R - 1);
     /* one vertex-stage run: fetch the attributes of vtx, run the vertex shader, store the results as input c */
     sb_puts(&comp, "void mgl_run_vs(uint vtx, int c) {\n    mgl_vertex_id = int(vtx);\n    mgl_instance_id = 0;\n");
@@ -905,25 +1008,30 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
                    "layout(std430, binding = 26) readonly buffer mgl_i6_ { float mgl_ov[]; };\n"
                    "layout(std430, binding = 27) readonly buffer mgl_i7_ { uint mgl_oc[]; };\n");
     for (int i = 0; i < ngout; i++)
-        if (voff[i] >= 0)
+        if (voff[i] >= 0 || voff[i] == -2)
             sb_printf(&pass, "%sout %s %s;\n",
                   gout[i].flat || gout[i].is_int || gout[i].is_uint || !strcmp(gout[i].type, "bool") ? "flat "
                   : gout[i].noperspective                                                            ? "noperspective "
                                                                                                      : "",
                   !strcmp(gout[i].type, "bool") ? "int" : gout[i].type, gout[i].name);
+    /* locals are mgl_-prefixed: the outputs keep the geometry shader's names (SEUS-style packs use short ones) */
     sb_printf(&pass, "void main() {\n"
-                     "  const uint M = %du, R = %du, T = M - 2u;\n"
-                     "  uint v = uint(gl_VertexIndex);\n  uint prim = v / (T * 3u);\n  uint rem = v %% (T * 3u);\n"
-                     "  uint t = rem / 3u;\n  uint j = rem %% 3u;\n"
-                     "  uint k = (t & 1u) != 0u ? (j == 0u ? 1u : (j == 1u ? 0u : 2u)) : j; /* keep strip winding */\n"
-                     "  uint base = prim * M;\n"
-                     "  bool ok = t + 2u < mgl_oc[prim] &&\n"
-                     "      floatBitsToUint(mgl_ov[(base + t) * R + R - 1u]) == floatBitsToUint(mgl_ov[(base + t + 2u) * R + R - 1u]);\n"
-                     "  uint rec = (base + t + k) * R;\n"
-                     "  gl_Position = ok ? vec4(mgl_ov[rec], mgl_ov[rec + 1u], mgl_ov[rec + 2u], mgl_ov[rec + 3u]) : vec4(2.0, 2.0, 2.0, 1.0);\n",
+                     "  const uint mgl_M = %du, mgl_R = %du, mgl_T = mgl_M - 2u;\n"
+                     "  uint mgl_v = uint(gl_VertexIndex);\n  uint mgl_prim = mgl_v / (mgl_T * 3u);\n"
+                     "  uint mgl_rem = mgl_v %% (mgl_T * 3u);\n"
+                     "  uint mgl_t = mgl_rem / 3u;\n  uint mgl_j = mgl_rem %% 3u;\n"
+                     "  uint mgl_k = (mgl_t & 1u) != 0u ? (mgl_j == 0u ? 1u : (mgl_j == 1u ? 0u : 2u)) : mgl_j; /* keep strip winding */\n"
+                     "  uint mgl_base = mgl_prim * mgl_M;\n"
+                     "  bool mgl_ok = mgl_t + 2u < mgl_oc[mgl_prim] &&\n"
+                     "      floatBitsToUint(mgl_ov[(mgl_base + mgl_t) * mgl_R + mgl_R - 1u]) ==\n"
+                     "      floatBitsToUint(mgl_ov[(mgl_base + mgl_t + 2u) * mgl_R + mgl_R - 1u]);\n"
+                     "  uint mgl_rec = (mgl_base + mgl_t + mgl_k) * mgl_R;\n"
+                     "  gl_Position = mgl_ok ? vec4(mgl_ov[mgl_rec], mgl_ov[mgl_rec + 1u], mgl_ov[mgl_rec + 2u], mgl_ov[mgl_rec + 3u]) : vec4(2.0, 2.0, 2.0, 1.0);\n",
               max_vertices, R);
-    sb_puts(&pass, "  if (!ok) return; /* unused slot or strip join: off-screen, its varyings never read */\n");
+    sb_puts(&pass, "  if (!mgl_ok) return; /* unused slot or strip join: off-screen, its varyings never read */\n");
     for (int i = 0; i < ngout; i++) {
+        if (voff[i] == -2)
+            sb_printf(&pass, "  %s = %s(%s);\n", gout[i].name, gout[i].type, konst[i]);
         if (voff[i] < 0)
             continue;
         sb_printf(&pass, "  %s = ", gout[i].name);
