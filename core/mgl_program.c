@@ -414,7 +414,7 @@ static void add_photon_rt(mgl_shader *s)
     static int on = -1;
     if (on < 0) {
         const char *e = getenv("MCMETAL_PHOTON_RT");
-        on = e && *e && *e != '0' ? (*e == '2' ? 2 : 1) : 0;
+        on = e && *e >= '1' && *e <= '4' ? *e - '0' : 0;
     }
     char *f = on && s->type == GL_FRAGMENT_SHADER ? strstr(s->source, "vec3 get_lpv_blocklight(") : NULL;
     if (!f || !strstr(s->source, "vec3 get_block_lighting(") || strstr(s->source, "mcm_photon_lpv"))
@@ -452,6 +452,10 @@ static void add_photon_rt(mgl_shader *s)
         "  vec3(0.55,0.15,1.0)*10.0, vec3(1.0,0.2,0.9)*10.0, vec3(1.0,0.55,0.85)*10.0);\n"
         "vec3 get_lpv_blocklight(vec3 scene_pos, vec3 normal, vec3 mc_blocklight, float ao) {\n"
         "  vec3 lpv = mcm_photon_lpv(scene_pos, normal, mc_blocklight, ao);\n"
+        "#ifdef MCM_PHOTON_RT_NOLIGHTS\n" /* cost split: the scene is still built, but nothing is looked up or traced */
+        "  if (lpv.x < -1e30) return vec3(mcm_trace(scene_pos, normal, 1.0));\n"
+        "  return lpv;\n"
+        "#endif\n"
         /* no block light here worth shadowing: skip the rays */
         "#ifndef MCM_PHOTON_RT_DEBUG\n"
         "  if (dot(lpv, vec3(0.2126, 0.7152, 0.0722)) < 0.002) return lpv;\n"
@@ -477,7 +481,11 @@ static void add_photon_rt(mgl_shader *s)
         "  vec3 seen = vec3(0.0);\n"
         "  for (int i = 0; i < n; i++) {\n"
         /* stop short of the light block itself (a full block's faces are 0.5 from its centre, corners up to 0.87) */
+        "#ifdef MCM_PHOTON_RT_NORAYS\n" /* cost split: lights looked up, no rays */
+        "    if (w[i] >= 0.0 || mcm_trace(o, dir[i], 1.0) < 0.0)\n" /* the dead trace keeps the scene bound and built */
+        "#else\n"
         "    if (w[i] < 0.1 * total || dist[i] <= 0.9 || mcm_trace(o + dir[i] * 0.01, dir[i], dist[i] - 0.9) < 0.0)\n"
+        "#endif\n"
         "      seen += c[i];\n"
         "  }\n"
         "#ifdef MCM_PHOTON_RT_DEBUG\n"
@@ -494,9 +502,11 @@ static void add_photon_rt(mgl_shader *s)
     memcpy(o, s->source, pre); o += pre;
     memcpy(o, nm, strlen(nm)); o += strlen(nm);
     memcpy(o, f + oldnm, head); o += head;
-    if (on == 2) { /* MCMETAL_PHOTON_RT=2: show the shadow factor instead of the light (white = every light in view) */
-        memcpy(o, "\n#define MCM_PHOTON_RT_DEBUG", 28); o += 28;
-    }
+    /* MCMETAL_PHOTON_RT=2: show the shadow factor instead of the light (white = every light in view);
+       3: look the lights up but cast no rays; 4: build the scene only (3 and 4 split the cost) */
+    static const char *const mode[5] = {"", "", "\n#define MCM_PHOTON_RT_DEBUG", "\n#define MCM_PHOTON_RT_NORAYS",
+                                        "\n#define MCM_PHOTON_RT_NOLIGHTS"};
+    memcpy(o, mode[on], strlen(mode[on])); o += strlen(mode[on]);
     memcpy(o, wrap, sizeof wrap - 1); o += sizeof wrap - 1;
     memcpy(o, end, rest + 1);
     free(s->source);
