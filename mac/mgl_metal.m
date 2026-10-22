@@ -16,6 +16,7 @@
 #include <dlfcn.h>
 #include <mach/mach_time.h>
 #include <pthread.h>
+#include <pthread/qos.h>
 #include "mgl_state.h"
 
 #define MGL_EXPORT __attribute__((visibility("default")))
@@ -4607,6 +4608,15 @@ MGL_EXPORT void *mgl_glfw_create(void *metal_layer)
 MGL_EXPORT void mgl_glfw_make_current(void *ctx)
 {
     current = ctx;
+    /* the thread that draws gets the scheduler's top class, so macOS keeps it on a performance core and ahead of
+       chunk meshing and the integrated server (mcopt measured +17% fps, +63% 1% lows on Apple silicon). MGL_QOS=0 off. */
+    static __thread int qos_set;
+    if (ctx && !qos_set) {
+        qos_set = 1;
+        const char *e = getenv("MGL_QOS");
+        if (!(e && *e == '0'))
+            pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+    }
 }
 
 MGL_EXPORT void mgl_glfw_swap_interval(void *ctx, int interval)
