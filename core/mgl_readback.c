@@ -41,10 +41,7 @@ static void *pack_dest(void *pixels)
     if (!mgl->pixel_pack_buffer)
         return pixels;
     mgl_buffer *b = mgl_table_get(&mgl->buffers, mgl->pixel_pack_buffer);
-    if (!b || !b->mem)
-        return NULL;
-    mgl_rt_note_write(b->mem, (size_t)pixels, (size_t)-1);
-    return (char *)mglb_buffer_ptr(b->mem) + (size_t)pixels;
+    return b && b->mem ? (char *)mglb_buffer_ptr(b->mem) + (size_t)pixels : NULL;
 }
 
 static int supported(GLenum format, GLenum type, const char *who)

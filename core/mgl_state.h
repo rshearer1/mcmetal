@@ -214,8 +214,6 @@ void mgl_window_resize(int w, int h);
 void mgl_rt_link(mgl_program *p);
 void mgl_rt_record(mgl_program *p, const mgl_draw *d);
 void mgl_rt_note_write(mglb_buffer *m, size_t offset, size_t size);
-void mgl_draw_note_write(mglb_buffer *m); /* forget what mgl_draw.c learnt about this memory's contents */
-extern unsigned long mgl_merge_stats[2];
 void mgl_rt_end_frame(void); /* called by the backend before present */
 /* Waits for a program's background compile and applies it; draws and dispatches call this before using p->gpu. */
 void mgl_program_wait(mgl_program *p);

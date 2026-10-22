@@ -2,8 +2,6 @@
 #include <string.h>
 #include "mgl_state.h"
 
-unsigned long mgl_merge_stats[2]; /* MGL_PROFILE: section ranges asked for, and drawn after merging */
-
 mgl_program *mgl_current_program(void);
 
 /* ---------------------------------------------------------------- vertex arrays */
@@ -548,73 +546,6 @@ void glDrawElementsInstanced(GLenum mode, GLsizei count, GLenum type, const void
 void glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type, const void *ind) { draw(mode, count, type, ind, 0, 0, 1); }
 void glDrawElementsBaseVertex(GLenum mode, GLsizei count, GLenum type, const void *ind, GLint bv) { draw(mode, count, type, ind, 0, bv, 1); }
 
-/* Sodium draws terrain from one shared index buffer of quads (0 1 2 2 3 0, 4 5 6 6 7 4, ...) at offset 0, one range
-   per section face. Ranges that sit back to back in the vertex buffer can then be one draw: the merged draw's
-   indices past the first range are the same quads, shifted by exactly its vertex count. This checks once that an
-   index buffer really holds that pattern (and again after any write to it) and remembers how far it goes. */
-static struct { mglb_buffer *mem; long n; } quad_ok[4];
-
-void mgl_draw_note_write(mglb_buffer *m)
-{
-    for (int i = 0; i < 4; i++)
-        if (quad_ok[i].mem == m)
-            quad_ok[i].mem = NULL;
-}
-
-static long quad_prefix(mgl_buffer *ib, GLenum type)
-{
-    for (int i = 0; i < 4; i++)
-        if (quad_ok[i].mem == ib->mem)
-            return quad_ok[i].n;
-    if (mglb_buffer_gpu_writing(ib->mem))
-        return 0;
-    size_t sz = type == GL_UNSIGNED_SHORT ? 2 : 4, total = ib->size / sz;
-    const unsigned char *p = mglb_buffer_ptr(ib->mem);
-    long n = 0;
-    for (size_t k = 0; k + 6 <= total; k += 6) {
-        static const unsigned pat[6] = {0, 1, 2, 2, 3, 0};
-        unsigned q = (unsigned)(k / 6) * 4;
-        int ok = 1;
-        for (int j = 0; j < 6 && ok; j++)
-            ok = (sz == 2 ? ((const uint16_t *)p)[k + j] : ((const uint32_t *)p)[k + j]) == q + pat[j];
-        if (!ok)
-            break;
-        n = (long)k + 6;
-    }
-    static int slot;
-    quad_ok[slot].mem = ib->mem;
-    quad_ok[slot].n = n;
-    slot = (slot + 1) & 3;
-    return n;
-}
-
-/* Merge back-to-back quad ranges (MGL_MERGE_RANGES=0 off). Returns the new number of ranges in c/o/b. */
-static int merge_ranges(mgl_buffer *ib, GLenum type, const GLsizei *count, const void *const *ind, const GLint *bv,
-                        int n, GLsizei *c, const void **o, GLint *b)
-{
-    static int on = -1;
-    if (on < 0) {
-        const char *e = getenv("MGL_MERGE_RANGES");
-        on = !(e && *e == '0');
-    }
-    long ok = on && !ib->mapped ? quad_prefix(ib, type) : 0;
-    int m = 0;
-    for (int i = 0; i < n; i++) {
-        if (count[i] <= 0)
-            continue;
-        if (m && ok && !ind[i] && !o[m - 1] && c[m - 1] % 6 == 0 && count[i] % 6 == 0 &&
-            bv[i] == b[m - 1] + c[m - 1] / 6 * 4 && (long)c[m - 1] + count[i] <= ok) {
-            c[m - 1] += count[i];
-            continue;
-        }
-        c[m] = count[i];
-        o[m] = ind[i];
-        b[m] = bv[i];
-        m++;
-    }
-    return m;
-}
-
 void glMultiDrawElementsBaseVertex(GLenum mode, const GLsizei *count, GLenum type, const void *const *ind,
                                    GLsizei drawcount, const GLint *bv)
 {
@@ -637,24 +568,11 @@ void glMultiDrawElementsBaseVertex(GLenum mode, const GLsizei *count, GLenum typ
             d.base_vertex = bv[i];
             mgl_rt_record(p, &d);
         }
-        GLsizei cs[512];
-        const void *os[512];
-        GLint bs[512];
-        if (mode == GL_TRIANGLES && drawcount <= 512) {
-            d.multi_n = merge_ranges(ib, type, count, ind, bv, drawcount, cs, os, bs);
-            d.multi_count = cs;
-            d.multi_offset = os;
-            d.multi_base = bs;
-            mgl_merge_stats[0] += (unsigned long)drawcount;
-            mgl_merge_stats[1] += (unsigned long)d.multi_n;
-        } else {
-            d.multi_n = drawcount;
-            d.multi_count = count;
-            d.multi_offset = ind;
-            d.multi_base = bv;
-        }
-        if (d.multi_n > 0)
-            mglb_draw(&d);
+        d.multi_n = drawcount;
+        d.multi_count = count;
+        d.multi_offset = ind;
+        d.multi_base = bv;
+        mglb_draw(&d);
         return;
     }
     for (GLsizei i = 0; i < drawcount; i++)

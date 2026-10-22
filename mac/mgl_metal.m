@@ -4659,11 +4659,6 @@ static void profile_frame(unsigned long draws)
     if (prof.sh_draws)
         mgl_log("profile: shadow-sized viewports (without geometry shaders) %.0f draws, %.0fk triangles per frame",
                 prof.sh_draws / f, prof.sh_tris / f * 1e-3);
-    if (mgl_merge_stats[0]) {
-        mgl_log("profile: section ranges %.0f asked, %.0f drawn after merging back-to-back ones per frame",
-                mgl_merge_stats[0] / f, mgl_merge_stats[1] / f);
-        mgl_merge_stats[0] = mgl_merge_stats[1] = 0;
-    }
     if (prof.gs_draws)
         mgl_log("profile: geometry shaders %.0f draws, %.0fk input triangles, %.1f MB of records per frame", prof.gs_draws / f,
                 prof.gs_tris / f * 1e-3, prof.gs_bytes / f / 1048576.0);
