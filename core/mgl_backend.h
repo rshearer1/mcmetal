@@ -184,6 +184,9 @@ typedef struct mgl_rt_geom {
 /* The terrain sections live this frame; the backend keeps one acceleration structure per section (cached by
    buffer, range and gen) and rebuilds the scene from them. Bound at MGL_BUF_SCENE for programs with uses_scene. */
 void mglb_rt_update(const mgl_rt_geom *g, int n);
+/* Bytes [offset, offset + size) of a buffer were written (size (size_t)-1: all of it): acceleration structures
+   built from vertices or indices there are out of date and must not be reused. */
+void mglb_rt_forget(mglb_buffer *b, size_t offset, size_t size);
 /* This frame's entity triangles (mobs, players, item frames, chests...): camera-relative float3 corners, 9 floats
    per triangle, solid. Called just before mglb_rt_update; the backend adds them to that scene. */
 void mglb_rt_dynamic(const float *tris, int n);

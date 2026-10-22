@@ -26,7 +26,6 @@ typedef struct rt_draw {
 
 static rt_draw *draws;
 static int num_draws, cap_draws;
-static unsigned write_epoch; /* buffer writes so far: a new entry's generation (mgl_rt_note_write) */
 static double scene_wanted;  /* last time a program that casts rays was drawn; capture runs only around it */
 static float view_proj[16];
 static int have_view;
@@ -77,6 +76,12 @@ void mgl_rt_link(mgl_program *p)
     }
     if (p->rt_pos_loc < 0 || p->rt_region_off < 0)
         p->rt_pos_loc = -1; /* not a terrain program */
+    p->rt_atlas_slot = -1; /* the block atlas, for mcm_trace's alpha test */
+    for (int i = 0; i < p->x.num_textures; i++) {
+        const char *n = p->x.textures[i].name;
+        if (!strcmp(n, "u_BlockTex") || !strcmp(n, "gtexture") || !strcmp(n, "tex") || !strcmp(n, "texture"))
+            p->rt_atlas_slot = i;
+    }
     /* entities: a float3 position (vanilla's Position, or Iris's / OptiFine-style core names) and a model-view */
     p->rt_epos_loc = p->rt_emv_off = p->rt_eproj_off = -1;
     p->rt_entity = 0;
@@ -298,12 +303,107 @@ static void touch(rt_draw *r, const rt_draw *key, double t)
     r->seen = t;
 }
 
-/* 1 when the kept list already covers the draw (or now does, widened) */
+/* Draw -> kept entry. Each terrain draw used to be compared with every kept section (a few thousand), and a draw
+   that folds into one (most of them: Sodium draws the camera-facing faces of a kept range) went through the fold
+   scans as well: 26-51 us per multi-draw call on the M3 with our RT pack, against 3-5 us without ray tracing.
+   The table holds every entry's own key and, once a draw has folded into an entry, that draw's key too. Entries
+   move when the list is compacted; the table is then rebuilt on the next lookup. */
+typedef struct rt_slot {
+    uint64_t h; /* 0 = empty */
+    int idx;
+} rt_slot;
+static rt_slot *tab;
+static int tab_cap, tab_used, tab_stale = 1;
+
+static uint64_t mix64(uint64_t h, uint64_t v)
+{
+    h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2);
+    return h * 0xBF58476D1CE4E5B9ull;
+}
+
+static uint64_t key_hash(const mgl_rt_geom *g)
+{
+    uint64_t h = mix64((uint64_t)(uintptr_t)g->vbuf, (uint64_t)(uintptr_t)g->ibuf);
+    h = mix64(h, (uint64_t)g->vbase);
+    h = mix64(h, (uint64_t)g->ioff);
+    h = mix64(h, (uint64_t)(uint32_t)g->count << 32 | (uint32_t)g->base_vertex);
+    h = mix64(h, (uint64_t)g->translucent);
+    h ^= h >> 31;
+    return h ? h : 1;
+}
+
+static int same_draw(const mgl_rt_geom *a, const mgl_rt_geom *b)
+{
+    return a->vbuf == b->vbuf && a->vbase == b->vbase && a->base_vertex == b->base_vertex && a->ioff == b->ioff &&
+           a->count == b->count && a->ibuf == b->ibuf && a->translucent == b->translucent;
+}
+
+static void tab_put(uint64_t h, int idx)
+{
+    unsigned m = (unsigned)tab_cap - 1, at = (unsigned)h & m;
+    while (tab[at].h)
+        at = (at + 1) & m;
+    tab[at].h = h;
+    tab[at].idx = idx;
+    tab_used++;
+}
+
+static void tab_rebuild(void)
+{
+    int want = 1024;
+    while (want < num_draws * 4)
+        want *= 2;
+    if (want != tab_cap) {
+        free(tab);
+        tab = malloc(sizeof *tab * (size_t)want);
+        tab_cap = want;
+    }
+    memset(tab, 0, sizeof *tab * (size_t)tab_cap);
+    tab_used = 0;
+    for (int i = 0; i < num_draws; i++)
+        tab_put(key_hash(&draws[i].g), i);
+    tab_stale = 0;
+}
+
+static int quad_range(const mgl_rt_geom *g, int *lo, int *hi);
+static int same_layout(const mgl_rt_geom *a, const mgl_rt_geom *b);
+
+/* the kept entry for this draw (its own, or the one it folded into before), or -1 */
+static int tab_find(const mgl_rt_geom *g, uint64_t h)
+{
+    if (tab_stale)
+        tab_rebuild();
+    unsigned m = (unsigned)tab_cap - 1;
+    for (unsigned at = (unsigned)h & m; tab[at].h; at = (at + 1) & m) {
+        if (tab[at].h != h || tab[at].idx >= num_draws)
+            continue;
+        const mgl_rt_geom *r = &draws[tab[at].idx].g;
+        if (same_draw(r, g))
+            return tab[at].idx;
+        int lo, hi, klo, khi;
+        if (same_layout(r, g) && quad_range(r, &lo, &hi) && quad_range(g, &klo, &khi) && klo >= lo && khi <= hi)
+            return tab[at].idx;
+    }
+    return -1;
+}
+
+static void tab_add(uint64_t h, int idx)
+{
+    if (tab_stale)
+        return; /* rebuilt from the list on the next lookup */
+    if ((tab_used + 1) * 2 > tab_cap) {
+        tab_stale = 1;
+        return;
+    }
+    tab_put(h, idx);
+}
+
+/* the kept entry that covers the draw (or now does, widened), or -1 */
 static int fold_into_section(const rt_draw *key, double t)
 {
     int klo, khi;
     if (!quad_range(&key->g, &klo, &khi))
-        return 0;
+        return -1;
     for (int i = 0; i < num_draws; i++) {
         rt_draw *r = &draws[i];
         int lo, hi;
@@ -312,7 +412,7 @@ static int fold_into_section(const rt_draw *key, double t)
         if (klo >= lo && khi <= hi) {
             touch(r, key, t);
             rtd.f_sub++;
-            return 1;
+            return i;
         }
     }
     for (int i = 0; i < num_draws; i++) {
@@ -329,7 +429,7 @@ static int fold_into_section(const rt_draw *key, double t)
         touch(r, key, t);
         rtd.f_merged++;
         /* drop other kept ranges now inside this one */
-        int n = 0;
+        int n = 0, at = i;
         for (int j = 0; j < num_draws; j++) {
             int jl, jh;
             if (j != i && same_layout(&draws[j].g, &r->g) && quad_range(&draws[j].g, &jl, &jh) && jl >= ulo &&
@@ -338,12 +438,15 @@ static int fold_into_section(const rt_draw *key, double t)
                     r->seen = draws[j].seen;
                 continue;
             }
+            if (j == i)
+                at = n;
             draws[n++] = draws[j];
         }
         num_draws = n;
-        return 1;
+        tab_stale = 1; /* entries moved, and this one's own key changed */
+        return at;
     }
-    return 0;
+    return -1;
 }
 
 static int num_draws_fwd(void);
@@ -432,12 +535,13 @@ float mgl_rt_radius;
 void mgl_rt_record(mgl_program *p, const mgl_draw *d)
 {
     rt_debug_tick();
+    double t = now_s();
     if (p && p->x.uses_scene)
-        scene_wanted = now_s();
+        scene_wanted = t;
     static int snap_env = -1;
     if (snap_env < 0)
         snap_env = getenv("MGL_RT_SNAPSHOT") != NULL;
-    if (!snap_env && (!scene_wanted || now_s() - scene_wanted > 5.0)) {
+    if (!snap_env && (!scene_wanted || t - scene_wanted > 5.0)) {
         rtd.idle++;
         return; /* no ray-tracing shader in use: capture costs nothing */
     }
@@ -466,12 +570,9 @@ void mgl_rt_record(mgl_program *p, const mgl_draw *d)
         return;
     }
     rtd.taken++;
-    for (int i = 0; i < p->x.num_textures; i++) { /* the block atlas, for mcm_trace's alpha test */
-        const mgl_texture_slot *slot = &p->x.textures[i];
-        int idx = slot->msl_index[MGL_FRAGMENT];
-        if (idx >= 0 && idx < MGL_MAX_TEXTURES && d->textures[MGL_FRAGMENT][idx].tex &&
-            (!strcmp(slot->name, "u_BlockTex") || !strcmp(slot->name, "gtexture") || !strcmp(slot->name, "tex") ||
-             !strcmp(slot->name, "texture")))
+    if (p->rt_atlas_slot >= 0) { /* the block atlas, for mcm_trace's alpha test */
+        int idx = p->x.textures[p->rt_atlas_slot].msl_index[MGL_FRAGMENT];
+        if (idx >= 0 && idx < MGL_MAX_TEXTURES && d->textures[MGL_FRAGMENT][idx].tex)
             mgl_rt_atlas = d->textures[MGL_FRAGMENT][idx].tex;
     }
     const mgl_vertex_buf *vb = &d->vbufs[a->buffer];
@@ -482,7 +583,6 @@ void mgl_rt_record(mgl_program *p, const mgl_draw *d)
             ent_off = (int)(e->offset - a->offset);
     }
     const float *region = (const float *)(p->ublock[MGL_VERTEX] + p->rt_region_off);
-    double t = now_s();
 
     /* camera: the terrain pass drawing into a window-sized target (the shadow map is square) */
     int ww, wh;
@@ -495,25 +595,21 @@ void mgl_rt_record(mgl_program *p, const mgl_draw *d)
         have_view = have_terrain_mv = 1;
     }
 
+    /* gen 0: an acceleration structure built from these vertices stays good until they are written, and the
+       backend forgets it then (mglb_rt_forget), so a section that comes back into view is not built again */
     rt_draw key = {{vb->buf, d->index_buf, vb->offset + (size_t)a->offset, vb->stride, d->index_offset,
-                    d->index_type, d->count, d->base_vertex, write_epoch, {region[0], region[1], region[2]},
+                    d->index_type, d->count, d->base_vertex, 0, {region[0], region[1], region[2]},
                     d->blend[0].enabled, ent_off}, t};
-    for (int i = 0; i < num_draws; i++) {
-        rt_draw *r = &draws[i];
-        if (r->g.vbuf == key.g.vbuf && r->g.vbase == key.g.vbase && r->g.base_vertex == key.g.base_vertex &&
-            r->g.ioff == key.g.ioff && r->g.count == key.g.count && r->g.ibuf == key.g.ibuf &&
-            r->g.translucent == key.g.translucent) {
-            memcpy(r->g.region, key.g.region, sizeof r->g.region);
-            if (key.g.ent_off >= 0 && r->g.ent_off != key.g.ent_off) { /* passes without mc_Entity keep it */
-                r->g.ent_off = key.g.ent_off;
-                r->g.gen++;
-            }
-            r->seen = t;
-            goto recorded;
-        }
-    }
-    if (rt_fold() && fold_into_section(&key, t))
+    uint64_t h = key_hash(&key.g);
+    int at = tab_find(&key.g, h);
+    if (at >= 0) {
+        touch(&draws[at], &key, t);
         goto recorded;
+    }
+    if (rt_fold() && (at = fold_into_section(&key, t)) >= 0) {
+        tab_add(h, at); /* the next frame's same draw finds it at once */
+        goto recorded;
+    }
     if (rt_debug()) { /* why is this draw new: compare with a capture entry for the same vertices */
         rtd.fresh++;
         int same_vb = 0, why = 0;
@@ -550,6 +646,7 @@ void mgl_rt_record(mgl_program *p, const mgl_draw *d)
         draws = realloc(draws, sizeof *draws * (size_t)cap_draws);
     }
     draws[num_draws++] = key;
+    tab_add(h, num_draws - 1);
 recorded:;
     /* forget sections not drawn for 2 s (unloaded, rebuilt elsewhere, or behind every pass) */
     static double last_prune;
@@ -558,10 +655,14 @@ recorded:;
         for (int i = 0; i < num_draws; i++)
             if (t - draws[i].seen < 2.0)
                 draws[n++] = draws[i];
+        if (n != num_draws)
+            tab_stale = 1;
         num_draws = n;
         last_prune = t;
     }
-    const char *snap = getenv("MGL_RT_SNAPSHOT");
+    static const char *snap;
+    if (snap_env && !snap)
+        snap = getenv("MGL_RT_SNAPSHOT");
     if (snap) {
         char go[600];
         snprintf(go, sizeof go, "%s.go", snap);
@@ -574,11 +675,11 @@ recorded:;
 
 /* Vertex data written. Sodium never rewrites a live section in place (a rebuilt section gets new space and the
    old space is freed), so a write over a kept range means that range is gone: drop it rather than rebuild it, and
-   if the same range is drawn again it comes back as new. Every write moves the epoch that new entries take as
-   their generation, so a range reused for other vertices never matches an acceleration structure built before. */
+   if the same range is drawn again it comes back as new. The backend forgets acceleration structures built from
+   the written bytes, so a range reused for other vertices never matches one built before. */
 void mgl_rt_note_write(mglb_buffer *m, size_t offset, size_t size)
 {
-    write_epoch++;
+    mglb_rt_forget(m, offset, size);
     int n = 0;
     for (int i = 0; i < num_draws; i++) {
         mgl_rt_geom *g = &draws[i].g;
@@ -593,6 +694,8 @@ void mgl_rt_note_write(mglb_buffer *m, size_t offset, size_t size)
         }
         draws[n++] = draws[i];
     }
+    if (n != num_draws)
+        tab_stale = 1;
     num_draws = n;
     if (n) {
         rtd.writes++;
