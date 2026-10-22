@@ -2863,7 +2863,8 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
         desc[i][2] = vb->stride;
         desc[i][3] = (int32_t)a->type | (a->size << 4) | (a->normalized ? 1 << 8 : 0);
     }
-    size_t out_bytes = (size_t)triangles * (size_t)max_vertices * (size_t)record_floats * 4;
+    /* whole blocks of 32 primitives: the default record layout (mgl_gs_soa) interleaves a block's records */
+    size_t out_bytes = (((size_t)triangles + 31) & ~(size_t)31) * (size_t)max_vertices * (size_t)record_floats * 4;
     prof.gs_draws++;
     prof.gs_tris += (unsigned long)triangles;
     prof.gs_bytes += out_bytes;

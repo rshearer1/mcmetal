@@ -96,6 +96,7 @@ void mgl_xlate_set_deferred(int on);
 int mgl_xlate_emit(void *pending[MGL_NUM_STAGES], char *msl[MGL_NUM_STAGES], char **log);
 /* Programs with a geometry shader: src = {vertex, fragment, NULL} as for mgl_xlate_program. */
 void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl_xlate_result *out);
+int mgl_gs_soa(void); /* geometry-shader record layout: 1 = blocks of 32 primitives (default), 0 = MGL_GS_SOA=0 */
 /* Internal buffers for geometry emulation: GLSL storage blocks named "mgl_i<N>_" map to MSL buffer
    MGL_BUF_INTERNAL_BASE + N (only in compute and the passthrough vertex stage, where no vertex buffers are bound). */
 #define MGL_BUF_INTERNAL_BASE 21
