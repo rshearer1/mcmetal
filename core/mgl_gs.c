@@ -334,16 +334,21 @@ static int split_global_init(sb *decl, sb *init, const toks *ts, const stmt *s, 
         int n = s->names[k], j = n + 1;
         while (j < s->end && tok_is(&ts->t[j], "["))
             j = match(ts, j) + 1;
-        emit_range(decl, ts, s->start, s->type_end, m); /* qualifiers and type */
-        emit_range(decl, ts, n, j, m);                  /* name and array suffix */
-        sb_puts(decl, ";\n");
+        int e = j, unsized = 0;
         if (j < s->end && tok_is(&ts->t[j], "=")) {
-            int e = j + 1;
+            e = j + 1;
             while (e < s->end && !tok_is(&ts->t[e], ",") && !tok_is(&ts->t[e], ";")) {
                 if (tok_is(&ts->t[e], "(") || tok_is(&ts->t[e], "[") || tok_is(&ts->t[e], "{"))
                     e = match(ts, e);
                 e++;
             }
+        }
+        for (int q = s->start; q + 1 < j; q++) /* vec3[] x = vec3[](...): the size comes from the initialiser */
+            unsized |= tok_is(&ts->t[q], "[") && tok_is(&ts->t[q + 1], "]");
+        emit_range(decl, ts, s->start, s->type_end, m); /* qualifiers and type */
+        emit_range(decl, ts, n, unsized ? e : j, m);    /* name, array suffix (and an unsized array's initialiser) */
+        sb_puts(decl, ";\n");
+        if (!unsized && j < s->end && tok_is(&ts->t[j], "=")) {
             sb_puts(init, "  ");
             emit_range(init, ts, n, n + 1, m);
             sb_puts(init, "= ");
