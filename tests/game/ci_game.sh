@@ -162,7 +162,7 @@ bsl|MULTICOLORED_BLOCKLIGHT=true
 unbound|COLORED_LIGHTING=128
 complementary|COLORED_LIGHTING=128"
 
-third_party() { # pack-NAME / packnight-NAME [OUTNAME [VAR=value ...]]: one third-party pack in the pool scene, at
+third_party() { # pack-NAME / packnight-NAME / packshadow-NAME [OUTNAME [VAR=value ...]]: one third-party pack in the pool scene, at
                 # noon (pack settings as shipped) or midnight (coloured block light on)
     local p=$1 out=${2:-$1} name=${1#*-} file url sha extra=
     shift; [ $# -gt 0 ] && shift
@@ -180,7 +180,7 @@ third_party() { # pack-NAME / packnight-NAME [OUTNAME [VAR=value ...]]: one thir
     local opts=$G/shaderpacks/$file.txt
     rm -f "$opts"
     case $p in
-    packnight-*) scene midnight
+    packnight-*|packshadow-*) scene midnight clear "$([ "${p%%-*}" = packshadow ] && echo shadows || echo scene)"
         grep "^${name%%+*}|" <<< "$PACK_LIGHT" | cut -d'|' -f2 > "$opts"; [ -s "$opts" ] || rm -f "$opts" ;;
     *) scene noon ;;
     esac
@@ -215,7 +215,8 @@ for p in $PHASES; do
     rt-debug) scene 1500; PACK=mcmetal-rt-debug run_phase rt-debug 180 metal true ;; # rays drawn as hit (green) / miss (red)
     showcase-plain) scene midnight clear showcase; act plain; run_phase showcase-plain 240 metal true MCMETAL_KEEP_MAC_FLAG=1 ;; # like-for-like with Apple GL, no error screen
     showcase-rain) scene 13800 rain showcase; act showcase; run_phase showcase-rain 240 metal true ;;  # + improved rain, puddles
-    pack-*|packnight-*) third_party "$p" ;; # compatibility sweep: pack-photon, packnight-bsl, pack-complementary+euphoria, ...
+    pack-*|packnight-*|packshadow-*) third_party "$p" ;; # compatibility sweep: pack-photon, packnight-bsl,
+        # pack-complementary+euphoria, ...; packshadow-NAME: night in the shadows room (shadows.mcfunction)
     archive-*) # Metal pipeline binary archive: the pack from an empty shader cache (archive written), again with the
                # archive, and again with the shader cache but no archive. Run with bench=true settle=0 so the fps
                # samples cover the first seconds in the world, where pipeline compiles show up as stalls
