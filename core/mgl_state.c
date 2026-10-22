@@ -68,6 +68,9 @@ void mgl_state_init(mgl_state *s)
     s->cull_face = GL_BACK;
     s->front_face = GL_CCW;
     s->depth_mask = GL_TRUE;
+    s->stencil_func = GL_ALWAYS;
+    s->stencil_fail = s->stencil_zfail = s->stencil_zpass = GL_KEEP;
+    s->stencil_value_mask = s->stencil_writemask = 0xFFFFFFFFu;
     for (int i = 0; i < 4; i++)
         s->color_mask[i] = GL_TRUE;
     s->clear_depth = 1.0f;
@@ -197,6 +200,24 @@ GLAPI void glBlendEquationiARB(GLuint buf, GLenum mode) { glBlendEquationi(buf, 
 
 void glDepthFunc(GLenum func) { mgl->depth_func = func; }
 void glDepthMask(GLboolean flag) { mgl->depth_mask = flag; }
+
+static void stencil_note(void)
+{
+    static int said;
+    if (!said++)
+        mgl_log("stencil state set: kept for queries, no stencil test is done");
+}
+void glStencilFunc(GLenum func, GLint ref, GLuint mask)
+{
+    mgl->stencil_func = func, mgl->stencil_ref = ref, mgl->stencil_value_mask = mask;
+    if (func != GL_ALWAYS)
+        stencil_note();
+}
+void glStencilOp(GLenum fail, GLenum zfail, GLenum zpass)
+{
+    mgl->stencil_fail = fail, mgl->stencil_zfail = zfail, mgl->stencil_zpass = zpass;
+}
+void glStencilMask(GLuint mask) { mgl->stencil_writemask = mask; }
 void glCullFace(GLenum mode) { mgl->cull_face = mode; }
 void glFrontFace(GLenum mode) { mgl->front_face = mode; }
 void glClearDepth(GLdouble d) { mgl->clear_depth = (float)d; }
@@ -302,6 +323,28 @@ int mgl_get_state_integer(GLenum pname, GLint *out)
     case GL_BLEND_SRC_ALPHA: *out = (GLint)mgl->blend_src_a; return 1;
     case GL_BLEND_DST_ALPHA: *out = (GLint)mgl->blend_dst_a; return 1;
     case GL_DEPTH_FUNC: *out = (GLint)mgl->depth_func; return 1;
+    case GL_DEPTH_WRITEMASK: *out = mgl->depth_mask; return 1;
+    case GL_COLOR_WRITEMASK: for (int i = 0; i < 4; i++) out[i] = mgl->color_mask[i]; return 1;
+    case GL_BLEND_EQUATION_RGB: *out = (GLint)mgl->blend_eq_rgb; return 1;
+    case GL_BLEND_EQUATION_ALPHA: *out = (GLint)mgl->blend_eq_a; return 1;
+    case GL_CULL_FACE_MODE: *out = (GLint)mgl->cull_face; return 1;
+    case GL_FRONT_FACE: *out = (GLint)mgl->front_face; return 1;
+    /* one value, as core-profile drivers answer: callers such as LWJGL's glGetInteger pass room for one int */
+    case GL_POLYGON_MODE: *out = GL_FILL; return 1; /* glPolygonMode is ignored */
+    case GL_STENCIL_FUNC: *out = (GLint)mgl->stencil_func; return 1;
+    case GL_STENCIL_REF: *out = mgl->stencil_ref; return 1;
+    case GL_STENCIL_VALUE_MASK: *out = (GLint)mgl->stencil_value_mask; return 1;
+    case GL_STENCIL_WRITEMASK: *out = (GLint)mgl->stencil_writemask; return 1;
+    case GL_STENCIL_FAIL: *out = (GLint)mgl->stencil_fail; return 1;
+    case GL_STENCIL_PASS_DEPTH_FAIL: *out = (GLint)mgl->stencil_zfail; return 1;
+    case GL_STENCIL_PASS_DEPTH_PASS: *out = (GLint)mgl->stencil_zpass; return 1;
+    case GL_STENCIL_CLEAR_VALUE: *out = 0; return 1;
+    case GL_UNPACK_ROW_LENGTH: *out = mgl->unpack_row_length; return 1;
+    case GL_UNPACK_SKIP_ROWS: *out = mgl->unpack_skip_rows; return 1;
+    case GL_UNPACK_SKIP_PIXELS: *out = mgl->unpack_skip_pixels; return 1;
+    case GL_UNPACK_IMAGE_HEIGHT: *out = mgl->unpack_image_height; return 1;
+    case GL_UNPACK_SKIP_IMAGES: *out = mgl->unpack_skip_images; return 1;
+    case GL_PACK_ROW_LENGTH: *out = mgl->pack_row_length; return 1;
     case GL_UNPACK_ALIGNMENT: *out = mgl->unpack_alignment; return 1;
     case GL_PACK_ALIGNMENT: *out = mgl->pack_alignment; return 1;
     case GL_MAX_COMPUTE_SHADER_STORAGE_BLOCKS:
@@ -332,7 +375,7 @@ int mgl_get_state_integer(GLenum pname, GLint *out)
 
 void glGetFloatv(GLenum pname, GLfloat *data)
 {
-    GLint tmp[4] = {0};
+    GLint tmp[16] = {0};
     switch (pname) {
     case GL_COLOR_CLEAR_VALUE: memcpy(data, mgl->clear_color, sizeof mgl->clear_color); return;
     case GL_DEPTH_CLEAR_VALUE: *data = mgl->clear_depth; return;
@@ -353,9 +396,9 @@ void glGetBooleanv(GLenum pname, GLboolean *data)
         *data = glIsEnabled(pname);
         return;
     }
-    GLint v = 0;
-    glGetIntegerv(pname, &v);
-    *data = v != 0;
+    GLint v[16] = {0}; /* room for multi-value pnames (viewport, scissor box) */
+    glGetIntegerv(pname, v);
+    *data = v[0] != 0;
 }
 
 void glGetInteger64v(GLenum pname, GLint64 *data)

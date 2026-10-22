@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       phases:
-        description: game phases (title world complementary water water-shaders night)
+        description: game phases (title world complementary water water-shaders night nether nether-shaders)
         default: title world complementary
       env:
         description: extra env for every phase, e.g. MGL_DEBUG_DRAWS=1
@@ -54,6 +54,16 @@ jobs:
           MGL_LOG=$PWD/smoke3-mgl.log MGL_CACHE_DIR=$PWD/cache MGL_BINARY_ARCHIVE=1 ./build/gl_smoke | tee smoke3.txt || true
           cat smoke2-mgl.log smoke3-mgl.log || true
           ls -la cache || true
+      - name: Compile check with the newest Xcode (macOS 26 SDK parts, e.g. frame interpolation)
+        continue-on-error: true
+        run: |
+          ls -d /Applications/Xcode*.app || true
+          X=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$X" ]; then echo "no Xcode 26 on this runner"; exit 0; fi
+          echo "using $X"
+          grep -h "@property" $X/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks/MetalFX.framework/Headers/MTLFXFrameInterpolator.h || true
+          DEVELOPER_DIR=$X/Contents/Developer xcrun clang -arch arm64 -fsyntax-only -Wall -Wno-unused-parameter \
+            -mmacosx-version-min=14.0 -fobjc-arc -Icore -Ibuild/deps/include mac/mgl_metal.m
       - name: Offline MSL compile
         run: |
           xcrun -f metal || xcodebuild -downloadComponent MetalToolchain || true

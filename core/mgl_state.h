@@ -82,10 +82,21 @@ typedef struct mgl_vattrib {
     int stride;
     size_t offset;
     GLuint divisor;             /* 0 = per vertex, n = advance every n instances */
+    int use_binding;            /* set by glVertexAttribFormat (ARB_vertex_attrib_binding): buffer, stride and
+                                   divisor come from the VAO's binding point; offset is relative to it */
+    GLuint binding;
 } mgl_vattrib;
+
+typedef struct mgl_vbinding {   /* glBindVertexBuffer */
+    GLuint buffer;
+    size_t offset;
+    int stride;
+    GLuint divisor;
+} mgl_vbinding;
 
 typedef struct mgl_vao {
     mgl_vattrib attr[MGL_MAX_VERTEX_ATTRIBS];
+    mgl_vbinding bind[MGL_MAX_VERTEX_ATTRIBS];
     GLuint element_buffer;
 } mgl_vao;
 
@@ -104,6 +115,8 @@ typedef struct mgl_program {
     mgl_xlate_result x;
     mglb_program *gpu;
     int rt_pos_loc, rt_ent_loc, rt_region_off, rt_mv_off, rt_proj_off; /* terrain capture (mgl_rt.c); rt_pos_loc -1 = not terrain */
+    int rt_epos_loc, rt_emv_off, rt_eproj_off; /* entity capture (mgl_rt.c): float3 position, model-view, projection */
+    int rt_entity;              /* 1 = draws entities (by Iris program name or the entity vertex format's overlay input) */
     unsigned char *ublock[3];   /* default-block shadow per stage (vertex, fragment, compute) */
     int unit_of[MGL_MAX_TEXTURES * 3]; /* GL texture unit per x.textures[] entry (glUniform1i on a sampler) */
     int image_unit_of[MGL_MAX_TEXTURES * 3];
@@ -166,6 +179,11 @@ typedef struct mgl_state {
                                    the non-indexed calls set all 8 */
     GLenum depth_func, cull_face, front_face;
     GLboolean depth_mask, color_mask[4];
+    /* stencil: no stencil buffer is emulated, but the state is kept so that save/restore code (Distant Horizons
+       reads it back every frame) gets back what it set */
+    GLenum stencil_func, stencil_fail, stencil_zfail, stencil_zpass;
+    GLint stencil_ref;
+    GLuint stencil_value_mask, stencil_writemask;
     int viewport[4], scissor[4];
     float clear_color[4], clear_depth;
     float polygon_offset_factor, polygon_offset_units;

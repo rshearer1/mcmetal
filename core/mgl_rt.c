@@ -30,6 +30,17 @@ static unsigned write_epoch; /* buffer writes so far: a new entry's generation (
 static double scene_wanted;  /* last time a program that casts rays was drawn; capture runs only around it */
 static float view_proj[16];
 static int have_view;
+static float terrain_mv[16]; /* the terrain pass's model-view (camera rotation; positions are camera-relative) */
+static float terrain_proj[16];
+static int have_terrain_mv;
+static float *ent_tris;      /* this frame's entity triangles, camera-relative, 9 floats each */
+static int ent_n, ent_cap;
+static int ent_near_skipped; /* debug: triangles left out as the held item */
+static char ent_debug[2048]; /* debug: this frame's entity draws */
+static int ent_debug_draws;
+static int ent_why[5];       /* debug: entity draws left out: no camera yet / not triangles / projection / rotation / other */
+static float *snap_ent;      /* MGL_RT_SNAPSHOT: the last whole frame's entity triangles */
+static int snap_ent_n, snap_ent_cap;
 
 static double now_s(void)
 {
@@ -45,6 +56,8 @@ static int uniform_offset(const mgl_program *p, const char *name)
             return p->x.uniforms[i].offset[MGL_VERTEX];
     return -1;
 }
+
+static int rt_debug(void);
 
 void mgl_rt_link(mgl_program *p)
 {
@@ -64,6 +77,142 @@ void mgl_rt_link(mgl_program *p)
     }
     if (p->rt_pos_loc < 0 || p->rt_region_off < 0)
         p->rt_pos_loc = -1; /* not a terrain program */
+    /* entities: a float3 position (vanilla's Position, or Iris's / OptiFine-style core names) and a model-view */
+    p->rt_epos_loc = p->rt_emv_off = p->rt_eproj_off = -1;
+    p->rt_entity = 0;
+    int overlay = 0;
+    for (int i = 0; i < p->x.num_attribs; i++) {
+        const char *n = p->x.attribs[i].name;
+        if ((!strcmp(n, "Position") || !strcmp(n, "iris_Position") || !strcmp(n, "vaPosition")) &&
+            !p->x.attribs[i].is_int && p->x.attribs[i].vecsize == 3)
+            p->rt_epos_loc = p->x.attribs[i].location;
+        /* the overlay coordinate (hurt flash) is only in the entity vertex format: entities, block entities, items */
+        overlay |= !strcmp(n, "UV1") || !strcmp(n, "iris_UV1") || !strcmp(n, "vaUV1");
+    }
+    static const char *const mv_names[] = {"iris_ModelViewMat", "ModelViewMat", "modelViewMatrix", "iris_ModelViewMatrix"};
+    static const char *const proj_names[] = {"iris_ProjMat", "ProjMat", "projectionMatrix", "iris_ProjectionMatrix"};
+    for (int i = 0; i < 4 && p->rt_emv_off < 0; i++)
+        p->rt_emv_off = uniform_offset(p, mv_names[i]);
+    for (int i = 0; i < 4 && p->rt_eproj_off < 0; i++)
+        p->rt_eproj_off = uniform_offset(p, proj_names[i]);
+    /* Iris doesn't label its programs (debug_name stays empty unless the game calls glObjectLabel), so the
+       vertex format is the main signal; MCMETAL_RT_ENTITIES=all takes every other solid world draw (clouds too) */
+    static int all = -1;
+    if (all < 0)
+        all = getenv("MCMETAL_RT_ENTITIES") && !strcmp(getenv("MCMETAL_RT_ENTITIES"), "all");
+    p->rt_entity = p->rt_pos_loc < 0 && p->rt_epos_loc >= 0 && p->rt_emv_off >= 0 && p->rt_eproj_off >= 0 &&
+                   (overlay || all || !strncmp(p->debug_name, "gbuffers_entities", 17) ||
+                    !strncmp(p->debug_name, "gbuffers_block", 14));
+    if (rt_debug() && p->rt_pos_loc < 0 && p->rt_epos_loc >= 0) {
+        char names[256] = "";
+        for (int i = 0; i < p->x.num_attribs; i++)
+            snprintf(names + strlen(names), sizeof names - strlen(names), "%s%s", i ? "," : "", p->x.attribs[i].name);
+        mgl_log("rt debug: program with a float3 position: entity %d (overlay %d, mv %d, proj %d), inputs %s",
+                p->rt_entity, overlay, p->rt_emv_off >= 0, p->rt_eproj_off >= 0, names);
+    }
+}
+
+static void mat_mul(float *o, const float *a, const float *b);
+
+/* Entity programs (mgl_rt_link decides). Per draw, record_entity also wants the main pass's projection, which
+   leaves out the held item (its own field of view) and the shadow pass (orthographic). */
+static int entity_program(const mgl_program *p)
+{
+    return p->rt_entity;
+}
+
+static void rigid_inverse(const float *m, float *o) /* rotation + translation, column-major */
+{
+    for (int r = 0; r < 3; r++)
+        for (int c = 0; c < 3; c++)
+            o[c * 4 + r] = m[r * 4 + c];
+    for (int r = 0; r < 3; r++)
+        o[12 + r] = -(o[r] * m[12] + o[4 + r] * m[13] + o[8 + r] * m[14]);
+    o[3] = o[7] = o[11] = 0;
+    o[15] = 1;
+}
+
+/* An entity draw: its triangles, moved into the terrain's camera-relative space, appended to this frame's list.
+   Entity buffers are rewritten every frame, so the corners are copied now. */
+static void record_entity(const mgl_program *p, const mgl_draw *d)
+{
+    if (!have_terrain_mv) {
+        ent_why[0]++;
+        return;
+    }
+    if (d->primitive != GL_TRIANGLES || d->instances > 1 || !d->depth_write) {
+        ent_why[1]++;
+        return;
+    }
+    const float *proj = (const float *)(p->ublock[MGL_VERTEX] + p->rt_eproj_off);
+    for (int i = 0; i < 16; i++)
+        if (fabsf(proj[i] - terrain_proj[i]) > 1e-3f * (fabsf(terrain_proj[i]) + 1e-3f)) {
+            ent_why[2]++;
+            return; /* not the world camera: the hand, the shadow map, a GUI item */
+        }
+    const float *emv = (const float *)(p->ublock[MGL_VERTEX] + p->rt_emv_off);
+    for (int c = 0; c < 3; c++)
+        for (int r = 0; r < 3; r++)
+            if (fabsf(emv[c * 4 + r] - terrain_mv[c * 4 + r]) > 1e-3f) {
+                ent_why[3]++;
+                return; /* world draws carry the camera's rotation; the held item (same projection at some FOVs) doesn't */
+            }
+    const mgl_vertex_attr *a = &d->attrs[p->rt_epos_loc];
+    if (!a->enabled || a->type != MGLV_FLOAT || a->size < 3 || a->buffer < 0 || a->buffer >= d->num_vbufs) {
+        ent_why[4]++;
+        return;
+    }
+    const mgl_vertex_buf *vb = &d->vbufs[a->buffer];
+    const unsigned char *base = mglb_buffer_ptr(vb->buf);
+    const unsigned char *ib = d->index_buf ? mglb_buffer_ptr(d->index_buf) : NULL;
+    if (!base || (d->index_buf && !ib) || vb->stride < 12) {
+        ent_why[4]++;
+        return;
+    }
+    float inv[16], m[16];
+    rigid_inverse(terrain_mv, inv);
+    mat_mul(m, inv, (const float *)(p->ublock[MGL_VERTEX] + p->rt_emv_off));
+    int tris = d->count / 3;
+    if (ent_n + tris > 262144) /* plenty for a busy farm; past that, skip */
+        return;
+    if (ent_n + tris > ent_cap) {
+        ent_cap = (ent_n + tris) * 2;
+        ent_tris = realloc(ent_tris, sizeof(float) * 9 * (size_t)ent_cap);
+    }
+    float *o = ent_tris + (size_t)ent_n * 9;
+    for (int k = 0; k < tris * 3; k++) {
+        uint32_t idx;
+        if (ib) {
+            size_t at = d->index_offset + (size_t)k * (d->index_type == GL_UNSIGNED_SHORT ? 2 : 4);
+            idx = d->index_type == GL_UNSIGNED_SHORT ? *(const uint16_t *)(ib + at) : *(const uint32_t *)(ib + at);
+        } else
+            idx = (uint32_t)(d->first + k);
+        const float *v = (const float *)(base + vb->offset + a->offset + (size_t)((int64_t)idx + d->base_vertex) * (size_t)vb->stride);
+        for (int r = 0; r < 3; r++)
+            o[k * 3 + r] = m[r] * v[0] + m[4 + r] * v[1] + m[8 + r] * v[2] + m[12 + r];
+    }
+    float far2 = 0; /* the held item and arm sit within 2 blocks of the eye; little in the world fits there whole */
+    for (int k = 0; k < tris * 3; k++) {
+        float d2 = o[k * 3] * o[k * 3] + o[k * 3 + 1] * o[k * 3 + 1] + o[k * 3 + 2] * o[k * 3 + 2];
+        far2 = d2 > far2 ? d2 : far2;
+    }
+    if (far2 < 4.0f) {
+        ent_near_skipped += tris;
+        return;
+    }
+    if (rt_debug() && ent_debug_draws < 16) { /* which draws these are: size and where (camera-relative box) */
+        float lo[3] = {o[0], o[1], o[2]}, hi[3] = {o[0], o[1], o[2]};
+        for (int k = 1; k < tris * 3; k++)
+            for (int r = 0; r < 3; r++) {
+                lo[r] = o[k * 3 + r] < lo[r] ? o[k * 3 + r] : lo[r];
+                hi[r] = o[k * 3 + r] > hi[r] ? o[k * 3 + r] : hi[r];
+            }
+        snprintf(ent_debug + strlen(ent_debug), sizeof ent_debug - strlen(ent_debug),
+                 " [%d tris, %d verts/stride %d, box %.1f,%.1f,%.1f..%.1f,%.1f,%.1f]", tris, d->count, vb->stride,
+                 lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
+        ent_debug_draws++;
+    }
+    ent_n += tris;
 }
 
 static void mat_mul(float *o, const float *a, const float *b) /* column-major o = a * b */
@@ -254,6 +403,10 @@ void mgl_rt_record(mgl_program *p, const mgl_draw *d)
         rtd.idle++;
         return; /* no ray-tracing shader in use: capture costs nothing */
     }
+    if (p && p->ublock[MGL_VERTEX] && entity_program(p)) {
+        record_entity(p, d);
+        return;
+    }
     if (!p || p->rt_pos_loc < 0 || !p->ublock[MGL_VERTEX]) {
         rtd.not_terrain++;
         if (p && rt_debug())
@@ -299,7 +452,9 @@ void mgl_rt_record(mgl_program *p, const mgl_draw *d)
     if (p->rt_mv_off >= 0 && p->rt_proj_off >= 0 && d->target.width == ww && d->target.height == wh) {
         mat_mul(view_proj, (const float *)(p->ublock[MGL_VERTEX] + p->rt_proj_off),
                 (const float *)(p->ublock[MGL_VERTEX] + p->rt_mv_off));
-        have_view = 1;
+        memcpy(terrain_mv, p->ublock[MGL_VERTEX] + p->rt_mv_off, sizeof terrain_mv);
+        memcpy(terrain_proj, p->ublock[MGL_VERTEX] + p->rt_proj_off, sizeof terrain_proj);
+        have_view = have_terrain_mv = 1;
     }
 
     rt_draw key = {{vb->buf, d->index_buf, vb->offset + (size_t)a->offset, vb->stride, d->index_offset,
@@ -412,8 +567,31 @@ static int num_draws_fwd(void) { return num_draws; }
 void mgl_rt_end_frame(void)
 {
     rt_debug_tick();
-    if (!scene_wanted || now_s() - scene_wanted > 5.0 || !num_draws)
+    if (rt_debug() && (ent_n || ent_why[0] + ent_why[1] + ent_why[2] + ent_why[3] + ent_why[4])) {
+        static double last;
+        if (now_s() - last > 1.0) {
+            mgl_log("rt debug: %d entity triangles this frame (%d left out next to the eye; draws left out: %d before "
+                    "the terrain camera, %d not triangles/depth, %d other projection, %d other rotation, %d no "
+                    "position data);%s", ent_n, ent_near_skipped, ent_why[0], ent_why[1], ent_why[2], ent_why[3],
+                    ent_why[4], ent_debug);
+            last = now_s();
+        }
+    }
+    memset(ent_why, 0, sizeof ent_why);
+    if (getenv("MGL_RT_SNAPSHOT")) {
+        if (ent_n > snap_ent_cap) {
+            snap_ent_cap = ent_n * 2;
+            snap_ent = realloc(snap_ent, sizeof(float) * 9 * (size_t)snap_ent_cap);
+        }
+        if (ent_n)
+            memcpy(snap_ent, ent_tris, sizeof(float) * 9 * (size_t)ent_n);
+        snap_ent_n = ent_n;
+    }
+    if (!scene_wanted || now_s() - scene_wanted > 5.0 || !num_draws) {
+        ent_n = ent_near_skipped = ent_debug_draws = 0; /* snapshot-only capture: start each frame afresh */
+        ent_debug[0] = 0;
         return;
+    }
     static mgl_rt_geom *list;
     static int cap;
     if (cap < num_draws) {
@@ -422,6 +600,12 @@ void mgl_rt_end_frame(void)
     }
     for (int i = 0; i < num_draws; i++)
         list[i] = draws[i].g;
+
+    mglb_rt_dynamic(ent_tris, ent_n);
+    ent_n = 0;
+    ent_near_skipped = 0;
+    ent_debug[0] = 0;
+    ent_debug_draws = 0;
     mglb_rt_update(list, num_draws);
 }
 
@@ -444,6 +628,55 @@ static int decode(const mgl_rt_geom *r, uint32_t v, float out[3])
     return 1;
 }
 
+/* depth-tested flat-shaded triangle into the snapshot; red = an entity */
+static int snap_tri(const float wp[3][3], float *zb, unsigned char *img, int W, int H, int red)
+{
+    float sx[3], sy[3], sz[3];
+    for (int j = 0; j < 3; j++) {
+        const float *m = view_proj;
+        float cx = m[0] * wp[j][0] + m[4] * wp[j][1] + m[8] * wp[j][2] + m[12];
+        float cy = m[1] * wp[j][0] + m[5] * wp[j][1] + m[9] * wp[j][2] + m[13];
+        float cw = m[3] * wp[j][0] + m[7] * wp[j][1] + m[11] * wp[j][2] + m[15];
+        if (cw < 0.05f)
+            return 0;
+        sx[j] = (cx / cw * 0.5f + 0.5f) * W;
+        sy[j] = (0.5f - cy / cw * 0.5f) * H;
+        sz[j] = cw;
+    }
+    /* flat shade by the face normal so block shapes are readable */
+    float e1[3] = {wp[1][0] - wp[0][0], wp[1][1] - wp[0][1], wp[1][2] - wp[0][2]};
+    float e2[3] = {wp[2][0] - wp[0][0], wp[2][1] - wp[0][1], wp[2][2] - wp[0][2]};
+    float n[3] = {e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]};
+    float nl = sqrtf(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]) + 1e-9f;
+    float shade = 0.35f + 0.65f * fabsf(0.3f * n[0] + 0.85f * n[1] + 0.45f * n[2]) / nl;
+    int x0 = (int)fmaxf(0, floorf(fminf(sx[0], fminf(sx[1], sx[2]))));
+    int x1 = (int)fminf(W - 1, ceilf(fmaxf(sx[0], fmaxf(sx[1], sx[2]))));
+    int y0 = (int)fmaxf(0, floorf(fminf(sy[0], fminf(sy[1], sy[2]))));
+    int y1 = (int)fminf(H - 1, ceilf(fmaxf(sy[0], fmaxf(sy[1], sy[2]))));
+    float area = (sx[1] - sx[0]) * (sy[2] - sy[0]) - (sx[2] - sx[0]) * (sy[1] - sy[0]);
+    if (fabsf(area) < 1e-6f || x1 - x0 > W || y1 - y0 > H)
+        return 1;
+    for (int y = y0; y <= y1; y++)
+        for (int x = x0; x <= x1; x++) {
+            float px = x + 0.5f, py = y + 0.5f;
+            float w0 = ((sx[1] - px) * (sy[2] - py) - (sx[2] - px) * (sy[1] - py)) / area;
+            float w1 = ((sx[2] - px) * (sy[0] - py) - (sx[0] - px) * (sy[2] - py)) / area;
+            float w2 = 1 - w0 - w1;
+            if (w0 < 0 || w1 < 0 || w2 < 0)
+                continue;
+            float z = w0 * sz[0] + w1 * sz[1] + w2 * sz[2];
+            if (z >= zb[y * W + x])
+                continue;
+            zb[y * W + x] = z;
+            float fog = fmaxf(0.25f, 1.0f - z / 400.0f);
+            unsigned char *o = img + (size_t)(y * W + x) * 3;
+            o[0] = (unsigned char)(255 * shade * fog * (red ? 1.0f : 0.85f));
+            o[1] = (unsigned char)(255 * shade * fog * (red ? 0.15f : 1.0f));
+            o[2] = (unsigned char)(255 * shade * fog * (red ? 0.15f : 0.75f));
+        }
+    return 1;
+}
+
 static void snapshot(const char *path)
 {
     const int W = 640, H = 360;
@@ -452,7 +685,7 @@ static void snapshot(const char *path)
     for (int i = 0; i < W * H; i++)
         zb[i] = 1e30f;
     double t = now_s();
-    long tris = 0, used = 0;
+    long tris = 0, used = 0, ents = 0;
     for (int di = 0; di < num_draws; di++) {
         const rt_draw *rd = &draws[di];
         const mgl_rt_geom *r = &rd->g;
@@ -463,64 +696,27 @@ static void snapshot(const char *path)
         if (!ib)
             continue;
         for (int k = 0; k + 2 < r->count; k += 3) {
-            float wp[3][3], sx[3], sy[3], sz[3];
+            float wp[3][3];
             int ok = 1;
-            for (int j = 0; j < 3; j++) {
+            for (int j = 0; j < 3 && ok; j++) {
                 size_t at = r->ioff + (size_t)(k + j) * (r->itype == GL_UNSIGNED_SHORT ? 2 : 4);
                 uint32_t idx = r->itype == GL_UNSIGNED_SHORT ? *(const uint16_t *)(ib + at) : *(const uint32_t *)(ib + at);
-                if (!decode(r, idx + (uint32_t)r->base_vertex, wp[j])) { ok = 0; break; }
-                const float *m = view_proj;
-                float cx = m[0] * wp[j][0] + m[4] * wp[j][1] + m[8] * wp[j][2] + m[12];
-                float cy = m[1] * wp[j][0] + m[5] * wp[j][1] + m[9] * wp[j][2] + m[13];
-                float cw = m[3] * wp[j][0] + m[7] * wp[j][1] + m[11] * wp[j][2] + m[15];
-                if (cw < 0.05f) { ok = 0; break; }
-                sx[j] = (cx / cw * 0.5f + 0.5f) * W;
-                sy[j] = (0.5f - cy / cw * 0.5f) * H;
-                sz[j] = cw;
+                ok = decode(r, idx + (uint32_t)r->base_vertex, wp[j]);
             }
-            if (!ok)
-                continue;
-            tris++;
-            /* flat shade by the face normal so block shapes are readable */
-            float e1[3] = {wp[1][0] - wp[0][0], wp[1][1] - wp[0][1], wp[1][2] - wp[0][2]};
-            float e2[3] = {wp[2][0] - wp[0][0], wp[2][1] - wp[0][1], wp[2][2] - wp[0][2]};
-            float n[3] = {e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]};
-            float nl = sqrtf(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]) + 1e-9f;
-            float shade = 0.35f + 0.65f * fabsf(0.3f * n[0] + 0.85f * n[1] + 0.45f * n[2]) / nl;
-            int x0 = (int)fmaxf(0, floorf(fminf(sx[0], fminf(sx[1], sx[2]))));
-            int x1 = (int)fminf(W - 1, ceilf(fmaxf(sx[0], fmaxf(sx[1], sx[2]))));
-            int y0 = (int)fmaxf(0, floorf(fminf(sy[0], fminf(sy[1], sy[2]))));
-            int y1 = (int)fminf(H - 1, ceilf(fmaxf(sy[0], fmaxf(sy[1], sy[2]))));
-            float area = (sx[1] - sx[0]) * (sy[2] - sy[0]) - (sx[2] - sx[0]) * (sy[1] - sy[0]);
-            if (fabsf(area) < 1e-6f || x1 - x0 > W || y1 - y0 > H)
-                continue;
-            for (int y = y0; y <= y1; y++)
-                for (int x = x0; x <= x1; x++) {
-                    float px = x + 0.5f, py = y + 0.5f;
-                    float w0 = ((sx[1] - px) * (sy[2] - py) - (sx[2] - px) * (sy[1] - py)) / area;
-                    float w1 = ((sx[2] - px) * (sy[0] - py) - (sx[0] - px) * (sy[2] - py)) / area;
-                    float w2 = 1 - w0 - w1;
-                    if (w0 < 0 || w1 < 0 || w2 < 0)
-                        continue;
-                    float z = w0 * sz[0] + w1 * sz[1] + w2 * sz[2];
-                    if (z >= zb[y * W + x])
-                        continue;
-                    zb[y * W + x] = z;
-                    float fog = fmaxf(0.25f, 1.0f - z / 400.0f);
-                    unsigned char *o = img + (size_t)(y * W + x) * 3;
-                    o[0] = (unsigned char)(255 * shade * fog * 0.85f);
-                    o[1] = (unsigned char)(255 * shade * fog);
-                    o[2] = (unsigned char)(255 * shade * fog * 0.75f);
-                }
+            if (ok)
+                tris += snap_tri((const float(*)[3])wp, zb, img, W, H, 0);
         }
     }
+    for (int k = 0; have_view && k < snap_ent_n; k++) /* entities in red: they should stand on the terrain */
+        ents += snap_tri((const float(*)[3])(snap_ent + (size_t)k * 9), zb, img, W, H, 1);
     FILE *f = fopen(path, "wb");
     if (f) {
         fprintf(f, "P6\n%d %d\n255\n", W, H);
         fwrite(img, 1, (size_t)W * H * 3, f);
         fclose(f);
     }
-    mgl_log("rt snapshot: %ld of %d section draws, %ld triangles -> %s", used, num_draws, tris, path);
+    mgl_log("rt snapshot: %ld of %d section draws, %ld triangles, %ld entity triangles (red) -> %s", used, num_draws,
+            tris, ents, path);
     free(zb);
     free(img);
 }
