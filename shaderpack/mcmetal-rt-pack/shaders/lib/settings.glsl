@@ -1,6 +1,7 @@
 // Player options (Iris reads the "// [..]" lists and shows them in the shader menu).
 
 #define COLORED_LIGHT // torches, lanterns, glowstone... each light their own colour, with ray-traced shadows (needs mcmetal's light list)
+#define COLORED_LIGHT_GLASS // light from torches and lanterns through stained glass takes its colour
 #define COLORED_LIGHT_STRENGTH 1.0 // [0.5 0.7 0.85 1.0 1.2 1.5 2.0]
 #define LIGHT_SLOTS 4 // [2 4 6 8] how many of the nearest light blocks each pixel considers (more = slower)
 #define RT_MODE 1 // [0 1 2] 0 = shadow map only, 1 = hardware ray tracing when mcmetal provides it, 2 = always ray tracing
@@ -9,6 +10,9 @@
 #endif
 
 #define RT_GI // ray-traced global illumination: bounce light, colour bleeding, sky light through openings
+#define GI_CHECKERBOARD // trace bounce light and AO for half the pixels each frame (the rest keep their average)
+#define SHADOW_CHECKERBOARD // trace the sun shadow for half the pixels each frame (the rest keep their average)
+#define GI_FILTER 9 // [9 25] taps in the GI blur/upscale (9: 6% less GPU on the M3, no visible difference)
 #define GI_HALF_RES 1 // [0 1] trace GI and AO for every 2x2 pixels (about half the cost), then upscale
 #if GI_HALF_RES == 1
     #define GI_SCALE 0.5
@@ -88,9 +92,15 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #endif
 #ifdef COLORED_LIGHT
 #endif
+#ifdef COLORED_LIGHT_GLASS
+#endif
 #ifdef LIGHT_SHAFTS
 #endif
 #ifdef CAUSTICS
+#endif
+#ifdef SHADOW_CHECKERBOARD
+#endif
+#ifdef GI_CHECKERBOARD
 #endif
 #ifdef GLASS_REFRACTION
 #endif

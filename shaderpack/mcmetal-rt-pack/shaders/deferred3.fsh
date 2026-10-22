@@ -41,7 +41,23 @@ void main() {
         p = mat3(gbufferModelViewInverse) * (v.xyz / v.w) + gbufferModelViewInverse[3].xyz;
     }
     float dist = min(length(p), 48.0);
+    // average with last frame's value at this spot (the step offset changes every frame)
+    vec3 prevPlayer = (depth < 1.0 ? p : dir * 48.0) + cameraPosition - previousCameraPosition;
+    vec4 pc = gbufferPreviousProjection * (gbufferPreviousModelView * vec4(prevPlayer, 1.0));
+    vec2 puv = pc.xy / pc.w * 0.5 + 0.5;
+    vec4 h = texture(colortex8, puv * LIGHT_SHAFTS_SCALE);
+    bool valid = depth >= 1.0 ? true : (all(greaterThan(puv, vec2(0.0))) && all(lessThan(puv, vec2(1.0)))
+              && abs(h.a - length(prevPlayer)) < 0.05 * dist + 0.2);
+    if (depth >= 1.0) h = texture(colortex8, texcoord * LIGHT_SHAFTS_SCALE);
+    if (any(isnan(h.rgb))) valid = false;   // never let a bad value live on in the history
     vec3 scatter = vec3(0.0);
+#if defined USE_RT && defined LIGHT_SHAFTS && defined SHADOW_CHECKERBOARD
+    // half the pixels each frame (like deferred1.fsh): the others keep their average
+    if (valid && ((int(gl_FragCoord.x) + int(gl_FragCoord.y) + frameCounter) & 1) == 1) {
+        outScatter = vec4(h.rgb, depth < 1.0 ? length(p) : 48.0);
+        return;
+    }
+#endif
 #if defined USE_RT && defined LIGHT_SHAFTS
     bool underWater = isEyeInWater == 1;
   #ifndef CAUSTICS
@@ -82,14 +98,5 @@ void main() {
         if (any(isnan(scatter)) || any(isinf(scatter))) scatter = vec3(0.0);
     }
 #endif
-    // average with last frame's value at this spot (the step offset changes every frame)
-    vec3 prevPlayer = (depth < 1.0 ? p : dir * 48.0) + cameraPosition - previousCameraPosition;
-    vec4 pc = gbufferPreviousProjection * (gbufferPreviousModelView * vec4(prevPlayer, 1.0));
-    vec2 puv = pc.xy / pc.w * 0.5 + 0.5;
-    vec4 h = texture(colortex8, puv * LIGHT_SHAFTS_SCALE);
-    bool valid = depth >= 1.0 ? true : (all(greaterThan(puv, vec2(0.0))) && all(lessThan(puv, vec2(1.0)))
-              && abs(h.a - length(prevPlayer)) < 0.05 * dist + 0.2);
-    if (depth >= 1.0) h = texture(colortex8, texcoord * LIGHT_SHAFTS_SCALE);
-    if (any(isnan(h.rgb))) valid = false;   // never let a bad value live on in the history
     outScatter = vec4(valid ? mix(h.rgb, scatter, 1.0 / 8.0) : scatter, depth < 1.0 ? length(p) : 48.0);
 }

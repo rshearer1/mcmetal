@@ -57,13 +57,16 @@ vec3 filteredGI(vec3 n, float dist) {
     vec2 px = (GI_SCALE < 1.0 ? 1.0 : 2.0) / (vec2(viewWidth, viewHeight) * GI_SCALE);   // in GI pixels
     vec3 sum = vec3(0.0);
     float wsum = 0.0;
-    for (int y = -2; y <= 2; y++)
-        for (int x = -2; x <= 2; x++) {
-            vec2 uv = texcoord + vec2(x, y) * px;              // full-screen position of that GI pixel
+    // (GI_FILTER 9: a 3x3 over the same area, every other tap; the history and TAA smooth the rest)
+    const int R = GI_FILTER == 9 ? 1 : 2;
+    float tapStep = GI_FILTER == 9 ? 2.0 : 1.0;
+    for (int y = -R; y <= R; y++)
+        for (int x = -R; x <= R; x++) {
+            vec2 uv = texcoord + vec2(x, y) * (px * tapStep);              // full-screen position of that GI pixel
             vec3 tn = octDecode(texture(colortex1, uv).xy);
             float td = texture(colortex3, uv * GI_SCALE).b;
             float w = pow(max(dot(n, tn), 0.0), 16.0) * exp(-abs(td - dist) / (0.02 * dist + 0.05))
-                    * exp(-0.15 * float(x * x + y * y));
+                    * exp(-0.15 * tapStep * tapStep * float(x * x + y * y));
             sum += texture(colortex4, uv * GI_SCALE).rgb * w;
             wsum += w;
         }

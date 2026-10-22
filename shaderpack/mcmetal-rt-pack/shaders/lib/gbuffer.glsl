@@ -257,7 +257,9 @@ void main() {
   #endif
   #ifdef WATER
     outColor = vec4(through, 1.0);
-    outAdd = vec4(own, 1.0);
+    // (alpha: dims the light that surfaces further back added to colortex13, which the multiply on colortex0 can't
+    // reach; only by brightness, so a waterfall behind red glass is darkened rather than reddened)
+    outAdd = vec4(own, 1.0 - luma(through));
     outWater = vec4(float(mat == MAT_WATER), clamp(refr * 8.0 + 0.5, 0.0, 1.0), float(mat == MAT_GLASS));
   #else
     outColor = vec4(col, c.a);

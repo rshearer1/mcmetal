@@ -34,6 +34,7 @@ vec3 lightColorOf(int id, out float level) {
 // supplied by mcmetal: the slot-th light block near p (block centre in player space, its block id), or -1
 int mcm_lights_near(vec3 p, int slot, out vec3 pos, out int blockId);
 float mcm_trace(vec3 origin, vec3 dir, float tmax);
+float mcm_trace_tinted(vec3 origin, vec3 dir, float tmax, out vec3 transmit);
 
 // unshadowed light from one light block: about inverse square (softened near the block), faded out where vanilla's
 // light would end; at 1-5 blocks about as bright as vanilla's full block light
@@ -76,7 +77,16 @@ vec3 coloredBlockLight(vec3 p, vec3 n, int mat, float u1, float u2, float u3) {
     vec3 l = lightFrom(p, n, mat, target, ids[pick], dir, dist);
     vec3 o = mat == MAT_FOLIAGE ? p + dir * 0.06 : p + n * 0.02 + dir * 0.01;
     // stop short of the light block itself (a full block's faces are 0.5 from its centre, corners up to 0.87)
+#ifdef COLORED_LIGHT_GLASS
+    // torch light through stained glass (and water) takes its colour too
+    vec3 transmit = vec3(1.0);
+    if (dist > 0.9 && mcm_trace_tinted(o, dir, dist - 0.9, transmit) > 0.0) return vec3(0.0);
+    // the filter mcmetal gives back is pale (the glass texture is half see-through): deepen its colour, keep its
+    // brightness, so the floor behind red glass is clearly red
+    l *= max(mix(vec3(luma(transmit)), transmit, 3.0), vec3(0.0));
+#else
     if (dist > 0.9 && mcm_trace(o, dir, dist - 0.9) > 0.0) return vec3(0.0);
+#endif
     return l * (total / w[pick]) * COLORED_LIGHT_STRENGTH;
 }
 #endif
