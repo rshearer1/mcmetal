@@ -86,9 +86,6 @@ void main() {
     #include "/lib/reflect.glsl"
 #endif
 uniform sampler2D gtexture;
-#if defined WATER && defined GLASS_REFRACTION
-uniform sampler2D colortex12;   // deferred2.fsh: the lit scene before glass and water, a distance
-#endif
 in vec2 texcoord;
 in vec2 lmcoord;
 in vec4 tint;
@@ -114,9 +111,13 @@ layout(location = 3) out vec4 outPBR;   // colortex10: xy normal with the normal
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outMaterial;
 #elif defined WATER
-/* RENDERTARGETS: 0,11 */
-layout(location = 0) out vec4 outColor;
-layout(location = 1) out vec4 outWater;   // colortex11: r 1 where the nearest see-through surface is water (composite.fsh)
+// Water, glass and the other see-through blocks are blended in two parts (shaders.properties): colortex0 is
+// multiplied by how much light gets through (a colour, so stained glass tints what's behind it), colortex13 adds
+// what the surface itself gives (its lit texture, reflections); composite.fsh adds the two.
+/* RENDERTARGETS: 0,11,13 */
+layout(location = 0) out vec4 outColor;   // rgb: light let through (multiplies what's behind)
+layout(location = 1) out vec4 outWater;   // colortex11: r water, gb glass refraction offset, a glass (nearest surface)
+layout(location = 2) out vec4 outAdd;     // colortex13: light from the surface itself (added)
 #else
 /* RENDERTARGETS: 0 */
 layout(location = 0) out vec4 outColor;
@@ -212,23 +213,15 @@ void main() {
         n = normalize(vec3(-slope.x, 1.0, -slope.y) * vec3(WAVE_HEIGHT, 1.0, WAVE_HEIGHT));
         c.a = 0.55;    // clearer than vanilla water: you see the bottom
     }
+    // glass: the streaks become bumps. Their brightness slope across the texture bends the view (composite.fsh
+    // shifts what's seen through it), more up close than far away
+    vec2 refr = vec2(0.0);
       #ifdef GLASS_REFRACTION
     if (mat == MAT_GLASS) {
-        // Glass: we draw what's behind it ourselves (colortex12, the lit scene before glass), bent by the glass's own
-        // streaks and tinted by its colour, instead of letting the texture lie flat on top. The streaks become bumps:
-        // their brightness slope across the texture pushes the view sideways, more up close than far away.
         vec2 ts = 1.0 / vec2(textureSize(gtexture, 0));
         float h0 = luma(texture(gtexture, texcoord).rgb), hx = luma(texture(gtexture, texcoord + vec2(ts.x, 0.0)).rgb),
               hy = luma(texture(gtexture, texcoord + vec2(0.0, ts.y)).rgb);
-        float dist = length(playerPos);
-        vec2 suv = gl_FragCoord.xy / vec2(viewWidth, viewHeight);
-        vec2 ruv = clamp(suv + vec2(hx - h0, hy - h0) * (0.06 * GLASS_REFRACTION_STRENGTH / max(dist, 1.0)), 0.001, 0.999);
-        vec4 behind = texture(colortex12, ruv);
-        if (behind.a < dist) behind = texture(colortex12, suv);   // the bent view landed on something in front
-        // tint: clear glass barely tints, stained glass by its colour; the streaks keep a little of their own look
-        vec3 tintCol = mix(vec3(1.0), albedo / max(max(albedo.r, max(albedo.g, albedo.b)), 1e-3), clamp(c.a * 1.6, 0.0, 1.0));
-        col = behind.rgb * tintCol * (1.0 - 0.15 * c.a) + col * c.a * 0.35;
-        c.a = 1.0;
+        refr = vec2(hx - h0, hy - h0) * (0.2 * GLASS_REFRACTION_STRENGTH / max(length(playerPos), 1.0));
     }
       #endif
     // reflections: a hardware ray finds what the surface mirrors (on or off screen); otherwise just the sky
@@ -248,13 +241,24 @@ void main() {
     // soften very bright mirrored points (lights and the sun on tiny wave facets): one sample per pixel, no history
     // here, so they would sparkle as single-pixel specks
     refl /= 1.0 + luma(refl) * 0.08;
-    col = mix(col, refl, f);
-    c.a = mix(c.a, 1.0, f);
+    vec3 through = vec3(1.0 - mix(c.a, 1.0, f));      // plain see-through blocks and water: like alpha blending
+    vec3 own = mix(col, refl, f) * mix(c.a, 1.0, f);
+      #ifdef GLASS_REFRACTION
+    if (mat == MAT_GLASS) {
+        // clear glass barely tints and its streaks stay faint; stained glass tints by its colour like real glass
+        vec3 tintCol = mix(vec3(1.0), albedo / max(max(albedo.r, max(albedo.g, albedo.b)), 1e-3), clamp(c.a * 1.6, 0.0, 1.0));
+        through = tintCol * (1.0 - 0.15 * c.a) * (1.0 - f);
+        own = col * c.a * 0.35 * (1.0 - f) + refl * f;
+    }
+      #endif
     #endif
   #endif
-    outColor = vec4(col, c.a);
   #ifdef WATER
-    outWater = vec4(float(mat == MAT_WATER), 0.0, 0.0, 1.0);
+    outColor = vec4(through, 1.0);
+    outAdd = vec4(own, 1.0);
+    outWater = vec4(float(mat == MAT_WATER), clamp(refr * 8.0 + 0.5, 0.0, 1.0), float(mat == MAT_GLASS));
+  #else
+    outColor = vec4(col, c.a);
   #endif
   #ifdef KEEP_MATERIAL
     outMaterial = vec4(float(MAT_LIT) / 255.0, 1.0, 0.0, 0.0);

@@ -2,16 +2,19 @@
 // Fog over everything (after water and glass): air haze towards the sky colour, a soft edge at the render
 // distance, and fog under water / in lava / in powder snow.
 /*
-const int colortex11Format = R8;   // 1 where the nearest see-through surface is water (gbuffers_water)
+const int colortex11Format = RGBA8;   // r water, gb glass refraction offset, a glass: nearest see-through surface
 const bool colortex11Clear = true;
-const vec4 colortex11ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
+const vec4 colortex11ClearColor = vec4(0.0, 0.5, 0.5, 0.0);
+const int colortex13Format = RGBA16F;   // light from see-through surfaces themselves, added here
+const bool colortex13Clear = true;
+const vec4 colortex13ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 */
 #include "/lib/settings.glsl"
 #include "/lib/common.glsl"
 #include "/lib/uniforms.glsl"
 #include "/lib/sky.glsl"
 
-uniform sampler2D colortex0, colortex1, colortex5, colortex8, colortex11, depthtex0, depthtex1;
+uniform sampler2D colortex0, colortex1, colortex5, colortex8, colortex11, colortex13, depthtex0, depthtex1;
 
 #ifdef DISTANT_HORIZONS
 uniform sampler2D dhDepthTex0;
@@ -30,7 +33,17 @@ flat in vec3 sunCol, skyAmb, sunDir;
 layout(location = 0) out vec4 outColor;
 
 void main() {
+    // what's behind see-through blocks (already dimmed or tinted by them) plus their own light (gbuffers_water)
+    vec4 wm = texture(colortex11, texcoord);
     vec3 col = texture(colortex0, texcoord).rgb;
+#ifdef GLASS_REFRACTION
+    if (wm.a > 0.5) {
+        // glass bends the view: take what's behind from a little to the side (only if that's behind glass too)
+        vec2 ruv = clamp(texcoord + (wm.gb - 0.5) / 8.0, 0.0, 1.0);
+        if (texture(colortex11, ruv).a > 0.5) col = texture(colortex0, ruv).rgb;
+    }
+#endif
+    col += texture(colortex13, texcoord).rgb;
     float depth = texture(depthtex0, texcoord).r;
     vec4 v = gbufferProjectionInverse * vec4(vec3(texcoord, depth) * 2.0 - 1.0, 1.0);
     vec3 p = mat3(gbufferModelViewInverse) * (v.xyz / v.w);
