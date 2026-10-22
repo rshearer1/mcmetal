@@ -51,7 +51,7 @@ final class GpuCullTransformer implements ITransformer<ClassNode> {
         for (MethodNode m : c.methods)
             if (m.name.equals("render") && m.desc.equals(RENDER_DESC))
                 render = m;
-        ClassNode hooks = readHooks();
+        ClassNode hooks = readHooks(HOOKS);
         if (hooks != null && hooks.methods.stream().anyMatch(m -> m.name.equals("<clinit>")))
             hooks = null; // its static initializer would not be copied: CullHooks must not have one
         if (render == null || hooks == null) {
@@ -74,8 +74,8 @@ final class GpuCullTransformer implements ITransformer<ClassNode> {
         return c;
     }
 
-    private static ClassNode readHooks() {
-        try (InputStream in = GpuCullTransformer.class.getResourceAsStream("/" + HOOKS + ".class")) {
+    static ClassNode readHooks(String hooks) {
+        try (InputStream in = GpuCullTransformer.class.getResourceAsStream("/" + hooks + ".class")) {
             if (in == null)
                 return null;
             ClassNode n = new ClassNode();
@@ -87,7 +87,7 @@ final class GpuCullTransformer implements ITransformer<ClassNode> {
     }
 
     /** Static fields and methods of `from` into `to`, renamed with PREFIX, with references to `from` pointed at `to`. */
-    private static void merge(ClassNode from, ClassNode to) {
+    static void merge(ClassNode from, ClassNode to) {
         for (FieldNode f : from.fields)
             if ((f.access & Opcodes.ACC_STATIC) != 0)
                 to.fields.add(new FieldNode(f.access, PREFIX + f.name, f.desc, f.signature, f.value));
