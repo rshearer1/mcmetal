@@ -31,7 +31,20 @@ void main() {
     vec4 v = gbufferProjectionInverse * vec4(vec3(texcoord, depth) * 2.0 - 1.0, 1.0);
     vec3 p = mat3(gbufferModelViewInverse) * (v.xyz / v.w) + gbufferModelViewInverse[3].xyz;
     float dist = length(p);
+    vec3 prevPlayer = p + cameraPosition - previousCameraPosition;
+    vec4 pc = gbufferPreviousProjection * (gbufferPreviousModelView * vec4(prevPlayer, 1.0));
+    vec2 puv = pc.xy / pc.w * 0.5 + 0.5;
+    vec4 h = texture(colortex5, puv);
+    bool valid = all(greaterThan(puv, vec2(0.0))) && all(lessThan(puv, vec2(1.0)))
+              && abs(h.a - length(prevPlayer)) < 0.05 * dist + 0.1;
     vec3 sh = vec3(1.0);
+#if defined USE_RT && defined SHADOW_CHECKERBOARD
+    // half the pixels each frame: the other half keep their averaged shadow (where it's still valid)
+    if (valid && ((int(gl_FragCoord.x) + int(gl_FragCoord.y) + frameCounter) & 1) == 1) {
+        outShadow = vec4(h.rgb, dist);
+        return;
+    }
+#endif
 #ifdef USE_RT
     // soft sun shadow: aim each frame's ray at a different point of the sun's disc; the average gives the penumbra
     {
@@ -46,12 +59,6 @@ void main() {
     }
 #endif
 
-    vec3 prevPlayer = p + cameraPosition - previousCameraPosition;
-    vec4 pc = gbufferPreviousProjection * (gbufferPreviousModelView * vec4(prevPlayer, 1.0));
-    vec2 puv = pc.xy / pc.w * 0.5 + 0.5;
-    vec4 h = texture(colortex5, puv);
-    bool valid = all(greaterThan(puv, vec2(0.0))) && all(lessThan(puv, vec2(1.0)))
-              && abs(h.a - length(prevPlayer)) < 0.05 * dist + 0.1;
     // a short memory (8 frames): shadows move with the sun and with mobs
     outShadow = vec4(valid ? mix(h.rgb, sh, 1.0 / 8.0) : sh, dist);
 }

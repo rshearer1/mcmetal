@@ -9,6 +9,7 @@
 #endif
 
 #define RT_GI // ray-traced global illumination: bounce light, colour bleeding, sky light through openings
+#define SHADOW_CHECKERBOARD // trace the sun shadow for half the pixels each frame (the rest keep their average)
 #define GI_FILTER 25 // [9 25] taps in the GI blur/upscale (9 = cheaper)
 #define GI_HALF_RES 1 // [0 1] trace GI and AO for every 2x2 pixels (about half the cost), then upscale
 #if GI_HALF_RES == 1
@@ -92,6 +93,8 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef LIGHT_SHAFTS
 #endif
 #ifdef CAUSTICS
+#endif
+#ifdef SHADOW_CHECKERBOARD
 #endif
 #ifdef GLASS_REFRACTION
 #endif
