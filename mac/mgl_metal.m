@@ -41,7 +41,7 @@ static id<MTLComputeCommandEncoder> cenc;
                           an object may be missing for a frame or two the first time it is seen)
    MGL_FRAME_PACING=0     ON BY DEFAULT (M3: SEUS 47 fps with ~75% judder -> an even 40, plain world even 120);
                           =0 turns it off. Waits on completion signals instead of polling, and presents at an even rate
-                          (120/60/40/30/24/20/15 fps, whichever the last frames' cost sustains, only rates that divide the screen's
+                          (120/60/40/30/24/20/15 fps, 12 with interpolation, whichever the last frames' cost sustains, only rates that divide the screen's
                           refresh rate; MGL_TARGET_FPS forces one, over the power cap too: it's a test override).
                           Only with vsync on. MGL_PRESENT_STATS=1 logs how evenly frames reach the screen. */
 static int opt(const char *name)
@@ -3146,8 +3146,9 @@ static int power_cap_fps(void)
 
 /* Even presenting rates, fastest first. Down to 15: a heavy pack panning (SEUS ~20 real fps) paced at 30 got
    deadlines it never met and showed 13-16 uneven fps; 20 is even, and with interpolation 20 real shows as an even
-   40 on 120 Hz. */
-static const int pace_rates[] = {120, 60, 40, 30, 24, 20, 15};
+   40 on 120 Hz. 12 only with interpolation (shown as 24): SEUS panning at 52-62 ms a frame couldn't hold 15 shown
+   as 30 (every other frame held 1-2 refreshes longer); alone 12 fps is too slow to be worth evenness. */
+static const int pace_rates[] = {120, 60, 40, 30, 24, 20, 15, 12};
 enum { PACE_N = sizeof pace_rates / sizeof pace_rates[0] };
 
 /* Which rates may be used with shown_per_frame frames on screen per real frame; returns the slowest one's index.
@@ -3165,9 +3166,9 @@ static int pace_allowed(int shown_per_frame, int allowed[PACE_N])
     int cap = power_cap_fps(), any = 0;
     for (int i = 0; i < PACE_N; i++)
         any |= allowed[i] = hz % (pace_rates[i] * shown_per_frame) == 0 && pace_rates[i] * shown_per_frame <= hz &&
-                            (!cap || pace_rates[i] <= cap);
+                            (!cap || pace_rates[i] <= cap) && (shown_per_frame > 1 || pace_rates[i] >= 15);
     for (int i = 0; i < PACE_N && !any; i++)
-        any |= allowed[i] = !cap || pace_rates[i] <= cap;
+        any |= allowed[i] = (!cap || pace_rates[i] <= cap) && (shown_per_frame > 1 || pace_rates[i] >= 15);
     if (!any)
         allowed[PACE_N - 1] = 1;
     int slowest = PACE_N - 1;
