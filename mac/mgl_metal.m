@@ -2096,13 +2096,14 @@ static id<MTLFunction> clear_fragment(const mgl_target *t)
 
 static void fg_snapshot(const mgl_target *t);
 static int fg_enabled(void);
+static int tu_enabled(void);
 
 void mglb_clear(const mgl_target *t, unsigned mask_color, const float rgba[4], int clear_depth, float depth,
                 const int *scissor, uint8_t cmask)
 {
     /* Minecraft clears only the depth of its main target right before drawing the HUD: keep the finished world
        picture and its depth for frame interpolation */
-    if (clear_depth && !mask_color && !scissor && !t->is_default && t->tex[0] && t->depth && fg_enabled())
+    if (clear_depth && !mask_color && !scissor && !t->is_default && t->tex[0] && t->depth && (fg_enabled() || tu_enabled()))
         fg_snapshot(t);
     if (dump_this_frame())
         mgl_log("frame dump: clear target %p%s depth %p, colour mask 0x%x (write 0x%x), depth %d (%g), scissor %d", (void *)t->tex[0],
@@ -3486,7 +3487,8 @@ static int fg_enabled(void)
     return on;
 }
 
-#ifdef MGL_HAVE_FRAMEGEN
+/* The world snapshot (picture without the HUD, depth, camera motion) is shared by frame interpolation and the
+   temporal upscaler; only the interpolator itself needs the macOS 26 SDK. */
 static struct {
     id<MTLTexture> color[2], depth, motion, ui, out; /* color[cur] = this frame's world picture */
     int cur, w, h;
@@ -3496,7 +3498,8 @@ static struct {
     float view[16], proj[16];  /* camera at the snapshot, for MetalFX */
     id<MTLRenderPipelineState> mv_pipe;
     id fi;                     /* id<MTLFXFrameInterpolator> */
-    int failed, reset;
+    int failed, reset;         /* failed: the interpolator */
+    int snap_failed;
     double hand;
 } fg;
 
@@ -3554,36 +3557,19 @@ static id<MTLTexture> fg_texture(MTLPixelFormat pf, int w, int h, MTLTextureUsag
     return [dev newTextureWithDescriptor:td];
 }
 
-API_AVAILABLE(macos(26.0)) static int fg_setup(int w, int h, MTLPixelFormat fmt)
+/* The snapshot's textures and motion shader, for a w x h main target. */
+static int snap_setup(int w, int h, MTLPixelFormat fmt)
 {
-    if (fg.fi && fg.w == w && fg.h == h && fg.fmt == fmt)
+    if (fg.color[0] && fg.w == w && fg.h == h && fg.fmt == fmt)
         return 1;
-    MTLFXFrameInterpolatorDescriptor *d = [[MTLFXFrameInterpolatorDescriptor alloc] init];
-    d.colorTextureFormat = fmt;
-    d.outputTextureFormat = fmt;
-    d.uiTextureFormat = fmt;
-    d.depthTextureFormat = MTLPixelFormatDepth32Float;
-    d.motionTextureFormat = MTLPixelFormatRG16Float;
-    d.inputWidth = w;
-    d.inputHeight = h;
-    d.outputWidth = w;
-    d.outputHeight = h;
-    id<MTLFXFrameInterpolator> fi = [d newFrameInterpolatorWithDevice:dev];
-    if (!fi) {
-        mgl_log("frame interpolation: MetalFX wouldn't make an interpolator for %dx%d", w, h);
-        fg.failed = 1;
-        return 0;
-    }
-    fg.fi = fi;
     fg.w = w;
     fg.h = h;
     fg.fmt = fmt;
+    fg.fi = nil; /* the interpolator is made for one size */
     for (int i = 0; i < 2; i++)
-        fg.color[i] = fg_texture(fmt, w, h, fi.colorTextureUsage);
-    fg.ui = fg_texture(fmt, w, h, fi.uiTextureUsage);
-    fg.out = fg_texture(fmt, w, h, fi.outputTextureUsage | MTLTextureUsageRenderTarget);
-    fg.depth = fg_texture(MTLPixelFormatDepth32Float, w, h, fi.depthTextureUsage | MTLTextureUsageRenderTarget);
-    fg.motion = fg_texture(MTLPixelFormatRG16Float, w, h, fi.motionTextureUsage | MTLTextureUsageRenderTarget);
+        fg.color[i] = fg_texture(fmt, w, h, 0);
+    fg.depth = fg_texture(MTLPixelFormatDepth32Float, w, h, MTLTextureUsageRenderTarget);
+    fg.motion = fg_texture(MTLPixelFormatRG16Float, w, h, MTLTextureUsageRenderTarget);
     fg.have_prev = 0;
     fg.reset = 1;
     if (!fg.mv_pipe) {
@@ -3596,28 +3582,61 @@ API_AVAILABLE(macos(26.0)) static int fg_setup(int w, int h, MTLPixelFormat fmt)
         pd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
         fg.mv_pipe = lib ? [dev newRenderPipelineStateWithDescriptor:pd error:&e] : nil;
         if (!fg.mv_pipe) {
-            mgl_log("frame interpolation: motion shader failed: %s", e.localizedDescription.UTF8String);
-            fg.failed = 1;
+            mgl_log("camera motion shader failed: %s", e.localizedDescription.UTF8String);
+            fg.snap_failed = 1;
             return 0;
         }
     }
     const char *hand = getenv("MCMETAL_FG_HAND");
     fg.hand = hand ? atof(hand) : 0.56;
-    mgl_log("frame interpolation: %dx%d ready", w, h);
+    return 1;
+}
+
+#ifdef MGL_HAVE_FRAMEGEN
+API_AVAILABLE(macos(26.0)) static int fg_setup(void)
+{
+    if (fg.fi)
+        return 1;
+    MTLFXFrameInterpolatorDescriptor *d = [[MTLFXFrameInterpolatorDescriptor alloc] init];
+    d.colorTextureFormat = fg.fmt;
+    d.outputTextureFormat = fg.fmt;
+    d.uiTextureFormat = fg.fmt;
+    d.depthTextureFormat = MTLPixelFormatDepth32Float;
+    d.motionTextureFormat = MTLPixelFormatRG16Float;
+    d.inputWidth = fg.w;
+    d.inputHeight = fg.h;
+    d.outputWidth = fg.w;
+    d.outputHeight = fg.h;
+    id<MTLFXFrameInterpolator> fi = [d newFrameInterpolatorWithDevice:dev];
+    if (!fi) {
+        mgl_log("frame interpolation: MetalFX wouldn't make an interpolator for %dx%d", fg.w, fg.h);
+        fg.failed = 1;
+        return 0;
+    }
+    fg.fi = fi;
+    fg.ui = fg_texture(fg.fmt, fg.w, fg.h, fi.uiTextureUsage);
+    fg.out = fg_texture(fg.fmt, fg.w, fg.h, fi.outputTextureUsage | MTLTextureUsageRenderTarget);
+    fg.reset = 1;
+    mgl_log("frame interpolation: %dx%d ready", fg.w, fg.h);
     return 1;
 }
 #endif
 
 static void fg_snapshot(const mgl_target *t)
 {
-#ifdef MGL_HAVE_FRAMEGEN
-    if (@available(macOS 26.0, *)) {
-        if (fg.failed || !mgl->window_color || t->width != mgl->window_color->d.width ||
+    {
+        if (fg.snap_failed || !mgl->window_color || t->width != mgl->window_color->d.width ||
             t->height != mgl->window_color->d.height || (mgl_cam.seen & 0x3f) != 0x3f)
             return;
         id<MTLTexture> col = OBJ(id<MTLTexture>, t->tex[0]->mtl), dep = OBJ(id<MTLTexture>, t->depth->mtl);
-        if (!fg_setup(t->width, t->height, col.pixelFormat))
+        if (!snap_setup(t->width, t->height, col.pixelFormat))
             return;
+#ifdef MGL_HAVE_FRAMEGEN
+        if (fg_enabled() && !fg.failed) {
+            if (@available(macOS 26.0, *))
+                fg_setup();
+        }
+#endif
         if (fg.snap_frame != frames_presented + 1) { /* first snapshot this frame: use the other picture slot */
             fg.have_prev = fg.snap_frame == frames_presented; /* the previous frame had one */
             fg.cur ^= 1;
@@ -3674,9 +3693,6 @@ static void fg_snapshot(const mgl_target *t)
         [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
         [e endEncoding];
     }
-#else
-    (void)t;
-#endif
 }
 
 /* The made-up frame between the last two real ones, or nil (no snapshot this frame or the last, or off). Called at
@@ -3730,9 +3746,148 @@ static id<MTLTexture> fg_interpolate(double frame_s)
 /* MetalFX must not blend across a pause in interpolation */
 static void fg_history_reset(void)
 {
-#ifdef MGL_HAVE_FRAMEGEN
     fg.reset = 1;
-#endif
+}
+
+/* ================================================================ MetalFX temporal upscaler (MCMETAL_UPSCALE=2)
+
+   Like MCMETAL_UPSCALE=1 the game renders at half the Retina size each way, but MetalFX's temporal upscaler
+   rebuilds the full-size world picture from this frame and the last ones (using the world snapshot's depth and
+   camera motion, the same as frame interpolation), instead of sharpening one frame on its own. The HUD isn't
+   in the snapshot: pixels where the finished frame differs from the world picture (and their neighbours) come
+   from the spatial upscaler instead, so text and the hotbar don't smear. Needs a shader pack (Iris's camera
+   uniforms); without one, and in menus, frames use the spatial upscaler. No jitter: packs do their own TAA. */
+static int tu_enabled(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("MCMETAL_UPSCALE");
+        on = e && atoi(e) == 2;
+        if (on)
+            mgl_log("temporal upscaler: on (with a shader pack; spatial otherwise)");
+    }
+    return on;
+}
+
+static struct {
+    id fx; /* id<MTLFXTemporalScaler> */
+    id<MTLTexture> out, final;
+    id<MTLRenderPipelineState> pipe;
+    MTLPixelFormat pipe_fmt;
+    NSUInteger ow, oh;
+    int failed, reset, logged;
+} tu = {.reset = 1};
+
+static const char *tu_msl =
+    "#include <metal_stdlib>\nusing namespace metal;\n"
+    "vertex float4 tu_vs(uint v [[vertex_id]]) { float2 p = float2((v << 1) & 2, v & 2); return float4(p * 2.0 - 1.0, 0.0, 1.0); }\n"
+    /* all textures in GL row order, the output too: row r of each is the same place */
+    "fragment float4 tu_fs(float4 pos [[position]], texture2d<float> world_up [[texture(0)]], texture2d<float> full_up [[texture(1)]],\n"
+    "                      texture2d<float> full [[texture(2)]], texture2d<float> world [[texture(3)]]) {\n"
+    "    uint2 o = uint2(pos.xy);\n"
+    "    int2 isz = int2(full.get_width(), full.get_height());\n"
+    "    int2 c = int2(pos.xy / float2(world_up.get_width(), world_up.get_height()) * float2(isz));\n"
+    "    float m = 0.0;\n"
+    "    for (int y = -1; y <= 1; y++)\n"
+    "        for (int x = -1; x <= 1; x++) {\n"
+    "            uint2 q = uint2(clamp(c + int2(x, y), int2(0), isz - 1));\n"
+    "            float3 d = abs(full.read(q).rgb - world.read(q).rgb);\n"
+    "            m = max(m, max(d.r, max(d.g, d.b)));\n"
+    "        }\n"
+    "    float4 r = m > 0.002 ? full_up.read(o) : world_up.read(o);\n"
+    "    return float4(r.rgb, 1.0);\n"
+    "}\n";
+
+/* The finished frame (window_color, HUD included) upscaled to ow x oh with the world from the temporal upscaler,
+   or nil (off, no fresh snapshot, or MetalFX can't): then the caller uses the spatial upscaler. */
+static id<MTLTexture> tu_frame(mgl_ctx *c, id<MTLTexture> win, NSUInteger ow, NSUInteger oh)
+{
+    if (!tu_enabled() || tu.failed)
+        return nil;
+    if (fg.snap_frame != frames_presented + 1 || !fg.color[0] || (int)win.width != fg.w || (int)win.height != fg.h ||
+        win.pixelFormat != fg.fmt) {
+        tu.reset = 1;
+        return nil;
+    }
+    if (!tu.fx || tu.ow != ow || tu.oh != oh || [(id<MTLFXTemporalScaler>)tu.fx colorTextureFormat] != fg.fmt ||
+        [(id<MTLFXTemporalScaler>)tu.fx inputWidth] != (NSUInteger)fg.w || [(id<MTLFXTemporalScaler>)tu.fx inputHeight] != (NSUInteger)fg.h) {
+        MTLFXTemporalScalerDescriptor *d = [[MTLFXTemporalScalerDescriptor alloc] init];
+        d.colorTextureFormat = fg.fmt;
+        d.outputTextureFormat = fg.fmt;
+        d.depthTextureFormat = MTLPixelFormatDepth32Float;
+        d.motionTextureFormat = MTLPixelFormatRG16Float;
+        d.inputWidth = fg.w;
+        d.inputHeight = fg.h;
+        d.outputWidth = ow;
+        d.outputHeight = oh;
+        d.autoExposureEnabled = NO;
+        id<MTLFXTemporalScaler> fx = [MTLFXTemporalScalerDescriptor supportsDevice:dev] ? [d newTemporalScalerWithDevice:dev] : nil;
+        if (!fx) {
+            mgl_log("temporal upscaler: MetalFX wouldn't make one for %dx%d -> %lux%lu, using the spatial one", fg.w, fg.h,
+                    (unsigned long)ow, (unsigned long)oh);
+            tu.failed = 1;
+            return nil;
+        }
+        tu.fx = fx;
+        tu.ow = ow;
+        tu.oh = oh;
+        tu.out = fg_texture(fg.fmt, (int)ow, (int)oh, fx.outputTextureUsage);
+        tu.final = fg_texture(fg.fmt, (int)ow, (int)oh, MTLTextureUsageRenderTarget);
+        tu.reset = 1;
+        mgl_log("temporal upscaler: %dx%d -> %lux%lu", fg.w, fg.h, (unsigned long)ow, (unsigned long)oh);
+    }
+    if (!tu.pipe || tu.pipe_fmt != fg.fmt) {
+        NSError *e = nil;
+        id<MTLLibrary> lib = [dev newLibraryWithSource:[NSString stringWithUTF8String:tu_msl] options:nil error:&e];
+        MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
+        pd.vertexFunction = [lib newFunctionWithName:@"tu_vs"];
+        pd.fragmentFunction = [lib newFunctionWithName:@"tu_fs"];
+        pd.colorAttachments[0].pixelFormat = fg.fmt;
+        tu.pipe = lib ? [dev newRenderPipelineStateWithDescriptor:pd error:&e] : nil;
+        tu.pipe_fmt = fg.fmt;
+        if (!tu.pipe) {
+            mgl_log("temporal upscaler: HUD shader failed: %s", e.localizedDescription.UTF8String);
+            tu.failed = 1;
+            return nil;
+        }
+    }
+    id<MTLTexture> hud = upscale(c, win, ow, oh); /* the whole frame, spatially, for the HUD's pixels */
+    if (!hud)
+        return nil;
+    id<MTLFXTemporalScaler> fx = tu.fx;
+    fx.colorTexture = fg.color[fg.cur];
+    fx.depthTexture = fg.depth;
+    fx.motionTexture = fg.motion;
+    fx.outputTexture = tu.out;
+    fx.inputContentWidth = fg.w;
+    fx.inputContentHeight = fg.h;
+    fx.jitterOffsetX = 0;
+    fx.jitterOffsetY = 0;
+    fx.motionVectorScaleX = (float)fg.w;
+    fx.motionVectorScaleY = (float)fg.h;
+    fx.depthReversed = NO;
+    fx.reset = tu.reset;
+    tu.reset = 0;
+    [fx encodeToCommandBuffer:current_cb()];
+
+    MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
+    rp.colorAttachments[0].texture = tu.final;
+    rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+    rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+    id<MTLRenderCommandEncoder> e = [current_cb() renderCommandEncoderWithDescriptor:rp];
+    [e setRenderPipelineState:tu.pipe];
+    [e setFragmentTexture:tu.out atIndex:0];
+    [e setFragmentTexture:hud atIndex:1];
+    [e setFragmentTexture:win atIndex:2];
+    [e setFragmentTexture:fg.color[fg.cur] atIndex:3];
+    [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    [e endEncoding];
+    upscaled = tu.final; /* test screenshots */
+    if (!tu.logged) {
+        tu.logged = 1;
+        mgl_log("temporal upscaler: first frame drawn");
+    }
+    return tu.final;
 }
 
 void mglb_window_size(int *w, int *h)
@@ -3948,7 +4103,10 @@ static void watch_drawable(id<CAMetalDrawable> drawable)
 static void draw_to_drawable(mgl_ctx *c, id<MTLTexture> src, id<CAMetalDrawable> drawable)
 {
     if (upscale_on()) {
-        id<MTLTexture> up = upscale(c, src, drawable.texture.width, drawable.texture.height);
+        NSUInteger ow = drawable.texture.width, oh = drawable.texture.height;
+        id<MTLTexture> up = src == OBJ(id<MTLTexture>, mgl->window_color->mtl) ? tu_frame(c, src, ow, oh) : nil;
+        if (!up)
+            up = upscale(c, src, ow, oh);
         if (up)
             src = up;
     }
