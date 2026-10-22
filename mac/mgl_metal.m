@@ -495,7 +495,8 @@ static int size_class(size_t size)
 }
 
 static size_t buf_live_bytes, buf_pooled_bytes; /* MGL_PROFILE: Metal buffer memory we hold, and of it in the pool */
-static unsigned long tr_oneoff;                 /* transient allocations that fell back to their own buffer */
+static unsigned long tr_oneoff, tr_waits;       /* transient allocations that fell back to their own buffer; waits for a chunk */
+int mglb_fence_wait(uint64_t id, uint64_t timeout_ns);
 mglb_buffer *mglb_buffer_new(size_t size)
 {
     init_device();
@@ -600,7 +601,23 @@ static transient_t transient(size_t size)
                 tr_chunk[k].b = b;
             }
         }
-        if (k < 0) { /* all chunks busy: a one-off buffer */
+        if (k < 0 && tr_n) {
+            /* all chunks busy: wait for the oldest instead of allocating. One-off buffers here (~1500 a frame
+               while SEUS turns) grew the process by ~6 GB/s: Metal didn't hand their memory back. */
+            int old = 0;
+            for (int i = 1; i < tr_n; i++)
+                if (tr_chunk[i].b->last_use < tr_chunk[old].b->last_use)
+                    old = i;
+            uint64_t serial = tr_chunk[old].b->last_use;
+            if (serial >= cb_serial && cb)
+                commit(); /* the oldest is this command buffer's own: submit it first */
+            tr_waits++;
+            if (mglb_fence_wait(serial, 1000000000ull)) {
+                current_cb();
+                k = old;
+            }
+        }
+        if (k < 0) { /* still nothing: a one-off buffer */
             tr_oneoff++;
             mglb_buffer *b = mglb_buffer_new(size);
             if (!b)
@@ -3561,8 +3578,9 @@ static void profile_frame(unsigned long draws)
         mgl_log("profile: geometry shaders %.0f draws, %.0fk input triangles, %.1f MB of records per frame", prof.gs_draws / f,
                 prof.gs_tris / f * 1e-3, prof.gs_bytes / f / 1048576.0);
     mgl_log("profile: buffers %.0f MB held (%.0f MB pooled), %d of %d transient chunks, %.1f one-off transient "
-            "buffers per frame", buf_live_bytes / 1048576.0, buf_pooled_bytes / 1048576.0, tr_n, TR_MAX, tr_oneoff / f);
-    tr_oneoff = 0;
+            "buffers and %.1f waits for a chunk per frame", buf_live_bytes / 1048576.0, buf_pooled_bytes / 1048576.0, tr_n,
+            TR_MAX, tr_oneoff / f, tr_waits / f);
+    tr_oneoff = tr_waits = 0;
     if (pt_ok > 0)
         pt_report(f);
     memset(&prof, 0, sizeof prof);
