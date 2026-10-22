@@ -219,6 +219,7 @@ static int rgb_only(GLenum internal)
 {
     switch (internal) {
     case GL_RGB: case GL_RGB8: case 3: case GL_SRGB8: case GL_RGB8_SNORM: case GL_RGB16F: case GL_RGB32F: case GL_RGB16:
+    case GL_SRGB: case GL_RGB4: case GL_RGB5: case GL_RGB10: case GL_RGB12: case GL_R3_G3_B2: case GL_RGB565:
         return 1;
     }
     return 0;

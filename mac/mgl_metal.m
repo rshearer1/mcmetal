@@ -2817,10 +2817,12 @@ static void bind_stage_resources(id<MTLRenderCommandEncoder> e, id<MTLComputeCom
                 tex = OBJ(id<MTLTexture>, x->swz_view);
             else {
                 prof.tex_views++;
-                tex = swizzled_view(tex, bt->swizzle);
-                if (!bt->is_image && tex) {
+                id<MTLTexture> v = swizzled_view(tex, bt->swizzle); /* nil if the view can't be made: keep the texture */
+                if (v)
+                    tex = v;
+                if (!bt->is_image && v) {
                     release_obj(x->swz_view);
-                    x->swz_view = retain_obj(tex);
+                    x->swz_view = retain_obj(v);
                     memcpy(x->swz, bt->swizzle, sizeof x->swz);
                 }
             }
