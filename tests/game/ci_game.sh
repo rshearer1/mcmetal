@@ -20,7 +20,11 @@ cp "$SRC/tests/game/options.txt" "$G/options.txt"
 # (also on Apple's OpenGL: GAME_ENV=MCMETAL_DISABLE=1), window GAME_SIZE (default 1920x1200). Once the world is on
 # screen it settles for GAME_BENCH_SETTLE s (default 10), then measures GAME_BENCH_SECS s (default 30) and stops
 # GAME_SEGMENTS: a file, or a name in tests/game/segments/ (see segments() below)
-[ -n "${GAME_SEGMENTS:-}" ] && [ ! -f "$GAME_SEGMENTS" ] && GAME_SEGMENTS=$SRC/tests/game/segments/$GAME_SEGMENTS.txt
+# (in CI only a name: the file's first fields end up in the uploaded logs)
+if [ -n "${GAME_SEGMENTS:-}" ] && { [ -n "${GITHUB_ACTIONS:-}" ] || [ ! -f "$GAME_SEGMENTS" ]; }; then
+    [[ $GAME_SEGMENTS =~ ^[A-Za-z0-9_-]+$ ]] || { echo "GAME_SEGMENTS must name a file in tests/game/segments/"; exit 1; }
+    GAME_SEGMENTS=$SRC/tests/game/segments/$GAME_SEGMENTS.txt
+fi
 [ -n "${GAME_SEGMENTS:-}" ] && { [ -f "$GAME_SEGMENTS" ] || { echo "no segments file $GAME_SEGMENTS"; exit 1; }; GAME_SEGMENTS=$(cd "$(dirname "$GAME_SEGMENTS")" && pwd)/$(basename "$GAME_SEGMENTS"); }
 case "${GAME_BENCH_SETTLE:-10}" in ''|*[!0-9]*) echo "GAME_BENCH_SETTLE must be a whole number of seconds"; exit 1 ;; esac
 if [ "${GAME_BENCH:-}" = true ]; then
@@ -61,6 +65,7 @@ segments() { # phase
     local name=$1 ctl=$OUT/$1/control look_f="$G/saves/metal/datapacks/mcm-scene/data/mcm/function/look.mcfunction"
     local opts_f="$G/shaderpacks/${PACK:-ComplementaryReimagined_r5.9.3.zip}.txt" base_opts= last_opts=- n=0 reloads=0
     [ -f "$opts_f" ] && base_opts=$(cat "$opts_f")
+    local base_look; base_look=$(cat "$look_f" 2>/dev/null)
     local seg tm wx look opts shot
     while IFS='|' read -r seg tm wx look opts shot; do
         case $seg in ''|'#'*) continue ;; esac
@@ -73,13 +78,18 @@ segments() { # phase
             lines+="shaders"$'\n'; wait=${GAME_SEG_SETTLE_SHADERS:-10}; last_opts=$opts
         fi
         n=$((n + 1))
-        printf '%smark segment %s\n' "$lines" "$seg" > "$ctl"
+        printf '%smark segment %s\n' "$lines" "$seg" > "$ctl.tmp" && mv "$ctl.tmp" "$ctl" # whole batches only
+        local fails; fails=$(grep -cE "control failed|command failed|shader reload failed" "$WORK/client.log" 2>/dev/null)
         # the mod polls twice a second; a shader reload finishes on the render thread after "control done"
         local k=0 done_re="control done"
         [[ $lines == *shaders* ]] && { reloads=$((reloads + 1)); done_re="shaders reloaded|shader reload failed"; }
         while [ $k -lt 90 ] && [ "$(grep -cE "$done_re" "$WORK/client.log" 2>/dev/null)" -lt "$([ "$done_re" = "control done" ] && echo $n || echo $reloads)" ]; do
             sleep 1; k=$((k + 1))
         done
+        if [ $k -ge 90 ] || [ "$(grep -cE "control failed|command failed|shader reload failed" "$WORK/client.log" 2>/dev/null)" -gt "$fails" ]; then
+            echo "segment $seg: the game did not take the changes (see client.log), not measured" | tee -a "$OUT/fps.txt"
+            continue
+        fi
         sleep "$wait"
         local from; from=$(grep -c '\] fps ' "$WORK/client.log" 2>/dev/null)
         echo "segment $seg: measuring ${GAME_BENCH_SECS:-30}s"
@@ -87,13 +97,16 @@ segments() { # phase
         fps_summary "$name/$seg" "$WORK/client.log" "$from" "${GAME_BENCH_SECS:-30}"
         if [ "$shot" = yes ]; then
             mkdir -p "$OUT/$name/$seg"
-            local before; before=$(ls "$OUT/$name"/shot-*.png 2>/dev/null)
+            local before; before=$(ls "$OUT/$name"/shot-*.png "$OUT/$name"/screenshots/apple-*.png 2>/dev/null)
             touch "$OUT/$name/shoot"; sleep 3; rm -f "$OUT/$name/shoot"
-            for f in "$OUT/$name"/shot-*.png; do grep -qxF "$f" <<< "$before" || mv "$f" "$OUT/$name/$seg/"; done
+            for f in "$OUT/$name"/shot-*.png "$OUT/$name"/screenshots/apple-*.png; do # mcmetal / Apple's OpenGL
+                [ -f "$f" ] && ! grep -qxF "$f" <<< "$before" && mv "$f" "$OUT/$name/$seg/"
+            done
         fi
         echo "segment $seg took $((SECONDS - t0)) s"
     done < "$GAME_SEGMENTS"
     [ -n "$base_opts" ] && echo "$base_opts" > "$opts_f" || rm -f "$opts_f"
+    [ -n "$base_look" ] && echo "$base_look" > "$look_f" # the phase's own camera for whatever runs next
 }
 
 run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this phase
