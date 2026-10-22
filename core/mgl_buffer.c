@@ -110,11 +110,19 @@ void glBindBufferRange(GLenum target, GLuint index, GLuint name, GLintptr offset
     glBindBuffer(target, name);
 }
 
+/* Every CPU write into buffer memory: ray-tracing caches (mgl_rt.c) and the geometry-shader output cache
+   (mglb_buffer_written) key on buffer contents. */
+static void note_write(mglb_buffer *m, size_t offset, size_t size)
+{
+    mglb_buffer_written(m);
+    mgl_rt_note_write(m, offset, size);
+}
+
 /* All buffer memory comes from here, so ray-tracing caches keyed by it start fresh (mgl_rt.c). */
 static mglb_buffer *new_mem(size_t size)
 {
     mglb_buffer *m = mglb_buffer_new(size);
-    mgl_rt_note_write(m, 0, (size_t)-1);
+    note_write(m, 0, (size_t)-1);
     return m;
 }
 
@@ -145,7 +153,7 @@ static void buffer_data(mgl_buffer *b, GLsizeiptr size, const void *data)
     }
     if (data && size)
         memcpy(mglb_buffer_ptr(b->mem), data, (size_t)size);
-    mgl_rt_note_write(b->mem, 0, (size_t)size);
+    note_write(b->mem, 0, (size_t)size);
 }
 
 void glBufferData(GLenum target, GLsizeiptr size, const void *data, GLenum usage)
@@ -197,7 +205,7 @@ static void buffer_sub_data(mgl_buffer *b, GLintptr offset, GLsizeiptr size, con
     if (!(b->storage_flags & GL_MAP_PERSISTENT_BIT) && mglb_buffer_in_use(b->mem))
         rename_mem(b, (size_t)size != b->size);
     memcpy((char *)mglb_buffer_ptr(b->mem) + offset, data, (size_t)size);
-    mgl_rt_note_write(b->mem, (size_t)offset, (size_t)size);
+    note_write(b->mem, (size_t)offset, (size_t)size);
 }
 
 void glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const void *data)
@@ -229,6 +237,8 @@ static void *map_range(mgl_buffer *b, GLintptr offset, GLsizeiptr length, GLbitf
         else
             mglb_finish(); /* reading: wait for the GPU */
     }
+    if ((access | b->storage_flags) & GL_MAP_PERSISTENT_BIT)
+        mglb_buffer_volatile(b->mem);
     b->mapped = 1;
     b->map_offset = (size_t)offset;
     b->map_length = (size_t)length;
@@ -266,7 +276,7 @@ static GLboolean unmap(mgl_buffer *b)
     }
     b->mapped = 0;
     if (b->map_access & GL_MAP_WRITE_BIT)
-        mgl_rt_note_write(b->mem, b->map_offset, b->map_length);
+        note_write(b->mem, b->map_offset, b->map_length);
     return GL_TRUE;
 }
 
@@ -287,7 +297,7 @@ static void copy_sub_data(mgl_buffer *src, mgl_buffer *dst, GLintptr ro, GLintpt
     if (!(dst->storage_flags & GL_MAP_PERSISTENT_BIT) && mglb_buffer_in_use(dst->mem))
         rename_mem(dst, 1);
     memmove((char *)mglb_buffer_ptr(dst->mem) + wo, (char *)mglb_buffer_ptr(src->mem) + ro, (size_t)size);
-    mgl_rt_note_write(dst->mem, (size_t)wo, (size_t)size);
+    note_write(dst->mem, (size_t)wo, (size_t)size);
 }
 
 void glCopyBufferSubData(GLenum rt, GLenum wt, GLintptr ro, GLintptr wo, GLsizeiptr size)
@@ -356,6 +366,7 @@ static void clear_sub_data(mgl_buffer *b, GLenum internalformat, size_t offset, 
         rename_mem(b, size != b->size);
     char *p = (char *)mglb_buffer_ptr(b->mem) + offset;
     size_t es = (size_t)element_size(internalformat);
+    note_write(b->mem, offset, size);
     if (!data) {
         memset(p, 0, size);
         return;

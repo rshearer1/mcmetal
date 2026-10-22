@@ -24,6 +24,8 @@ void *mglb_buffer_ptr(mglb_buffer *b) { return b->mem; }
 size_t mglb_buffer_size(mglb_buffer *b) { return b ? b->size : 0; }
 void mglb_buffer_release(mglb_buffer *b) { if (b) { free(b->mem); free(b); } }
 int mglb_buffer_in_use(mglb_buffer *b) { return 0; }
+void mglb_buffer_written(mglb_buffer *b) {}
+void mglb_buffer_volatile(mglb_buffer *b) {}
 
 mglb_texture *mglb_texture_new(const mglb_texture_desc *d)
 {

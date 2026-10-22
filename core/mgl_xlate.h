@@ -65,6 +65,9 @@ typedef struct mgl_xlate_result {
     char *log;              /* compile/link errors, malloc'd */
     char *msl[MGL_NUM_STAGES];  /* malloc'd MSL source per present stage, entry point "main0" */
     int default_block_size[MGL_NUM_STAGES];
+    /* byte ranges of the default block the stage actually reads ({offset, size}); -1 = unknown (treat it all as
+       read). glslang keeps every declared uniform in the block, used or not. */
+    int used_ranges[MGL_NUM_STAGES][64][2]; int num_used_ranges[MGL_NUM_STAGES];
     int local_size[3];      /* compute only */
 
     mgl_uniform *uniforms; int num_uniforms;
