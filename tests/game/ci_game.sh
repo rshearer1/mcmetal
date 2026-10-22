@@ -149,7 +149,7 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     [ "${GAME_PROFILE:-}" = true ] && jvmx+=(-XX:FlightRecorderOptions=stackdepth=128
         "-XX:StartFlightRecording=name=mcm,settings=profile,dumponexit=true,filename=$WORK/rec.jfr,jdk.ExecutionSample#period=10ms,jdk.NativeMethodSample#period=10ms")
     # bench mode: every stop-the-world pause (GC or not) is logged, for gc-report.txt (tools/gc_report.py)
-    rm -f "$OUT/$name/gc.log"
+    rm -f "$OUT/$name/gc.log" "$OUT/$name/frames.txt"
     [ "${GAME_BENCH:-}" = true ] && jvmx+=("-Xlog:gc,safepoint:file=$OUT/$name/gc.log:time,uptimemillis,level,tags")
     # GAME_JVM="-XX:+UseZGC -XX:+ZGenerational": JVM options for this run (after ours, so they win; GAME_XMX=8G
     # sets the heap, default 3G)
@@ -157,7 +157,7 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     MCMETAL_CONTROL=$([ -n "${GAME_SEGMENTS:-}" ] && echo "$OUT/$name/control") \
     MCMETAL_BACKGROUND=${MCMETAL_BACKGROUND-behind} \
     MGL_LOG="$OUT/$name/mgl.log" MGL_SHOT_DIR="$OUT/$name" MGL_SHOT_EVERY=${MGL_SHOT_EVERY-10} \
-    MGL_CACHE_DIR="$WORK/cache" MGL_DUMP_DIR="$OUT/$name/glsl" GLPROF_OUT="$OUT/$name/glprof.txt" env ${GAME_ENV:-} "$@" \
+    MGL_CACHE_DIR="$WORK/cache" MGL_DUMP_DIR="$OUT/$name/glsl" GLPROF_OUT="$OUT/$name/glprof.txt" GLPROF_FRAMES="$OUT/$name/frames.txt" env ${GAME_ENV:-} "$@" \
         python3 -I "$SRC/tools/bare_mc.py" launch "$WORK" --java "$JAVA" "${wargs[@]}" \
         ${LIBARGS[@]+"${LIBARGS[@]}"} ${jvmx[@]+"${jvmx[@]}"} > "$OUT/$name/launch.out" 2>&1 &
     local t=0
@@ -224,6 +224,12 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     if [ -n "${gc_window:-}" ] && [ -f "$OUT/$name/gc.log" ]; then # JVM pauses in the measured window
         python3 -I "$SRC/tools/gc_report.py" "$OUT/$name/gc.log" $gc_window > "$OUT/$name/gc-report.txt" 2>&1
         cat "$OUT/$name/gc-report.txt"
+    fi
+    # profile mode: what the slowest 1% of frames were doing (Java, GL, swap, JVM pause); frames.txt is per frame
+    if [ -n "${gc_window:-}" ] && [ -f "$OUT/$name/frames.txt" ]; then
+        python3 -I "$SRC/tools/slow_frames.py" "$OUT/$name/frames.txt" "$OUT/$name/gc.log" $gc_window \
+            > "$OUT/$name/slow-frames.txt" 2>&1
+        cat "$OUT/$name/slow-frames.txt"
     fi
     gc_window=
     cp "$WORK/client.log" "$OUT/$name/client.log" 2>/dev/null
