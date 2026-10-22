@@ -3605,7 +3605,7 @@ static void gs_flush_at(int line)
 
    A new section is built for a fast build (PreferFastBuild), every triangle non-opaque, so turning, which keeps
    bringing sections into view, costs as little as it can. Once a section has stayed ~1.5 s it is built again for
-   fast tracing (PreferFastIntersection on macOS 15+), with its solid triangles in an opaque geometry: rays then
+   fast tracing (PreferFastIntersection when built with the macOS 26 SDK), with its solid triangles in an opaque geometry: rays then
    take those hits in the ray hardware, and only cutout triangles (grass, leaves, flowers) come back to mcm_trace's
    alpha test. Solid means the triangle's whole texture rectangle passes that test, read from a map of the block
    atlas's lowest alpha per 8x8 texels (rt_alpha_tiles). Both geometries hold every triangle in the same order
@@ -4024,8 +4024,8 @@ static void section_upgrade(RtSection *s)
         pd.geometryDescriptors = @[ tri_geometry(s.tris, 0, tris, solid ? YES : NO) ];
         rt_solid += solid ? 1 : 0;
     }
-#if defined(__MAC_15_0) && __MAC_OS_X_VERSION_MAX_ALLOWED >= __MAC_15_0
-    if (@available(macOS 15.0, *))
+#if defined(__MAC_26_0) && __MAC_OS_X_VERSION_MAX_ALLOWED >= __MAC_26_0
+    if (@available(macOS 26.0, *)) /* older SDKs: the default build, already better for tracing than the first */
         pd.usage = MTLAccelerationStructureUsagePreferFastIntersection;
 #endif
     id<MTLAccelerationStructure> as = new_as(pd);
