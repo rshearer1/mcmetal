@@ -3327,6 +3327,15 @@ static int gsc_key(const mgl_draw *d, const int32_t desc[16][4], int triangles, 
 /* Geometry-shader emulation (mgl_gs.c). The compute stage gets: 21 attribute descriptors, 22..25 raw vertex
    buffers, 26 index buffer, 27 emitted vertex records, 28 per-primitive vertex counts. The passthrough vertex
    stage reads 27/28 and turns each strip into a triangle list. */
+/* MGL_GS_PROBE=6 (timing only): no passthrough draws and no cache hits, the compute stage alone */
+static int gs_probe_no_pass(void)
+{
+    static int on = -1;
+    if (on < 0)
+        on = getenv("MGL_GS_PROBE") && atoi(getenv("MGL_GS_PROBE")) == 6;
+    return on;
+}
+
 void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record_floats)
 {
     if (!d->program->compute || !d->program->vfn || max_vertices < 3 || triangles <= 0)
@@ -3358,7 +3367,7 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
     id<MTLBuffer> ovb = nil, ocb = nil;
     NSUInteger ovo = 0, oco = 0;
     uint64_t k0, k1;
-    int keyed = gsc_key(d, desc, triangles, &k0, &k1);
+    int keyed = !gs_probe_no_pass() && gsc_key(d, desc, triangles, &k0, &k1);
     gsc_entry *ce = keyed ? gsc_find(k0, k1) : NULL;
     if (keyed && !ce)
         ce = gsc_add(k0, k1);
@@ -3493,7 +3502,7 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
             else
                 sr = (MTLScissorRect){(NSUInteger)x0, (NSUInteger)y0, (NSUInteger)(x1 - x0), (NSUInteger)(y1 - y0)};
         }
-        if (visible) {
+        if (visible && !gs_probe_no_pass()) {
             [e setScissorRect:sr];
             [e setCullMode:!p->cull ? MTLCullModeNone : p->cull_face == GL_FRONT ? MTLCullModeFront : MTLCullModeBack];
             [e setFrontFacingWinding:p->front_face == GL_CW ? MTLWindingCounterClockwise : MTLWindingClockwise];
