@@ -1,7 +1,9 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
 #   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain
-#   pack-NAME packnight-NAME (third-party packs, see PACKS below) (default: the first three)
+#   pack-NAME packnight-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
+#   archive-NAME (pipeline binary archive: cold, warm, warm without archive)
+#   (default: the first three)
 # WORK holds the game install (cacheable), OUT gets screenshots and logs. Needs Java 21 as `java` or $JAVA.
 set -uo pipefail
 SRC=$(cd "$(dirname "$0")/../.." && pwd)
@@ -17,6 +19,7 @@ cp "$SRC/tests/game/options.txt" "$G/options.txt"
 # GAME_BENCH=true: frame-rate runs. No vsync or frame cap, 12 chunks, Minecraft's fps logged every second by the mod
 # (also on Apple's OpenGL: GAME_ENV=MCMETAL_DISABLE=1), window GAME_SIZE (default 1920x1200). Once the world is on
 # screen it settles for GAME_BENCH_SETTLE s (default 10), then measures GAME_BENCH_SECS s (default 30) and stops
+case "${GAME_BENCH_SETTLE:-10}" in ''|*[!0-9]*) echo "GAME_BENCH_SETTLE must be a whole number of seconds"; exit 1 ;; esac
 if [ "${GAME_BENCH:-}" = true ]; then
     sed -i.bak 's/^enableVsync:.*/enableVsync:false/; s/^maxFps:.*/maxFps:260/; s/^renderDistance:.*/renderDistance:12/' "$G/options.txt"
     export MCMETAL_FPS_LOG=1 MCMETAL_FPS_EVERY=1 MGL_SHOT_EVERY=0 # screenshots only after measuring: each one stalls the GPU
@@ -68,6 +71,23 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
                 bench_from=$(grep -c '\] fps ' "$WORK/client.log" 2>/dev/null)
                 echo "world on screen, measuring ${GAME_BENCH_SECS:-30}s"
                 sleep "${GAME_BENCH_SECS:-30}"
+                # after measuring: where the CPU goes (native stacks, mcmetal symbolised) and what the Java render
+                # thread is doing, for phases whose frame time isn't GPU time
+                pid=$(cat "$WORK/client.pid" 2>/dev/null)
+                if [ -n "$pid" ]; then
+                    echo "sampling CPU stacks"
+                    # each tool gets a time limit (macOS has no timeout command) and no handle on the step's output:
+                    # jcmd can't attach to a 1 fps game and would otherwise keep the CI step open forever
+                    sample "$pid" 5 -mayDie -file "$OUT/$name/sample.txt" </dev/null >/dev/null 2>&1 &
+                    for k in 1 2 3; do
+                        jcmd "$pid" Thread.print </dev/null > "$OUT/$name/jstack-$k.txt" 2>/dev/null &
+                        sleep 4
+                    done
+                    sleep 12; pkill -9 -x jcmd; pkill -9 -x sample
+                    cat "$OUT/$name"/jstack-*.txt 2>/dev/null | awk '/^"Render thread"/,/^$/' > "$OUT/$name/render-thread.txt"
+                    rm -f "$OUT/$name"/jstack-*.txt
+                    echo "sampling done"
+                fi
                 touch "$OUT/$name/shoot"; sleep 3; rm -f "$OUT/$name/shoot"; break
             fi
             continue
@@ -142,9 +162,11 @@ bsl|MULTICOLORED_BLOCKLIGHT=true
 unbound|COLORED_LIGHTING=128
 complementary|COLORED_LIGHTING=128"
 
-third_party() { # pack-NAME / packnight-NAME: one third-party pack in the pool scene, at noon (pack settings as
-                # shipped) or midnight (coloured block light on)
-    local p=$1 name=${1#*-} file url sha
+third_party() { # pack-NAME / packnight-NAME [OUTNAME [VAR=value ...]]: one third-party pack in the pool scene, at
+                # noon (pack settings as shipped) or midnight (coloured block light on)
+    local p=$1 out=${2:-$1} name=${1#*-} file url sha extra=
+    shift; [ $# -gt 0 ] && shift
+    case $name in *@*) extra=${name#*@}; name=${name%%@*} ;; esac # pack-bliss@OPT=value,OPT2=value: extra options
     IFS='|' read -r _ file url sha <<< "$(grep "^${name%%+*}|" <<< "$PACKS")"
     [ -n "$file" ] || { echo "unknown pack $name"; return; }
     if [ "$url" != - ] && ! python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import bare_mc; bare_mc.fetch(*sys.argv[2:])' \
@@ -162,7 +184,8 @@ third_party() { # pack-NAME / packnight-NAME: one third-party pack in the pool s
         grep "^${name%%+*}|" <<< "$PACK_LIGHT" | cut -d'|' -f2 > "$opts"; [ -s "$opts" ] || rm -f "$opts" ;;
     *) scene noon ;;
     esac
-    PACK=$file run_phase "$p" 240 metal true
+    [ -n "$extra" ] && tr ',' '\n' <<< "$extra" >> "$opts"
+    PACK=$file run_phase "$out" 240 metal true "$@"
     rm -f "$opts"
     rm -f "$G/mods/euphoria-patcher.jar"
     [ "$url" != - ] && rm -rf "$G/shaderpacks/$file"
@@ -193,5 +216,13 @@ for p in $PHASES; do
     showcase-plain) scene midnight clear showcase; act plain; run_phase showcase-plain 240 metal true MCMETAL_KEEP_MAC_FLAG=1 ;; # like-for-like with Apple GL, no error screen
     showcase-rain) scene 13800 rain showcase; act showcase; run_phase showcase-rain 240 metal true ;;  # + improved rain, puddles
     pack-*|packnight-*) third_party "$p" ;; # compatibility sweep: pack-photon, packnight-bsl, pack-complementary+euphoria, ...
+    archive-*) # Metal pipeline binary archive: the pack from an empty shader cache (archive written), again with the
+               # archive, and again with the shader cache but no archive. Run with bench=true settle=0 so the fps
+               # samples cover the first seconds in the world, where pipeline compiles show up as stalls
+        rm -rf "$WORK/cache"
+        third_party "pack-${p#archive-}" "$p-cold" MGL_BINARY_ARCHIVE=1
+        third_party "pack-${p#archive-}" "$p-warm" MGL_BINARY_ARCHIVE=1
+        third_party "pack-${p#archive-}" "$p-warm-noarchive"
+        ls -la "$WORK/cache" | tail -3 ;;
     esac
 done
