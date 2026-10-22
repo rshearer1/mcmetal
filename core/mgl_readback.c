@@ -41,6 +41,8 @@ static void *pack_dest(void *pixels)
     if (!mgl->pixel_pack_buffer)
         return pixels;
     mgl_buffer *b = mgl_table_get(&mgl->buffers, mgl->pixel_pack_buffer);
+    if (b && b->mem)
+        mglb_buffer_written(b->mem); /* about to be filled: caches keyed on its contents start over */
     return b && b->mem ? (char *)mglb_buffer_ptr(b->mem) + (size_t)pixels : NULL;
 }
 

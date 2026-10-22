@@ -511,6 +511,7 @@ struct mglb_buffer {
     size_t size, cap;
     uint64_t last_use;
     uint64_t gpu_write; /* command buffer of the last GPU copy into it (mglb_buffer_copy) */
+    uint64_t written; /* write_seq at the last CPU write (mglb_buffer_written) */
     struct mglb_buffer *next_free;
 };
 
@@ -529,6 +530,9 @@ static int size_class(size_t size)
     return c;
 }
 
+/* One write counter for all buffers (mglb_buffer.written), so a value is never repeated, even by a later buffer at
+   the same address */
+static uint64_t write_seq;
 static size_t buf_live_bytes, buf_pooled_bytes; /* MGL_PROFILE: Metal buffer memory we hold, and of it in the pool */
 static unsigned long tr_oneoff, tr_waits;       /* transient allocations that fell back to their own buffer; waits for a chunk */
 int mglb_fence_wait(uint64_t id, uint64_t timeout_ns);
@@ -548,6 +552,7 @@ mglb_buffer *mglb_buffer_new(size_t size)
             buf_pooled_bytes -= b->cap;
             b->next_free = NULL;
             b->size = size;
+            b->written = ++write_seq;
             return b;
         }
     }
@@ -589,6 +594,17 @@ void mglb_buffer_release(mglb_buffer *b)
 int mglb_buffer_in_use(mglb_buffer *b)
 {
     return b && b->last_use > atomic_load(&completed_serial);
+}
+
+void mglb_buffer_written(mglb_buffer *b)
+{
+    if (b && b->written != UINT64_MAX)
+        b->written = ++write_seq;
+}
+void mglb_buffer_volatile(mglb_buffer *b)
+{
+    if (b)
+        b->written = UINT64_MAX; /* until the memory goes back to the pool */
 }
 
 static void use_buffer(mglb_buffer *b)
@@ -2759,6 +2775,7 @@ static void bind_stage_resources(id<MTLRenderCommandEncoder> e, id<MTLComputeCom
         if (!d->ssbo[i])
             continue;
         id<MTLBuffer> b = OBJ(id<MTLBuffer>, d->ssbo[i]->mtl);
+        mglb_buffer_written(d->ssbo[i]); /* the GPU may write it: nothing cached from its old contents */
         NSUInteger at = (NSUInteger)(MGL_BUF_SSBO_BASE + i);
         if (c) [c setBuffer:b offset:d->ssbo_offset[i] atIndex:at];
         else if (s == 0) [e setVertexBuffer:b offset:d->ssbo_offset[i] atIndex:at];
@@ -2975,6 +2992,301 @@ static NSMutableArray<gs_play> *gs_pending;
 static mgl_target gs_target;
 static int gs_batch = -1;
 
+/* Geometry-shader output cache. While the camera only turns, every input of SEUS's shadow vertex and geometry
+   shaders stays the same (cameraPosition and the shadow matrices move only with the camera's position or the
+   sun), but Iris draws ~6x more shadow geometry than when standing still: 1786 draws, 1.24M triangles, 795 MB of
+   records a frame, ~40 ms of GPU. So a draw's records are kept in GPU memory and drawn again while its inputs
+   match: same program, vertex/index/uniform buffers unwritten since, same ranges, same default uniforms. A draw is
+   stored the second frame running it comes with the same inputs (walking changes them every frame: those draws
+   never take memory) and dropped after two frames unused. Programs whose vertex or geometry stage reads
+   textures, images, storage buffers or the ray-tracing scene are never cached. MGL_GS_CACHE_MB caps the memory
+   (default: a sixteenth of RAM, at most 1024; 0 = off). */
+#define GSC_SLAB ((size_t)64 << 20)
+#define GSC_MAX_SLABS 64
+#define GSC_MAX 16384 /* entries; the table has twice as many slots */
+typedef struct { uint32_t off, len; } gsc_range;
+typedef struct { id<MTLBuffer> buf; gsc_range *free; int nfree, cap; } gsc_slab;
+typedef struct { int slab; uint32_t off, len; uint64_t serial; } gsc_later; /* freed, but the GPU may still read it */
+typedef struct {
+    uint64_t k0, k1;
+    int slab; /* -1: seen once, nothing stored */
+    uint32_t off, len, oc_off;
+    uint64_t frame, serial; /* last frame it was used in; command buffer that last read it */
+} gsc_entry;
+static gsc_slab gsc_slabs[GSC_MAX_SLABS];
+static int gsc_nslabs;
+static gsc_later *gsc_laters;
+static int gsc_nlater, gsc_caplater;
+static gsc_entry gsc_e[GSC_MAX];
+static int gsc_n;
+static int gsc_slot[GSC_MAX * 2]; /* index + 1 into gsc_e, 0 = empty */
+static uint64_t gsc_frame;
+static size_t gsc_limit = (size_t)-1;
+static unsigned long gsc_hits, gsc_stores, gsc_misses, gsc_skips, gsc_full;
+static int gsc_last_ranges; /* MGL_PROFILE: the last cached draw's uniform ranges (-1 = whole block) */
+
+static size_t gsc_cap_bytes(void)
+{
+    if (gsc_limit == (size_t)-1) {
+        const char *e = getenv("MGL_GS_CACHE_MB");
+        size_t mb = (size_t)(NSProcessInfo.processInfo.physicalMemory >> 24); /* RAM / 16 */
+        if (mb > 1024)
+            mb = 1024;
+        if (e)
+            mb = (size_t)atol(e);
+        gsc_limit = mb << 20;
+        mgl_log("geometry-shader output cache: %zu MB", mb);
+    }
+    return gsc_limit;
+}
+
+static void gsc_free_range(gsc_slab *s, uint32_t off, uint32_t len)
+{
+    int i = 0;
+    while (i < s->nfree && s->free[i].off < off)
+        i++;
+    if (i > 0 && s->free[i - 1].off + s->free[i - 1].len == off) { /* join the one before */
+        s->free[i - 1].len += len;
+        if (i < s->nfree && off + len == s->free[i].off) {
+            s->free[i - 1].len += s->free[i].len;
+            memmove(&s->free[i], &s->free[i + 1], sizeof *s->free * (size_t)(s->nfree - i - 1));
+            s->nfree--;
+        }
+        return;
+    }
+    if (i < s->nfree && off + len == s->free[i].off) { /* join the one after */
+        s->free[i].off = off;
+        s->free[i].len += len;
+        return;
+    }
+    if (s->nfree == s->cap) {
+        s->cap = s->cap ? s->cap * 2 : 64;
+        s->free = realloc(s->free, sizeof *s->free * (size_t)s->cap);
+    }
+    memmove(&s->free[i + 1], &s->free[i], sizeof *s->free * (size_t)(s->nfree - i));
+    s->free[i] = (gsc_range){off, len};
+    s->nfree++;
+}
+
+static void gsc_release(const gsc_entry *e)
+{
+    if (e->slab < 0)
+        return;
+    if (gsc_nlater == gsc_caplater) {
+        gsc_caplater = gsc_caplater ? gsc_caplater * 2 : 256;
+        gsc_laters = realloc(gsc_laters, sizeof *gsc_laters * (size_t)gsc_caplater);
+    }
+    gsc_laters[gsc_nlater++] = (gsc_later){e->slab, e->off, e->len, e->serial};
+}
+
+/* bytes from the slabs, 256-aligned; -1 when the cache is full */
+static int gsc_alloc(uint32_t len, uint32_t *off)
+{
+    uint64_t done = atomic_load(&completed_serial);
+    int n = 0;
+    for (int i = 0; i < gsc_nlater; i++) /* ranges the GPU has finished with */
+        if (gsc_laters[i].serial <= done)
+            gsc_free_range(&gsc_slabs[gsc_laters[i].slab], gsc_laters[i].off, gsc_laters[i].len);
+        else
+            gsc_laters[n++] = gsc_laters[i];
+    gsc_nlater = n;
+    for (int k = 0; k <= gsc_nslabs; k++) {
+        if (k == gsc_nslabs) {
+            if (k == GSC_MAX_SLABS || (size_t)(k + 1) * GSC_SLAB > gsc_cap_bytes())
+                return -1;
+            id<MTLBuffer> b = [dev newBufferWithLength:GSC_SLAB options:MTLResourceStorageModePrivate];
+            if (!b)
+                return -1;
+            b.label = @"geometry-shader cache";
+            gsc_slabs[k].buf = b;
+            gsc_free_range(&gsc_slabs[k], 0, (uint32_t)GSC_SLAB);
+            gsc_nslabs++;
+        }
+        gsc_slab *s = &gsc_slabs[k];
+        for (int i = 0; i < s->nfree; i++)
+            if (s->free[i].len >= len) {
+                *off = s->free[i].off;
+                s->free[i].off += len;
+                s->free[i].len -= len;
+                if (!s->free[i].len) {
+                    memmove(&s->free[i], &s->free[i + 1], sizeof *s->free * (size_t)(s->nfree - i - 1));
+                    s->nfree--;
+                }
+                return k;
+            }
+    }
+    return -1;
+}
+
+static void gsc_rehash(void)
+{
+    memset(gsc_slot, 0, sizeof gsc_slot);
+    for (int i = 0; i < gsc_n; i++) {
+        uint32_t h = (uint32_t)gsc_e[i].k0 & (GSC_MAX * 2 - 1);
+        while (gsc_slot[h])
+            h = (h + 1) & (GSC_MAX * 2 - 1);
+        gsc_slot[h] = i + 1;
+    }
+}
+
+/* once a frame: drop what the last two frames didn't use (seen-once entries: what the last frame didn't see) */
+static void gsc_end_frame(void)
+{
+    gsc_frame++;
+    if (!gsc_n)
+        return;
+    int n = 0;
+    for (int i = 0; i < gsc_n; i++) {
+        gsc_entry *e = &gsc_e[i];
+        if (gsc_frame - e->frame > (e->slab < 0 ? 1u : 2u)) {
+            gsc_release(e);
+            continue;
+        }
+        gsc_e[n++] = *e;
+    }
+    if (n != gsc_n) {
+        gsc_n = n;
+        gsc_rehash();
+    }
+}
+
+static gsc_entry *gsc_find(uint64_t k0, uint64_t k1)
+{
+    for (uint32_t h = (uint32_t)k0 & (GSC_MAX * 2 - 1); gsc_slot[h]; h = (h + 1) & (GSC_MAX * 2 - 1))
+        if (gsc_e[gsc_slot[h] - 1].k0 == k0 && gsc_e[gsc_slot[h] - 1].k1 == k1)
+            return &gsc_e[gsc_slot[h] - 1];
+    return NULL;
+}
+
+static gsc_entry *gsc_add(uint64_t k0, uint64_t k1)
+{
+    if (gsc_n == GSC_MAX)
+        return NULL;
+    gsc_entry *e = &gsc_e[gsc_n++];
+    *e = (gsc_entry){k0, k1, -1, 0, 0, 0, gsc_frame, 0};
+    uint32_t h = (uint32_t)k0 & (GSC_MAX * 2 - 1);
+    while (gsc_slot[h])
+        h = (h + 1) & (GSC_MAX * 2 - 1);
+    gsc_slot[h] = gsc_n;
+    return e;
+}
+
+typedef struct { uint64_t a, b; } gsc_hash;
+static void gsc_mix(gsc_hash *h, const void *data, size_t n)
+{
+    const unsigned char *p = data;
+    for (; n >= 8; n -= 8, p += 8) {
+        uint64_t w;
+        memcpy(&w, p, 8);
+        h->a = (h->a ^ w) * 0x9E3779B97F4A7C15ull;
+        h->a ^= h->a >> 29;
+        h->b = (h->b + w) * 0xC2B2AE3D27D4EB4Full;
+        h->b ^= h->b >> 31;
+    }
+    if (n) {
+        uint64_t w = 0;
+        memcpy(&w, p, n);
+        gsc_mix(h, &w, 8);
+    }
+}
+#define GSC_MIX(h, v) do { __typeof__(v) mix_v_ = (v); gsc_mix(h, &mix_v_, sizeof mix_v_); } while (0)
+
+/* Why draws miss (MGL_PROFILE): per draw site (the same draw minus buffer contents and uniform values), what
+   changed since the frame before */
+#define GSC_SITES 16384
+static struct { uint64_t site, bufs, unis, frame; } gsc_site[GSC_SITES];
+static unsigned long gsc_why_bufs, gsc_why_unis, gsc_why_new;
+
+static void gsc_note_site(uint64_t site, uint64_t bufs, uint64_t unis)
+{
+    unsigned h = (unsigned)(site ^ site >> 32) & (GSC_SITES - 1);
+    if (gsc_site[h].site == site && gsc_site[h].frame + 1 == gsc_frame) {
+        gsc_why_bufs += gsc_site[h].bufs != bufs;
+        gsc_why_unis += gsc_site[h].unis != unis;
+    } else if (gsc_site[h].frame != gsc_frame || gsc_site[h].site != site)
+        gsc_why_new++;
+    gsc_site[h].site = site;
+    gsc_site[h].bufs = bufs;
+    gsc_site[h].unis = unis;
+    gsc_site[h].frame = gsc_frame;
+}
+
+/* the draw's inputs as a key; 0 when the draw can't be cached */
+static int gsc_key(const mgl_draw *d, const int32_t desc[16][4], int triangles, uint64_t *k0, uint64_t *k1)
+{
+    if (!gsc_cap_bytes() || d->uses_scene) {
+        gsc_skips++;
+        return 0;
+    }
+    for (int i = 0; i < d->num_textures[2] && i < MGL_MAX_TEXTURES; i++)
+        if (d->textures[2][i].dim) {
+            gsc_skips++;
+            return 0;
+        }
+    for (int i = 0; i < MGL_MAX_SSBOS; i++)
+        if (d->ssbo[i]) {
+            gsc_skips++;
+            return 0;
+        }
+    /* three parts: the draw itself, its buffers' write counters, the uniform values it reads */
+    gsc_hash h = {0x243F6A8885A308D3ull, 0x13198A2E03707344ull}, hb = h, hu = h;
+    GSC_MIX(&h, d->program->id); /* never reused, unlike a freed program's address */
+    GSC_MIX(&h, triangles);
+    gsc_mix(&h, desc, sizeof(int32_t) * 16 * 4);
+    for (int i = 0; i < d->num_vbufs && i < 4; i++) {
+        const mglb_buffer *b = d->vbufs[i].buf;
+        if (b && b->written == UINT64_MAX) {
+            gsc_skips++;
+            return 0;
+        }
+        GSC_MIX(&h, (uintptr_t)b);
+        GSC_MIX(&hb, b ? b->written : 0);
+        GSC_MIX(&h, d->vbufs[i].offset);
+    }
+    if (d->index_buf) {
+        if (d->index_buf->written == UINT64_MAX) {
+            gsc_skips++;
+            return 0;
+        }
+        GSC_MIX(&h, (uintptr_t)d->index_buf);
+        GSC_MIX(&hb, d->index_buf->written);
+    }
+    for (int i = 0; i < 12; i++)
+        if (d->ubo[i]) {
+            if (d->ubo[i]->written == UINT64_MAX) {
+                gsc_skips++;
+                return 0;
+            }
+            GSC_MIX(&h, i);
+            GSC_MIX(&h, (uintptr_t)d->ubo[i]);
+            GSC_MIX(&hb, d->ubo[i]->written);
+            GSC_MIX(&h, d->ubo_offset[i]);
+        }
+    /* the default uniforms the stages read (mgl_draw_info among them: triangles, index type, base vertex, first
+       index). Only those: the block also holds every uniform the pack declares, frameTimeCounter included. */
+    gsc_last_ranges = d->uniform_used ? d->num_uniform_used : -1;
+    if (d->uniforms[2] && d->uniform_size[2]) {
+        if (d->num_uniform_used < 0 || !d->uniform_used)
+            gsc_mix(&hu, d->uniforms[2], (size_t)d->uniform_size[2]);
+        else
+            for (int i = 0; i < d->num_uniform_used; i++) {
+                long off = d->uniform_used[i][0], len = d->uniform_used[i][1];
+                if (off >= 0 && len > 0 && off + len <= (long)d->uniform_size[2])
+                    gsc_mix(&hu, (const char *)d->uniforms[2] + off, (size_t)len);
+            }
+    }
+    /* mgl_draw_info (first index, base vertex) is in the uniforms: part of the site too */
+    GSC_MIX(&h, d->index_offset);
+    GSC_MIX(&h, d->base_vertex);
+    GSC_MIX(&h, d->first);
+    gsc_note_site(h.a, hb.a, hu.a);
+    gsc_mix(&h, &hb, sizeof hb);
+    gsc_mix(&h, &hu, sizeof hu);
+    *k0 = h.a;
+    *k1 = h.b;
+    return 1;
+}
+
 /* Geometry-shader emulation (mgl_gs.c). The compute stage gets: 21 attribute descriptors, 22..25 raw vertex
    buffers, 26 index buffer, 27 emitted vertex records, 28 per-primitive vertex counts. The passthrough vertex
    stage reads 27/28 and turns each strip into a triangle list. */
@@ -3006,50 +3318,102 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
     size_t out_bytes = (size_t)triangles * (size_t)max_vertices * (size_t)record_floats * 4;
     prof.gs_draws++;
     prof.gs_tris += (unsigned long)triangles;
-    prof.gs_bytes += out_bytes;
-    transient_t ov = transient(out_bytes), oc = transient((size_t)triangles * 4);
-    if (!ov.buf || !oc.buf)
-        return;
-    id<MTLBuffer> ovb = ov.buf, ocb = oc.buf;
-    NSUInteger ovo = ov.off, oco = oc.off;
+    id<MTLBuffer> ovb = nil, ocb = nil;
+    NSUInteger ovo = 0, oco = 0;
+    uint64_t k0, k1;
+    int keyed = gsc_key(d, desc, triangles, &k0, &k1);
+    gsc_entry *ce = keyed ? gsc_find(k0, k1) : NULL;
+    if (keyed && !ce)
+        ce = gsc_add(k0, k1);
+    int hit = ce && ce->slab >= 0;
+    if (hit) { /* drawn before with the same inputs: its records are still in the cache */
+        ovb = ocb = gsc_slabs[ce->slab].buf;
+        ovo = ce->off;
+        oco = ce->oc_off;
+        gsc_hits++;
+    } else if (ce && ce->frame + 1 == gsc_frame) { /* the same inputs two frames running: keep this one */
+        uint32_t ovl = (uint32_t)((out_bytes + 255) & ~(size_t)255), ocl = (uint32_t)(((size_t)triangles * 4 + 255) & ~(size_t)255);
+        uint32_t off;
+        int k = out_bytes + ocl <= GSC_SLAB ? gsc_alloc(ovl + ocl, &off) : -1;
+        if (k >= 0) {
+            ce->slab = k;
+            ce->off = off;
+            ce->len = ovl + ocl;
+            ce->oc_off = off + ovl;
+            ovb = ocb = gsc_slabs[k].buf;
+            ovo = off;
+            oco = off + ovl;
+            gsc_stores++;
+        } else
+            gsc_full++;
+    } else if (keyed)
+        gsc_misses++;
+    if (ce) {
+        current_cb();
+        ce->frame = gsc_frame;
+        ce->serial = cb_serial;
+    }
+    if (!ovb) {
+        transient_t ov = transient(out_bytes), oc = transient((size_t)triangles * 4);
+        if (!ov.buf || !oc.buf)
+            return;
+        ovb = ov.buf;
+        ocb = oc.buf;
+        ovo = ov.off;
+        oco = oc.off;
+    }
+    if (!hit)
+        prof.gs_bytes += out_bytes;
 
-    /* 1. vertex + geometry stages as one compute job, one thread per input triangle */
+    /* 1. vertex + geometry stages as one compute job, one thread per input triangle (none for a cached draw) */
     if (gs_batch < 0)
         gs_batch = !getenv("MGL_GS_BATCH") || atoi(getenv("MGL_GS_BATCH")) != 0;
     if (!gs_batch || !same_target(&d->target, &gs_target) || gs_pending.count >= 2048)
         gs_flush();
-    /* the vertex and geometry stages run as compute: pending clears can wait for the strips' render pass unless
-       this draw also reads one of their images */
-    int reads_cleared = 0;
-    for (int st = 0; st < 3 && npclear && !reads_cleared; st++)
-        for (int i = 0; i < MGL_MAX_TEXTURES && !reads_cleared; i++)
-            reads_cleared = d->textures[st][i].tex && pending_clear_uses(d->textures[st][i].tex);
-    if (reads_cleared && flush_log_on()) {
-        static line_tally gs_reads = {"geometry-shader draws reading a pending clear's image"};
-        tally_line(&gs_reads, __LINE__);
+    if (hit && npclear) { /* no compute encoder to replay them: the strips' fragment stage may read a cleared image */
+        int reads = 0;
+        for (int st = 0; st < 3 && !reads; st++)
+            for (int i = 0; i < MGL_MAX_TEXTURES && !reads; i++)
+                reads = d->textures[st][i].tex && pending_clear_uses(d->textures[st][i].tex);
+        if (reads) {
+            gs_flush();
+            materialize_clears();
+        }
     }
-    gs_recording = 1;
-    keep_clears = !reads_cleared;
-    id<MTLComputeCommandEncoder> c = compute_encoder();
-    keep_clears = 0;
-    gs_recording = 0;
-    [c setComputePipelineState:OBJ(id<MTLComputePipelineState>, d->program->compute)];
-    bind_stage_resources(nil, c, d, 2);
-    if (d->uses_scene)
-        bind_scene(nil, c);
-    [c setBytes:desc length:sizeof desc atIndex:MGL_BUF_INTERNAL_BASE];
-    for (int i = 0; i < 4; i++) { /* unused slots get any valid buffer */
-        mglb_buffer *b = i < d->num_vbufs ? d->vbufs[i].buf : d->num_vbufs ? d->vbufs[0].buf : NULL;
-        [c setBuffer:b ? OBJ(id<MTLBuffer>, b->mtl) : ovb offset:0 atIndex:(NSUInteger)(MGL_BUF_INTERNAL_BASE + 1 + i)];
-        use_buffer(b);
+    if (!hit) {
+        /* the vertex and geometry stages run as compute: pending clears can wait for the strips' render pass unless
+           this draw also reads one of their images */
+        int reads_cleared = 0;
+        for (int st = 0; st < 3 && npclear && !reads_cleared; st++)
+            for (int i = 0; i < MGL_MAX_TEXTURES && !reads_cleared; i++)
+                reads_cleared = d->textures[st][i].tex && pending_clear_uses(d->textures[st][i].tex);
+        if (reads_cleared && flush_log_on()) {
+            static line_tally gs_reads = {"geometry-shader draws reading a pending clear's image"};
+            tally_line(&gs_reads, __LINE__);
+        }
+        gs_recording = 1;
+        keep_clears = !reads_cleared;
+        id<MTLComputeCommandEncoder> c = compute_encoder();
+        keep_clears = 0;
+        gs_recording = 0;
+        [c setComputePipelineState:OBJ(id<MTLComputePipelineState>, d->program->compute)];
+        bind_stage_resources(nil, c, d, 2);
+        if (d->uses_scene)
+            bind_scene(nil, c);
+        [c setBytes:desc length:sizeof desc atIndex:MGL_BUF_INTERNAL_BASE];
+        for (int i = 0; i < 4; i++) { /* unused slots get any valid buffer */
+            mglb_buffer *b = i < d->num_vbufs ? d->vbufs[i].buf : d->num_vbufs ? d->vbufs[0].buf : NULL;
+            [c setBuffer:b ? OBJ(id<MTLBuffer>, b->mtl) : ovb offset:0 atIndex:(NSUInteger)(MGL_BUF_INTERNAL_BASE + 1 + i)];
+            use_buffer(b);
+        }
+        [c setBuffer:d->index_buf ? OBJ(id<MTLBuffer>, d->index_buf->mtl) : ovb offset:0 atIndex:MGL_BUF_INTERNAL_BASE + 5];
+        use_buffer(d->index_buf);
+        [c setBuffer:ovb offset:ovo atIndex:MGL_BUF_INTERNAL_BASE + 6];
+        [c setBuffer:ocb offset:oco atIndex:MGL_BUF_INTERNAL_BASE + 7];
+        NSUInteger lx = (NSUInteger)(d->local_size[0] > 0 ? d->local_size[0] : 64);
+        [c dispatchThreadgroups:MTLSizeMake(((NSUInteger)triangles + lx - 1) / lx, 1, 1)
+          threadsPerThreadgroup:MTLSizeMake(lx, 1, 1)];
     }
-    [c setBuffer:d->index_buf ? OBJ(id<MTLBuffer>, d->index_buf->mtl) : ovb offset:0 atIndex:MGL_BUF_INTERNAL_BASE + 5];
-    use_buffer(d->index_buf);
-    [c setBuffer:ovb offset:ovo atIndex:MGL_BUF_INTERNAL_BASE + 6];
-    [c setBuffer:ocb offset:oco atIndex:MGL_BUF_INTERNAL_BASE + 7];
-    NSUInteger lx = (NSUInteger)(d->local_size[0] > 0 ? d->local_size[0] : 64);
-    [c dispatchThreadgroups:MTLSizeMake(((NSUInteger)triangles + lx - 1) / lx, 1, 1)
-      threadsPerThreadgroup:MTLSizeMake(lx, 1, 1)];
 
     /* 2. draw the emitted strips: no vertex fetch, records come from buffers 27/28. Kept for gs_flush, with its
        own copy of the default-block uniforms (the GL side reuses that memory for the next draw). */
@@ -4659,9 +5023,21 @@ static void profile_frame(unsigned long draws)
     if (prof.sh_draws)
         mgl_log("profile: shadow-sized viewports (without geometry shaders) %.0f draws, %.0fk triangles per frame",
                 prof.sh_draws / f, prof.sh_tris / f * 1e-3);
-    if (prof.gs_draws)
+    if (prof.gs_draws) {
         mgl_log("profile: geometry shaders %.0f draws, %.0fk input triangles, %.1f MB of records per frame", prof.gs_draws / f,
                 prof.gs_tris / f * 1e-3, prof.gs_bytes / f / 1048576.0);
+        size_t held = 0;
+        for (int i = 0; i < gsc_n; i++)
+            held += gsc_e[i].slab >= 0 ? gsc_e[i].len : 0;
+        mgl_log("profile: geometry-shader cache per frame: %.0f reused, %.0f stored, %.0f computed, %.0f not cacheable, "
+                "%.0f cache full; %.0f MB held in %d slabs", gsc_hits / f, gsc_stores / f, gsc_misses / f, gsc_skips / f,
+                gsc_full / f, held / 1048576.0, gsc_nslabs);
+        mgl_log("profile: geometry-shader cache misses per frame: %.0f buffers rewritten, %.0f uniforms changed, "
+                "%.0f draws not drawn the frame before; uniform ranges hashed: %d", gsc_why_bufs / f, gsc_why_unis / f,
+                gsc_why_new / f, gsc_last_ranges);
+        gsc_hits = gsc_stores = gsc_misses = gsc_skips = gsc_full = 0;
+        gsc_why_bufs = gsc_why_unis = gsc_why_new = 0;
+    }
     mgl_log("profile: buffers %.0f MB held (%.0f MB pooled), %d of %d transient chunks, %.1f one-off transient "
             "buffers and %.1f waits for a chunk per frame", buf_live_bytes / 1048576.0, buf_pooled_bytes / 1048576.0, tr_n,
             TR_MAX, tr_oneoff / f, tr_waits / f);
@@ -4858,6 +5234,7 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
     mgl_ctx *c = ctx;
     update_size(c);
     mgl_rt_end_frame(); /* ray tracing: rebuild the scene from this frame's terrain sections */
+    gsc_end_frame();
     if (!mgl->window_color) {
         commit();
         return;
