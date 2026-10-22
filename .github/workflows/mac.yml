@@ -39,6 +39,9 @@ on:
       segments:
         description: 'bench: more scenes in the same launch after each phase, a file in tests/game/segments/ (e.g. times)'
         default: ''
+      jvm:
+        description: 'JVM options for the game, e.g. "-XX:+UseZGC -XX:+ZGenerational" (bench: JVM pauses in gc-report.txt)'
+        default: ''
 # A newer push to the same branch cancels the older push's run (it tests the same work plus more). Manual runs
 # (bench, profile, ab-*) each get their own group and are never cancelled.
 concurrency:
@@ -181,6 +184,7 @@ jobs:
           GAME_LOOK: ${{ github.event.inputs.look }}
           GAME_AB_OFF: ${{ github.event.inputs.ab_off }}
           GAME_SEGMENTS: ${{ github.event.inputs.segments }}
+          GAME_JVM: ${{ github.event.inputs.jvm }}
           PHASE: ${{ matrix.phase }}
         run: |
           IFS='&' read -ra P <<< "$PHASE"  # "title&world": both phases, one after the other, on this Mac
