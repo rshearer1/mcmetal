@@ -23,6 +23,9 @@ flat in vec3 sunCol, skyAmb, lightDir, sunDir;
 /* RENDERTARGETS: 8 */
 layout(location = 0) out vec4 outScatter;
 
+#if defined USE_RT && defined LIGHT_SHAFTS && defined CAUSTICS
+    #include "/lib/caustics.glsl"
+#endif
 #if defined USE_RT && defined LIGHT_SHAFTS
 float mcm_trace(vec3 origin, vec3 dir, float tmax);
 #endif
@@ -62,7 +65,12 @@ void main() {
             float t = (float(i) + jitter) * stepLen;
             // air further away is seen through more air (the haze in composite.fsh adds the rest)
             float vis = exp(-t * density);
-            if (mcm_trace(dir * t, lightDir, 256.0) < 0.0) lit += vis;
+            float through = vis;
+  #ifdef CAUSTICS
+            // under water the light comes down in the waves' focused lines: shafts even with nothing in the way
+            if (underWater) through *= 3.5 * caustics(dir * t + cameraPosition, lightDir, frameTimeCounter);
+  #endif
+            if (mcm_trace(dir * t, lightDir, 256.0) < 0.0) lit += through;
         }
         // a beam in shade (sun through a roof hole or a gap in the trees) stands out the way it does in real dusty
         // air: the less of the view ray is lit, the more each lit step counts. Open air (all lit) stays clear

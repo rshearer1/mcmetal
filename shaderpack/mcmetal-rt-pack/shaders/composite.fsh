@@ -22,20 +22,7 @@ uniform float dhRenderDistance;
 in vec2 texcoord;
 
 #if defined CAUSTICS && defined USE_RT
-// Caustics: waves focus sunlight into a moving net of bright lines on whatever lies under the water. The lines are
-// the ridges of two layers of drifting, warped value noise (where the noise crosses its middle value).
-float caustics(vec3 w, float t) {
-    vec2 uv = w.xz + w.y * vec2(0.37, 0.21);   // walls get lines too, not vertical stripes
-    float c = 0.0;
-    for (int i = 0; i < 2; i++) {
-        float s = i == 0 ? 0.9 : 1.7;
-        vec2 q = uv * s + vec2(0.3, -0.21) * t * float(i + 1);
-        q += (vec2(valueNoise(q * 0.8 + t * 0.2), valueNoise(q * 0.8 + 7.1 - t * 0.17)) - 0.5) * 1.6;
-        float r = 1.0 - abs(valueNoise(q * 1.3) * 2.0 - 1.0);
-        c += pow(r, 8.0) * (i == 0 ? 0.65 : 0.35);
-    }
-    return c;
-}
+    #include "/lib/caustics.glsl"
 #endif
 flat in vec3 sunCol, skyAmb, sunDir;
 
@@ -70,8 +57,13 @@ void main() {
         vec3 p1 = mat3(gbufferModelViewInverse) * (v1.xyz / v1.w);
         // only where the sun reaches (the traced shadow from deferred1.fsh), fading out in deep water
         float sun = luma(texture(colortex5, texcoord).rgb) * smoothstep(-0.02, 0.15, sunDir.y);
-        float deep = throughWater ? exp(-(length(p1) - dist) * 0.12) : 1.0;
-        col *= 1.0 + 1.5 * CAUSTICS_STRENGTH * caustics(p1 + cameraPosition, frameTimeCounter) * sun * deep;
+        float deep = throughWater ? exp(-(length(p1) - dist) * 0.04) : 1.0;
+        float c = caustics(p1 + cameraPosition, sunDir, frameTimeCounter);
+        // focused lines brighter, the gaps between them darker (about the same light overall)
+        col *= mix(1.0, 0.45 + 2.75 * c, min(CAUSTICS_STRENGTH * sun * deep, 1.0));
+  #if DEBUG_VIEW == 7
+        col = vec3(c, float(throughWater), sun);
+  #endif
     }
 #endif
     if (isEyeInWater == 1) {
