@@ -2653,6 +2653,8 @@ static id<MTLAccelerationStructure> build_as(MTLAccelerationStructureDescriptor 
     return as;
 }
 
+static unsigned long rt_built, rt_built_tris; /* section structures built since the last MGL_RT_DEBUG line */
+
 static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer **tris_out, RtSection **sec_out)
 {
     rt_key k;
@@ -2678,6 +2680,8 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer
         *sec_out = s;
         return s.as;
     }
+    rt_built++;
+    rt_built_tris += (unsigned long)(g->count / 3);
     id<MTLComputePipelineState> ps = rt_decode_pipeline();
     int tris = g->count / 3;
     if (!ps || tris <= 0)
@@ -2917,8 +2921,12 @@ static void rt_update(const mgl_rt_geom *g, int n)
     if (debug < 0)
         debug = getenv("MGL_RT_DEBUG") && atoi(getenv("MGL_RT_DEBUG"));
     if (!logged++ || (debug && rt_frame % 120 == 0))
-        mgl_log("ray tracing: scene built from %d of %d terrain sections (%lu cached)", count, n,
-                (unsigned long)rt_sections.count);
+    {
+        mgl_log("ray tracing: scene built from %d of %d terrain sections (%lu cached); %lu section structures "
+                "(%luk triangles) built in the last %d frames", count, n, (unsigned long)rt_sections.count, rt_built,
+                rt_built_tris / 1000, logged == 1 ? 1 : 120);
+        rt_built = rt_built_tris = 0;
+    }
 }
 
 static void bind_scene(id<MTLRenderCommandEncoder> e, id<MTLComputeCommandEncoder> c)
