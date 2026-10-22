@@ -198,15 +198,27 @@ static void note_started(unsigned long draws)
         mgl_log("started fine, cleared the mod's start marker");
 }
 /* MGL_FRAME_DUMP=N: log every clear, blit and draw of frame N (order, targets, depth state) */
+/* MGL_FRAME_DUMP=n[,n2,...] (up to 8 frame numbers): log every clear, draw and blit of those frames */
 static int dump_this_frame(void)
 {
-    static long n = -2;
-    if (n == -2) {
+    static long n[8];
+    static int count = -1;
+    if (count < 0) {
+        count = 0;
         const char *e = getenv("MGL_FRAME_DUMP");
-        n = e ? atol(e) : -1;
+        while (e && *e && count < 8) {
+            char *end;
+            n[count++] = strtol(e, &end, 10);
+            e = *end == ',' ? end + 1 : "";
+        }
     }
-    return n >= 0 && (long long)frames_presented == n;
+    for (int i = 0; i < count; i++)
+        if ((long long)frames_presented == n[i])
+            return 1;
+    return 0;
 }
+
+
 static int opt_archive = -1, opt_async_pipes = -1, opt_pacing = -1;
 static void read_options(void)
 {
@@ -2127,12 +2139,38 @@ static id<MTLFunction> clear_fragment(const mgl_target *t)
     return f;
 }
 
+/* frame dump: every colour target of a pass as "slot:texture/format", plus which slots blend */
+static const char *dump_targets(const mgl_target *t, const mgl_blend *blend)
+{
+    static char buf[512];
+    int n = 0;
+    buf[0] = 0;
+    for (int i = 0; i < MGL_MAX_ATTACHMENTS && n < (int)sizeof buf - 48; i++)
+        if (t->tex[i])
+            n += snprintf(buf + n, sizeof buf - (size_t)n, " %d:%p/%d%s", i, (void *)t->tex[i], (int)t->tex[i]->pf,
+                          blend && blend[i].enabled ? "b" : "");
+    return buf;
+}
+
+/* frame dump: the textures a draw's fragment stage samples */
+static const char *dump_textures(const mgl_draw *d)
+{
+    static char buf[512];
+    int n = 0;
+    buf[0] = 0;
+    for (int i = 0; i < d->num_textures[1] && n < (int)sizeof buf - 32; i++)
+        if (d->textures[1][i].tex)
+            n += snprintf(buf + n, sizeof buf - (size_t)n, " %d:%p", i, (void *)d->textures[1][i].tex);
+    return buf;
+}
+
 void mglb_clear(const mgl_target *t, unsigned mask_color, const float rgba[4], int clear_depth, float depth,
                 const int *scissor, uint8_t cmask)
 {
     if (dump_this_frame())
-        mgl_log("frame dump: clear target %p%s depth %p, colour mask 0x%x (write 0x%x), depth %d (%g), scissor %d", (void *)t->tex[0],
-                t->is_default ? " (window)" : "", (void *)t->depth, mask_color, cmask, clear_depth, depth, scissor != NULL);
+        mgl_log("frame dump: clear target%s%s depth %p, colour mask 0x%x (write 0x%x) to %g %g %g %g, depth %d (%g), scissor %d",
+                dump_targets(t, NULL), t->is_default ? " (window)" : "", (void *)t->depth, mask_color, cmask,
+                rgba ? rgba[0] : 0, rgba ? rgba[1] : 0, rgba ? rgba[2] : 0, rgba ? rgba[3] : 0, clear_depth, depth, scissor != NULL);
     int partial = (scissor && (scissor[0] > 0 || scissor[1] > 0 || scissor[0] + scissor[2] < t->width ||
                                scissor[1] + scissor[3] < t->height)) ||
                   (mask_color && cmask != 0xf);
@@ -2396,11 +2434,13 @@ void mglb_draw(const mgl_draw *d)
     frame_draws++;
     frame_probes += (unsigned long)probe;
     if (dump_this_frame())
-        mgl_log("frame dump: draw %lu: %s, target %p%s %dx%d depth %p, depth test %d write %d func 0x%x, cull %d, blend %d "
-                "mask 0x%x, prim 0x%x, count %d multi %d", frame_draws, d->program->label, (void *)d->target.tex[0],
+        mgl_log("frame dump: draw %lu: %s, target%s%s %dx%d depth %p, depth test %d write %d func 0x%x, cull %d, blend %d "
+                "mask 0x%x, prim 0x%x, count %d multi %d", frame_draws, d->program->label, dump_targets(&d->target, d->blend),
                 d->target.is_default ? " (window)" : "", d->target.width, d->target.height, (void *)d->target.depth,
                 d->depth_test, d->depth_write, d->depth_func, d->cull, d->blend[0].enabled, d->blend[0].color_mask,
                 d->primitive, d->count, d->multi_n);
+    if (dump_this_frame())
+        mgl_log("frame dump:   samples%s", dump_textures(d));
     if (probe || log_program(d))
         log_probe_draw(d);
     frame_sections += d->multi_n > 0 ? d->multi_n : 0;
