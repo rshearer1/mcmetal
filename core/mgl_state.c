@@ -329,7 +329,8 @@ int mgl_get_state_integer(GLenum pname, GLint *out)
     case GL_BLEND_EQUATION_ALPHA: *out = (GLint)mgl->blend_eq_a; return 1;
     case GL_CULL_FACE_MODE: *out = (GLint)mgl->cull_face; return 1;
     case GL_FRONT_FACE: *out = (GLint)mgl->front_face; return 1;
-    case GL_POLYGON_MODE: out[0] = out[1] = GL_FILL; return 1; /* glPolygonMode is ignored */
+    /* one value, as core-profile drivers answer: callers such as LWJGL's glGetInteger pass room for one int */
+    case GL_POLYGON_MODE: *out = GL_FILL; return 1; /* glPolygonMode is ignored */
     case GL_STENCIL_FUNC: *out = (GLint)mgl->stencil_func; return 1;
     case GL_STENCIL_REF: *out = mgl->stencil_ref; return 1;
     case GL_STENCIL_VALUE_MASK: *out = (GLint)mgl->stencil_value_mask; return 1;
@@ -374,7 +375,7 @@ int mgl_get_state_integer(GLenum pname, GLint *out)
 
 void glGetFloatv(GLenum pname, GLfloat *data)
 {
-    GLint tmp[4] = {0};
+    GLint tmp[16] = {0};
     switch (pname) {
     case GL_COLOR_CLEAR_VALUE: memcpy(data, mgl->clear_color, sizeof mgl->clear_color); return;
     case GL_DEPTH_CLEAR_VALUE: *data = mgl->clear_depth; return;
@@ -395,9 +396,9 @@ void glGetBooleanv(GLenum pname, GLboolean *data)
         *data = glIsEnabled(pname);
         return;
     }
-    GLint v = 0;
-    glGetIntegerv(pname, &v);
-    *data = v != 0;
+    GLint v[16] = {0}; /* room for multi-value pnames (viewport, scissor box) */
+    glGetIntegerv(pname, v);
+    *data = v[0] != 0;
 }
 
 void glGetInteger64v(GLenum pname, GLint64 *data)
