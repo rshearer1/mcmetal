@@ -80,7 +80,8 @@ static void snapshot(const char *path);
 
 /* MGL_RT_DEBUG=1: once a second, log what the capture saw (draws taken, skipped and why, sections kept). */
 static struct { unsigned long taken, not_terrain, not_tris, no_attr, small_stride, idle, fresh, f_range, f_ibuf, f_vbuf, f_other,
-                  f_sub, f_merged;
+                  f_sub, f_merged, f_overlap,
+                  writes, bumped; unsigned long long write_bytes;
                 char last_skip[64]; } rtd;
 static int rt_debug(void)
 {
@@ -205,8 +206,10 @@ static void rt_debug_tick(void)
                 now - last_log, rtd.taken, rtd.not_terrain, rtd.last_skip[0] ? rtd.last_skip : "-", rtd.not_tris,
                 rtd.no_attr, rtd.small_stride, rtd.idle, num_draws_fwd());
         mgl_log("rt debug: %lu draws new to the capture: %lu same section with another index range, %lu another index "
-                "buffer, %lu a vertex buffer not seen before, %lu other; %lu inside a kept section, %lu merged into one",
-                rtd.fresh, rtd.f_range, rtd.f_ibuf, rtd.f_vbuf, rtd.f_other, rtd.f_sub, rtd.f_merged);
+                "buffer, %lu a vertex buffer not seen before, %lu other (%lu overlapping a kept section); %lu inside a kept section, %lu merged into "
+                "one", rtd.fresh, rtd.f_range, rtd.f_ibuf, rtd.f_vbuf, rtd.f_other, rtd.f_overlap, rtd.f_sub, rtd.f_merged);
+        mgl_log("rt debug: %lu buffer writes (%llu KB), %lu kept sections marked rewritten", rtd.writes,
+                rtd.write_bytes / 1024, rtd.bumped);
         /* MGL_RT_DEBUG=2: the material byte Sodium packs beside the section index (alpha cutoff in bits 1-2), over
            the captured vertices: shows whether cutout blocks carry a cutoff here (reads every vertex: slow) */
         if (rt_debug() >= 2) {
@@ -334,8 +337,19 @@ void mgl_rt_record(mgl_program *p, const mgl_draw *d)
             rtd.f_ibuf++;
         else if (!same_vb)
             rtd.f_vbuf++;
-        else
+        else {
             rtd.f_other++;
+            int klo, khi;
+            if (quad_range(&key.g, &klo, &khi))
+                for (int i = 0; i < num_draws; i++) {
+                    int lo, hi;
+                    if (draws[i].g.vbuf == key.g.vbuf && draws[i].g.vbase == key.g.vbase &&
+                        quad_range(&draws[i].g, &lo, &hi) && klo < hi && khi > lo) {
+                        rtd.f_overlap++;
+                        break;
+                    }
+                }
+        }
     }
     if (num_draws == cap_draws) {
         cap_draws = cap_draws ? cap_draws * 2 : 1024;
@@ -374,8 +388,14 @@ void mgl_rt_note_write(mglb_buffer *m, size_t offset, size_t size)
         /* Sodium draws quads: 4 vertices per 6 indices, starting at the base vertex */
         size_t lo = g->vbase + (size_t)g->base_vertex * (size_t)g->stride;
         size_t hi = lo + ((size_t)g->count * 2 / 3 + 4) * (size_t)g->stride;
-        if (offset < hi && (size == (size_t)-1 || offset + size > lo))
+        if (offset < hi && (size == (size_t)-1 || offset + size > lo)) {
             g->gen++;
+            rtd.bumped++;
+        }
+    }
+    if (num_draws) {
+        rtd.writes++;
+        rtd.write_bytes += size == (size_t)-1 ? 0 : size;
     }
 }
 

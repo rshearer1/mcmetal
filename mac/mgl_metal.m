@@ -377,13 +377,13 @@ static void prof_serialize(void)
     busy = 0;
 }
 
-static id<MTLBlitCommandEncoder> blit_encoder(void)
+static id<MTLBlitCommandEncoder> blit_encoder_at(int line)
 {
     gs_flush();
     if (benc)
         return benc;
     prof_serialize();
-    end_encoders();
+    end_encoders_at(line);
     id<MTLCommandBuffer> c = current_cb();
     int k = pt_pass("blits");
     if (k >= 0) {
@@ -398,19 +398,21 @@ static id<MTLBlitCommandEncoder> blit_encoder(void)
     prof.blits++;
     return benc;
 }
+#define blit_encoder() blit_encoder_at(__LINE__)
 
 /* A blit that touches neither texture of a pending clear leaves the clears pending, so the next pass into the
    cleared images can still take them as load actions. One that does touch them replays the clears first. */
-static id<MTLBlitCommandEncoder> blit_encoder_for(const mglb_texture *a, const mglb_texture *b)
+static id<MTLBlitCommandEncoder> blit_encoder_for_at(int line, const mglb_texture *a, const mglb_texture *b)
 {
     int touches = (a && pending_clear_uses(a)) || (b && pending_clear_uses(b));
     if (touches && benc)
-        end_encoders(); /* an open blit encoder would otherwise run this blit before the clears */
+        end_encoders_at(line); /* an open blit encoder would otherwise run this blit before the clears */
     keep_clears = !touches;
-    id<MTLBlitCommandEncoder> e = blit_encoder();
+    id<MTLBlitCommandEncoder> e = blit_encoder_at(line);
     keep_clears = 0;
     return e;
 }
+#define blit_encoder_for(a, b) blit_encoder_for_at(__LINE__, a, b)
 
 static id<MTLComputeCommandEncoder> compute_encoder(void)
 {
@@ -2830,6 +2832,8 @@ static id<MTLAccelerationStructure> build_as(MTLAccelerationStructureDescriptor 
 }
 
 static unsigned long rt_built, rt_built_tris; /* section structures built since the last MGL_RT_DEBUG line */
+static unsigned long rt_rebuilt; /* of those, ranges built before (vertex data rewritten, or another block-id offset) */
+static NSMutableSet<NSData *> *rt_ranges; /* MGL_RT_DEBUG=1: every range built, without generation and offsets */
 
 static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer **tris_out, RtSection **sec_out)
 {
@@ -2858,6 +2862,19 @@ static id<MTLAccelerationStructure> section_as(const mgl_rt_geom *g, mglb_buffer
     }
     rt_built++;
     rt_built_tris += (unsigned long)(g->count / 3);
+    if (getenv("MGL_RT_DEBUG") && atoi(getenv("MGL_RT_DEBUG"))) {
+        rt_key r = k;
+        r.gen = 0;
+        r.ent_off = 0;
+        r.lmin = r.lmax = 0;
+        NSData *rk = [[NSData alloc] initWithBytes:&r length:sizeof r];
+        if (!rt_ranges)
+            rt_ranges = [NSMutableSet set];
+        if ([rt_ranges containsObject:rk])
+            rt_rebuilt++;
+        else
+            [rt_ranges addObject:rk];
+    }
     id<MTLComputePipelineState> ps = rt_decode_pipeline();
     int tris = g->count / 3;
     if (!ps || tris <= 0)
@@ -3099,9 +3116,9 @@ static void rt_update(const mgl_rt_geom *g, int n)
     if (!logged++ || (debug && rt_frame % 120 == 0))
     {
         mgl_log("ray tracing: scene built from %d of %d terrain sections (%lu cached); %lu section structures "
-                "(%luk triangles) built in the last %d frames", count, n, (unsigned long)rt_sections.count, rt_built,
-                rt_built_tris / 1000, logged == 1 ? 1 : 120);
-        rt_built = rt_built_tris = 0;
+                "(%luk triangles) built in the last %d frames, %lu of them ranges built before", count, n,
+                (unsigned long)rt_sections.count, rt_built, rt_built_tris / 1000, logged == 1 ? 1 : 120, rt_rebuilt);
+        rt_built = rt_built_tris = rt_rebuilt = 0;
     }
 }
 
