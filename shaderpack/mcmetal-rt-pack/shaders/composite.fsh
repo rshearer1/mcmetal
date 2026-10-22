@@ -13,7 +13,6 @@ const vec4 colortex13ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 #include "/lib/common.glsl"
 #include "/lib/uniforms.glsl"
 #include "/lib/sky.glsl"
-#include "/lib/style.glsl"
 
 uniform sampler2D colortex0, colortex1, colortex5, colortex8, colortex11, colortex13, depthtex0, depthtex1;
 
@@ -32,6 +31,10 @@ flat in vec3 sunCol, skyAmb, sunDir;
 
 /* RENDERTARGETS: 0 */
 layout(location = 0) out vec4 outColor;
+
+#ifdef STYLE_OUTLINE
+float linDepth(float d) { return 2.0 * near * far / (far + near - (d * 2.0 - 1.0) * (far - near)); }
+#endif
 
 void main() {
     // what's behind see-through blocks (already dimmed or tinted by them) plus their own light (gbuffers_water)
@@ -59,6 +62,25 @@ void main() {
         p = mat3(gbufferModelViewInverse) * (vd.xyz / vd.w);
         dist = length(p);
         depth = 0.999999;   // fogged like terrain below, not left as sky
+    }
+#endif
+
+#ifdef STYLE_OUTLINE
+    // Storybook ink: a line where the depth jumps (silhouettes) or the surface turns (block edges), scene-tinted,
+    // fading out with distance so far terrain doesn't turn to scribble
+    if (depth < 1.0 && dist > 1.5) {
+        vec2 px = 1.0 / vec2(viewWidth, viewHeight);
+        float lc = linDepth(depth);
+        vec3 nc = octDecode(texture(colortex1, texcoord).xy);
+        float edge = 0.0;
+        for (int i = 0; i < 4; i++) {
+            vec2 o = (i == 0 ? vec2(1.0, 0.0) : i == 1 ? vec2(-1.0, 0.0) : i == 2 ? vec2(0.0, 1.0) : vec2(0.0, -1.0)) * px;
+            float d = texture(depthtex0, texcoord + o).r;
+            float ln = d >= 1.0 ? far * 4.0 : linDepth(d);
+            if (lc - ln > 0.03 * lc + 0.15) edge = 1.0;                            // something in front: outline it
+            if (d < 1.0 && dot(nc, octDecode(texture(colortex1, texcoord + o).xy)) < 0.7) edge = max(edge, 0.7);
+        }
+        col *= 1.0 - 0.75 * edge * (1.0 - smoothstep(40.0, 90.0, dist));
     }
 #endif
 
@@ -93,7 +115,7 @@ void main() {
         col = mix(col, vec3(0.6, 0.7, 0.8) * (skyAmb * 0.4), 1.0 - exp(-dist * 2.0));
     } else if (depth < 1.0) {
         float haze = (1.0 - exp(-dist * 0.0012 * FOG_DENSITY * STYLE_FOG * (1.0 + 5.0 * rainStrength)));
-  #if STYLE == 2 || STYLE == 3
+  #if STYLE == 1 || STYLE == 2 || STYLE == 4
         // low mist that sits in valleys and over water (thickest below about sea level + 4)
         float low = smoothstep(10.0, -2.0, p.y + cameraPosition.y - 63.0);
         haze = max(haze, STYLE_GROUND_MIST * 0.45 * low * (1.0 - exp(-dist * 0.025)));
@@ -106,7 +128,7 @@ void main() {
             // haze takes the sky's colour from a little above the view direction: right at the horizon the
             // atmosphere model is yellowed by ~100 km of air, real distant haze is blue-white
             vec3 hd = p / dist;
-            col = mix(col, skyColor(normalize(vec3(hd.x, max(hd.y, 0.0) + 0.12, hd.z)), sunDir) * STYLE_MIST, amount);
+            col = mix(col, skyColor(normalize(vec3(hd.x, max(hd.y, 0.0) + 0.12, hd.z)), sunDir), amount);
         }
     }
 #if defined USE_RT && defined LIGHT_SHAFTS

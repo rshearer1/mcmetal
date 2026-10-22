@@ -8,8 +8,8 @@ vec3 lightDirection() { return normalize(mat3(gbufferModelViewInverse) * shadowL
 void lightColors(out vec3 sunCol, out vec3 skyAmb) {
     vec3 sunDir = sunDirection();
     float moonLight = 0.25 + 0.75 * abs(float(moonPhase) - 4.0) / 4.0;   // full moon brightest
-    vec3 sun = lightTransmittance(sunDir) * (SUN_INTENSITY * 0.2);
-    vec3 moon = lightTransmittance(-sunDir) * (MOON_INTENSITY * 0.2 * moonLight) * vec3(0.8, 0.9, 1.15);
+    vec3 sun = lightTransmittance(sunDir) * (SUN_INTENSITY * 0.2) * STYLE_SUN_TINT;
+    vec3 moon = lightTransmittance(-sunDir) * (MOON_INTENSITY * 0.2 * moonLight * STYLE_MOON) * vec3(0.8, 0.9, 1.15) * STYLE_MOON_TINT;
     sunCol = (sun + moon) * SUN_STRENGTH;
     vec3 h = normalize(vec3(sunDir.x, 0.0, sunDir.z) + vec3(0.0001));
     skyAmb = (0.5 * skyColor(vec3(0.0, 1.0, 0.0), sunDir)
@@ -21,7 +21,7 @@ void lightColors(out vec3 sunCol, out vec3 skyAmb) {
 }
 
 
-vec3 blockLightColor() { return vec3(BLOCK_LIGHT_R, BLOCK_LIGHT_G, BLOCK_LIGHT_B); }
+vec3 blockLightColor() { return vec3(BLOCK_LIGHT_R, BLOCK_LIGHT_G, BLOCK_LIGHT_B) * STYLE_BLOCK_TINT; }
 
 // Light arriving at a surface, before it's multiplied by the surface colour.
 // sh = sun shadow (1 lit, 0 shadowed); ao = vanilla corner darkening for now (ray-traced AO in step 2).
@@ -29,10 +29,18 @@ vec3 surfaceLight(vec3 p, vec3 n, vec2 lm, float ao, int mat, vec3 L, vec3 sunCo
     float ndl = dot(n, L);
     float diff = mat == MAT_FOLIAGE ? 0.55 + 0.45 * abs(ndl) : max(ndl, 0.0);
     vec3 direct = sunCol * diff * sh;
+#ifdef STYLE_TOON
+    // Storybook: flat bands of sunlight instead of a smooth falloff (the shadow's colour is kept)
+    float ls = luma(sh);
+    direct = sunCol * toonBands(clamp(diff * ls, 0.0, 1.0)) * (ls > 1e-3 ? sh / ls : vec3(1.0));
+#endif
     vec3 sky = skyAmb * (lm.y * lm.y) * (0.7 + 0.3 * n.y) * ao;
     // block light (torches etc.); the held light is a sphere around the player
     float held = float(max(heldBlockLightValue, heldBlockLightValue2));
     float bl = max(lm.x, clamp((held - length(p)) / 15.0, 0.0, 1.0));
+#ifdef STYLE_TOON
+    bl = toonBands(bl);
+#endif
     vec3 blk = blockLightColor() * (1.2 * bl * bl * bl + 0.05 * bl) * BLOCK_LIGHT_STRENGTH * ao;
     vec3 floorLight = vec3(0.0015, 0.0017, 0.002) * ao + vec3(0.25) * nightVision;
     return direct + sky + blk + floorLight;

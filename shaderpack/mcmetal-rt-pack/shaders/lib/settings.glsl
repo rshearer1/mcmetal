@@ -57,7 +57,7 @@ const float drynessHalfLife = 400.0;
 
 #define DEBUG_VIEW 0 // [0 1 2 3 4 5 6 7] 0 off, 1 sun shadow, 2 ambient occlusion, 3 global illumination (with coloured block light), 4 normals, 5 light shafts, 6 puddle mask, 7 caustics (r pattern, g seen through water, b sunlit)
 
-#define STYLE 0 // [0 1 2 3 4] the look: 0 Natural, 1 Cottage, 2 Witchy, 3 Fairytale, 4 Cinematic
+#define STYLE 0 // [0 1 2 3 4] the look (sky, light, mist, glow): 0 Natural, 1 Cottage, 2 Witchy, 3 Storybook, 4 Fairytale
 #define EXPOSURE 1.0 // [0.25 0.35 0.5 0.7 0.85 1.0 1.2 1.4 1.7 2.0 2.5 3.0 4.0]
 #define AUTO_EXPOSURE 1.0 // [0.0 0.25 0.5 0.75 1.0] how much brightness adapts to what you look at (0 = time of day only)
 #define SATURATION 1.0 // [0.0 0.5 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.5]

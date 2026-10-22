@@ -101,6 +101,7 @@ void main() {
         float cosSun = dot(dir, sunDir), edge = smoothstep(0.99955, 0.99975, cosSun);
         col += lightTransmittance(sunDir) * edge * (60.0 * (0.6 + 0.4 * smoothstep(0.99955, 0.99995, cosSun)));
         if (mat == MAT_SKY) col += toLinear(albedo.rgb) * 0.4 * (1.0 - 0.9 * rainStrength);
+        col += styleAurora(dir, smoothstep(0.02, -0.12, sunDir.y)) * (1.0 - rainStrength);
   #ifdef CLOUDS
         col = drawClouds(col, dir, lightDir, sunCol, skyAmb);
   #endif
