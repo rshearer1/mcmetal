@@ -1738,12 +1738,18 @@ static struct cull_slot {
 static int cull_state = -1, cull_cur = -1;
 static id<MTLComputePipelineState> cull_pso;
 
+static int cull_setup(void);
 int mglb_cull_supported(void)
 {
-    if (cull_state >= 0)
-        return cull_state;
+    /* pipelines are made on background threads too: set up exactly once */
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ cull_state = cull_setup(); });
+    return cull_state;
+}
+
+static int cull_setup(void)
+{
     init_device();
-    cull_state = 0;
     if (![dev supportsFamily:MTLGPUFamilyMetal3]) {
         mgl_log("GPU chunk culling: needs a Metal 3 GPU");
         return 0;
@@ -1770,6 +1776,10 @@ int mglb_cull_supported(void)
         struct cull_slot *c = &cslot[i];
         c->icb = [dev newIndirectCommandBufferWithDescriptor:icd maxCommandCount:CULL_MAX_CMDS
                                                      options:MTLResourceStorageModePrivate];
+        if (!c->icb) {
+            mgl_log("GPU chunk culling: this GPU can't make indirect command buffers");
+            return 0;
+        }
         id<MTLArgumentEncoder> ae = [fn newArgumentEncoderWithBufferIndex:3];
         c->icb_arg = [dev newBufferWithLength:ae.encodedLength options:MTLResourceStorageModeShared];
         [ae setArgumentBuffer:c->icb_arg offset:0];
@@ -1782,7 +1792,7 @@ int mglb_cull_supported(void)
         }
         c->frame = ~0ull;
     }
-    cull_state = 1;
+    mgl_log("GPU chunk culling: kernel and %d indirect command buffers ready on %s", CULL_SLOTS, dev.name.UTF8String);
     return 1;
 }
 
@@ -1832,9 +1842,9 @@ int mglb_cull_run(const mgl_cull_pass *p, const mgl_cull_draw *draws, int n, mgl
 /* decided before the first pipeline is made: every pipeline must allow indirect commands for culling to use it */
 static int cull_wanted(void)
 {
-    static int wanted = -1;
-    if (wanted < 0)
-        wanted = opt("MCMETAL_GPU_CULL") && mglb_cull_supported();
+    static int wanted;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ wanted = opt("MCMETAL_GPU_CULL") && mglb_cull_supported(); });
     return wanted;
 }
 
