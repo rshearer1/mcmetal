@@ -129,6 +129,7 @@ static GLuint program_from_files(const char *vs_path, const char *fs_path)
 int main(int argc, char **argv)
 {
     static unsigned px[64 * 64];
+    setvbuf(stdout, NULL, _IOLBF, 0); /* piped through tee in CI: keep the lines a crash would otherwise lose */
     const char *r = (const char *)glGetString(GL_RENDERER);
     printf("renderer: %s\n", r ? r : "?");
     if (r && strstr(r, "no Metal device")) { /* e.g. a CI virtual machine: compile checks happen offline instead */
