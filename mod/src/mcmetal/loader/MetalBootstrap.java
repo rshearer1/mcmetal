@@ -86,6 +86,9 @@ public final class MetalBootstrap implements GraphicsBootstrapper {
                     #
                     # Draw at half resolution on a Retina screen without the upscaler (fastest, softest).
                     #MCMETAL_RETINA=0
+                    #
+                    # Terrain chunks out of view are skipped on the GPU. Turn it off if terrain ever goes missing.
+                    #MCMETAL_GPU_CULL=0
                     """);
         Path gl = unpack("libmcmetal.dylib", dir);
         Path glfw = unpack("libglfw.dylib", dir); // finds libmcmetal.dylib next to itself
