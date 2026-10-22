@@ -3144,7 +3144,7 @@ static int power_cap_fps(void)
     return cap;
 }
 
-static int choose_paced_fps(mgl_ctx *c)
+static int choose_paced_fps(mgl_ctx *c, int shown_per_frame)
 {
     static const int rates[] = {120, 60, 40, 30};
     const char *forced = getenv("MGL_TARGET_FPS");
@@ -3161,7 +3161,7 @@ static int choose_paced_fps(mgl_ctx *c)
     }
     int cap = power_cap_fps(), allowed[4], any = 0;
     for (int i = 0; i < 4; i++)
-        any |= allowed[i] = hz % rates[i] == 0 && rates[i] <= hz && (!cap || rates[i] <= cap);
+        any |= allowed[i] = hz % (rates[i] * shown_per_frame) == 0 && rates[i] * shown_per_frame <= hz && (!cap || rates[i] <= cap);
     for (int i = 0; i < 4 && !any; i++)
         any |= allowed[i] = !cap || rates[i] <= cap;
     if (!any)
@@ -3819,10 +3819,9 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
     prof.skipped_presents += skip;
     if (drawable) {
         watch_drawable(drawable);
-        /* Frame interpolation: the made-up frame, then the real one half a frame after it. "A frame" is the cost of
-           one (CPU work or GPU time), not the time between swaps: that includes waiting for these presents, so
-           it would grow with every slow frame and hold the game back further each time (measured: 10 fps). */
-        double frame_s = c->avg_frame_ms > 0 ? c->avg_frame_ms * 1e-3 : 1.0 / 60;
+        /* Frame interpolation: the made-up frame, then the real one half a frame after it. deltaTime is the paced
+           real frame time once there is one. */
+        double frame_s = c->paced_fps > 0 ? 1.0 / c->paced_fps : c->avg_frame_ms > 0 ? c->avg_frame_ms * 1e-3 : 1.0 / 60;
         id<MTLTexture> mid = fg_interpolate(frame_s);
         static int fg_no_present = -1;
         if (fg_no_present < 0)
@@ -3830,8 +3829,18 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
         if (mid && fg_no_present) /* test: make the extra frame but don't show it (its GPU cost alone) */
             mid = nil;
         if (mid) {
+            /* Real frames paced like without interpolation, at a rate whose double divides the screen's refresh
+               (on 120 Hz: 60 or 30 real, shown as 120 or 60), each shown frame for exactly half a real one.
+               Not from the measured frame time: the GPU time per frame grows when presents wait, so that would
+               slow the game down step by step (measured: SEUS fell to 10-12 fps). */
+            int fps = choose_paced_fps(c, 2);
+            if (fps != c->paced_fps) {
+                c->paced_fps = fps;
+                atomic_store(&pace_target_ms, 500.0 / fps);
+                mgl_log("frame interpolation: %d real fps shown as an even %d (frame time %.1f ms)", fps, 2 * fps, c->avg_frame_ms);
+            }
+            double half = 0.5 / fps;
             draw_to_drawable(c, mid, drawable);
-            double half = frame_s * 0.5 > 1.0 / 120 ? frame_s * 0.5 : 1.0 / 120;
             [current_cb() presentDrawable:drawable afterMinimumDuration:half];
             commit(); /* send the made-up frame on its way before waiting for the second drawable */
             uint64_t t_d2 = now_ns();
@@ -3857,7 +3866,7 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
         c->last_gpu_ns = gpu;
         if (mid || !drawable) {
         } else if (opt_pacing > 0 && c->vsync && c->avg_frame_ms > 0) {
-            int fps = choose_paced_fps(c);
+            int fps = choose_paced_fps(c, 1);
             if (fps != c->paced_fps) {
                 c->paced_fps = fps;
                 atomic_store(&pace_target_ms, 1000.0 / fps);
