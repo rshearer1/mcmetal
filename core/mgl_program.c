@@ -44,12 +44,14 @@ static void dump_msl(const mgl_link_job *j)
     for (int s = 0; s < MGL_NUM_STAGES; s++) {
         if (!j->msl[s])
             continue;
-        char path[1024];
+        char path[1024], tmp[1040];
         snprintf(path, sizeof path, "%s/%s-%u.%s.metal", dir, j->key[0] ? j->key : "nokey", n, ext[s]);
-        FILE *f = fopen(path, "w");
-        if (f) {
-            fputs(j->msl[s], f);
-            fclose(f);
+        snprintf(tmp, sizeof tmp, "%s.part", path);
+        FILE *f = fopen(tmp, "w");
+        if (f) { /* whole files only: a background compile can still be writing when a short test exits */
+            int ok = fputs(j->msl[s], f) >= 0;
+            if (fclose(f) == 0 && ok)
+                rename(tmp, path);
         }
     }
 }
@@ -283,7 +285,8 @@ static void add_ray_tracing(mgl_shader *s)
                                "layout(std430, binding = 14) readonly buffer McmLights { uint mcm_lcount; uint mcm_lpad[3];\n"
                                "  vec4 mcm_light[2048]; uint mcm_lcell[]; };\n";
     /* McmTris: 12 words per triangle, written by rt_decode (mac/mgl_metal.m): 0-2 uv, 3 cutoff | 0x100 translucent,
-       4-6 colour, 7 octahedral normal, 8-10 light, 11 Iris block id + 1. Candidates (every triangle is non-opaque)
+       4-6 colour, 7 octahedral normal, 8-10 light, 11 Iris block id + 1; 0x200 in word 3 = untextured (entities,
+       mglb_rt_dynamic). Candidates (every triangle is non-opaque)
        pass Sodium's alpha test against the block atlas before they count. */
     static const char body[] =
         "\nvec2 mcm_uv(McmTris t, uint b, vec2 w) {\n"
@@ -335,7 +338,8 @@ static void add_ray_tracing(mgl_shader *s)
         "  if (n.z < 0.0) n.xy = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);\n"
         "  normal = normalize(n);\n"
         "  if (dot(normal, dir) > 0.0) normal = -normal; /* the face the ray hit */\n"
-        "  albedo = textureLod(mcm_atlas, mcm_uv(t, b, w), 0.0) * vec4(mcm_colour(t, b, w).rgb, 1.0);\n"
+        "  albedo = ((t.w[b + 3u] & 0x200u) != 0u ? vec4(1.0) : textureLod(mcm_atlas, mcm_uv(t, b, w), 0.0))\n"
+        "         * vec4(mcm_colour(t, b, w).rgb, 1.0);\n"
         "  uvec3 l = uvec3(t.w[b + 8u], t.w[b + 9u], t.w[b + 10u]);\n"
         "  vec3 wv = vec3(1.0 - w.x - w.y, w.x, w.y);\n"
         "  lightmap = vec2(dot(vec3(l & 0xFFu), wv), dot(vec3((l >> 8u) & 0xFFu), wv)) / 256.0;\n"
@@ -1026,6 +1030,28 @@ void glShaderStorageBlockBinding(GLuint prog, GLuint index, GLuint binding)
 
 /* ---- writing uniform values ---- */
 
+mgl_camera mgl_cam;
+
+/* Keep Iris's camera uniforms for the backend (see mgl_camera); names only checked for float mat4 / vec3 writes */
+static void note_camera(const char *name, int n, int cols, const void *data)
+{
+    static const char *mats[] = {"gbufferModelView", "gbufferProjection", "gbufferPreviousModelView", "gbufferPreviousProjection"};
+    static const char *vecs[] = {"cameraPosition", "previousCameraPosition"};
+    if (cols == 4 && n == 4) {
+        for (int i = 0; i < 4; i++)
+            if (!strcmp(name, mats[i])) {
+                memcpy(mgl_cam.mat[i], data, sizeof mgl_cam.mat[i]);
+                mgl_cam.seen |= 1u << i;
+            }
+    } else if (cols <= 1 && n == 3) {
+        for (int i = 0; i < 2; i++)
+            if (!strcmp(name, vecs[i])) {
+                memcpy(mgl_cam.pos[i], data, sizeof mgl_cam.pos[i]);
+                mgl_cam.seen |= 1u << (4 + i);
+            }
+    }
+}
+
 /* Write `count` elements of n components each (floats or 32-bit ints) for location loc of program p. */
 static void write_uniform(mgl_program *p, GLint loc, int n, int cols, GLsizei count, const void *data, int is_int)
 {
@@ -1044,6 +1070,8 @@ static void write_uniform(mgl_program *p, GLint loc, int n, int cols, GLsizei co
         return;
     }
     mgl_uniform *u = &p->x.uniforms[idx];
+    if (!is_int && count == 1 && el == 0 && (u->name[0] == 'g' || u->name[0] == 'c' || u->name[0] == 'p'))
+        note_camera(u->name, n, cols, data);
     const char *src = data;
     for (GLsizei e = 0; e < count && el + e < u->array_size; e++) {
         for (int s = 0; s < 3; s++) {

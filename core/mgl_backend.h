@@ -159,12 +159,26 @@ typedef struct mgl_rt_geom {
 /* The terrain sections live this frame; the backend keeps one acceleration structure per section (cached by
    buffer, range and gen) and rebuilds the scene from them. Bound at MGL_BUF_SCENE for programs with uses_scene. */
 void mglb_rt_update(const mgl_rt_geom *g, int n);
+/* This frame's entity triangles (mobs, players, item frames, chests...): camera-relative float3 corners, 9 floats
+   per triangle, solid. Called just before mglb_rt_update; the backend adds them to that scene. */
+void mglb_rt_dynamic(const float *tris, int n);
 mglb_buffer *mglb_rt_instances(void); /* this frame's per-instance triangle-data addresses (mcm_trace's McmInstances) */
 /* The block atlas the terrain was last drawn with, for mcm_trace's alpha test (mcm_atlas); set by mgl_rt.c. */
 extern mglb_texture *mgl_rt_atlas;
 /* Block ids the light list collects (MCMETAL_LIGHT_IDS in a pack), {-1, -1} = none; set by mgl_program.c. */
 extern int mgl_rt_light_ids[2];
 mglb_buffer *mglb_rt_lights(void); /* this frame's light list (mcm_lights_near's McmLights) */
+
+/* Camera from Iris's uniforms, as the pack was last given them (column-major, GL conventions), for MetalFX frame
+   interpolation's motion vectors (MCMETAL_FRAMEGEN): gbufferModelView, gbufferProjection,
+   gbufferPreviousModelView, gbufferPreviousProjection; cameraPosition, previousCameraPosition. seen: bit per
+   value set since the backend last cleared it. Filled by mgl_program.c. */
+typedef struct mgl_camera {
+    float mat[4][16];
+    float pos[2][3];
+    unsigned seen;
+} mgl_camera;
+extern mgl_camera mgl_cam;
 
 void mglb_draw(const mgl_draw *d);
 void mglb_dispatch(const mgl_draw *d, int gx, int gy, int gz); /* uses program, uniforms, ubo, textures[2] */

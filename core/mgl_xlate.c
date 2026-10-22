@@ -658,6 +658,46 @@ static char *with_420pack(const char *text)
     return out;
 }
 
+/* dFdxFine & co. (GL_ARB_derivative_control, which GL drivers take in #version 330 shaders: Distant Horizons'
+   SSAO): glslang only declares them from #version 400. Before that, they become the plain dFdx/dFdy/fwidth, which
+   is what Metal's derivatives are anyway. Returns a new copy (text is freed) or text itself when nothing matched. */
+static char *plain_derivatives(char *text, const char *orig)
+{
+    const char *base = text ? text : orig;
+    const char *v = strstr(base, "#version");
+    if (!v || atoi(v + 8) >= 400 || (!strstr(base, "Fine") && !strstr(base, "Coarse")))
+        return text;
+    static const char *const from[] = {"dFdxFine", "dFdyFine", "fwidthFine", "dFdxCoarse", "dFdyCoarse", "fwidthCoarse"};
+    size_t len = strlen(base);
+    char *out = malloc(len + 1), *o = out;
+    int changed = 0;
+    for (const char *c = base; *c;) {
+        int hit = -1;
+        if (c == base || !(isalnum((unsigned char)c[-1]) || c[-1] == '_'))
+            for (int i = 0; i < 6 && hit < 0; i++) {
+                size_t n = strlen(from[i]);
+                if (!strncmp(c, from[i], n) && !(isalnum((unsigned char)c[n]) || c[n] == '_'))
+                    hit = i;
+            }
+        if (hit < 0) {
+            *o++ = *c++;
+            continue;
+        }
+        const char *plain = hit % 3 == 2 ? "fwidth" : hit % 3 ? "dFdy" : "dFdx";
+        memcpy(o, plain, strlen(plain));
+        o += strlen(plain);
+        c += strlen(from[hit]);
+        changed = 1;
+    }
+    *o = 0;
+    if (!changed) {
+        free(out);
+        return text;
+    }
+    free(text);
+    return out;
+}
+
 static int xlate_once(const char *src[MGL_NUM_STAGES], mgl_xlate_result *r)
 {
     static int initialized;
@@ -681,7 +721,7 @@ static int xlate_once(const char *src[MGL_NUM_STAGES], mgl_xlate_result *r)
     for (int s = 0; s < MGL_NUM_STAGES; s++) {
         if (!src[s])
             continue;
-        char *patched = with_420pack(src[s]);
+        char *patched = plain_derivatives(with_420pack(src[s]), src[s]);
         glslang_input_t in = {
             .language = GLSLANG_SOURCE_GLSL,
             .stage = gl_stage[s],

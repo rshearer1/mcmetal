@@ -6,7 +6,9 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <MetalFX/MetalFX.h>
+#import <AppKit/AppKit.h>
 #include <ctype.h>
+#include <math.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
@@ -37,8 +39,11 @@ static id<MTLComputeCommandEncoder> cenc;
    MGL_BINARY_ARCHIVE=1   keep finished GPU pipelines in MGL_CACHE_DIR/pipelines.metallib across launches
    MGL_ASYNC_PIPELINES=1  build a new pipeline in the background and skip its draws until ready (no hitch,
                           an object may be missing for a frame or two the first time it is seen)
-   MGL_FRAME_PACING=1     wait on completion signals instead of polling, and present at an even rate
-                          (120/60/40/30 fps, whichever the last frames sustain; MGL_TARGET_FPS forces one) */
+   MGL_FRAME_PACING=0     ON BY DEFAULT (M3: SEUS 47 fps with ~75% judder -> an even 40, plain world even 120);
+                          =0 turns it off. Waits on completion signals instead of polling, and presents at an even rate
+                          (120/60/40/30/24/20/15 fps, 12 with interpolation, whichever the last frames' cost sustains, only rates that divide the screen's
+                          refresh rate; MGL_TARGET_FPS forces one, over the power cap too: it's a test override).
+                          Only with vsync on. MGL_PRESENT_STATS=1 logs how evenly frames reach the screen. */
 static int opt(const char *name)
 {
     const char *e = getenv(name);
@@ -55,6 +60,12 @@ static struct {
     uint64_t wait_ns, start_ns, frames;
 } prof;
 static _Atomic uint64_t prof_gpu_ns;
+/* Frame pacing's own cost measures (always kept, unlike prof): time the game thread spent waiting (for the GPU or
+   a drawable) and GPU busy time summed over finished command buffers. A frame's real cost is the larger of its CPU
+   time minus waits and its GPU time; the time between swaps can't be used once pacing holds frames back, because
+   then it is the paced interval itself and the rate would ratchet down to 30. */
+static uint64_t pace_wait_ns;
+static _Atomic uint64_t pace_gpu_ns;
 static mgl_target prof_last_target;
 
 /* MGL_PROFILE=2 also times every render, compute and blit pass on the GPU (Metal timestamp counters at pass
@@ -226,7 +237,7 @@ static void read_options(void)
         return;
     opt_archive = opt("MGL_BINARY_ARCHIVE") && getenv("MGL_CACHE_DIR");
     opt_async_pipes = opt("MGL_ASYNC_PIPELINES");
-    opt_pacing = opt("MGL_FRAME_PACING");
+    opt_pacing = getenv("MGL_FRAME_PACING") ? opt("MGL_FRAME_PACING") : 1; /* on unless MGL_FRAME_PACING=0 */
     opt_profile = getenv("MGL_PROFILE") ? atoi(getenv("MGL_PROFILE")) : 0;
     if (opt_archive || opt_async_pipes || opt_pacing)
         mgl_log("options: binary archive %d, async pipelines %d, frame pacing %d", opt_archive, opt_async_pipes, opt_pacing);
@@ -263,8 +274,12 @@ static id<MTLCommandBuffer> current_cb(void)
               pthread_cond_broadcast(&fence_cond);
               pthread_mutex_unlock(&fence_lock);
           }
-          if (opt_profile > 0 && done.GPUEndTime > done.GPUStartTime)
-              atomic_fetch_add(&prof_gpu_ns, (uint64_t)((done.GPUEndTime - done.GPUStartTime) * 1e9));
+          if (done.GPUEndTime > done.GPUStartTime) {
+              uint64_t gpu = (uint64_t)((done.GPUEndTime - done.GPUStartTime) * 1e9);
+              atomic_fetch_add(&pace_gpu_ns, gpu);
+              if (opt_profile > 0)
+                  atomic_fetch_add(&prof_gpu_ns, gpu);
+          }
           if (done.error)
               mgl_log("GPU error in command buffer %llu: %s", serial, done.error.localizedDescription.UTF8String);
         }];
@@ -2139,6 +2154,9 @@ static id<MTLFunction> clear_fragment(const mgl_target *t)
     return f;
 }
 
+static void fg_snapshot(const mgl_target *t);
+static int fg_enabled(void);
+static int tu_enabled(void);
 /* frame dump: every colour target of a pass as "slot:texture/format", plus which slots blend */
 static const char *dump_targets(const mgl_target *t, const mgl_blend *blend)
 {
@@ -2205,6 +2223,10 @@ static void dump_texels(const mgl_draw *d)
 void mglb_clear(const mgl_target *t, unsigned mask_color, const float rgba[4], int clear_depth, float depth,
                 const int *scissor, uint8_t cmask)
 {
+    /* Minecraft clears only the depth of its main target right before drawing the HUD: keep the finished world
+       picture and its depth for frame interpolation */
+    if (clear_depth && !mask_color && !scissor && !t->is_default && t->tex[0] && t->depth && (fg_enabled() || tu_enabled()))
+        fg_snapshot(t);
     if (dump_this_frame())
         mgl_log("frame dump: clear target%s%s depth %p, colour mask 0x%x (write 0x%x) to %g %g %g %g, depth %d (%g), scissor %d",
                 dump_targets(t, NULL), t->is_default ? " (window)" : "", (void *)t->depth, mask_color, cmask,
@@ -2922,6 +2944,74 @@ static void rt_build_lights(const mgl_rt_geom *g, RtSection *__strong *secs, con
     rt_lights_buf = lb;
 }
 
+/* Entities (mgl_rt.c): one acceleration structure rebuilt every frame, since they move. Their triangles carry no
+   atlas texture (entity skins live elsewhere): flag 0x200 makes mcm_trace_hit use the colour alone, a mid grey. */
+static float *rt_ent;
+static int rt_ent_n, rt_ent_cap;
+static mglb_buffer *rt_ent_tris; /* the record buffer in use by the current scene */
+
+void mglb_rt_dynamic(const float *tris, int n)
+{
+    if (n > rt_ent_cap) {
+        rt_ent_cap = n * 2;
+        rt_ent = realloc(rt_ent, sizeof(float) * 9 * (size_t)rt_ent_cap);
+    }
+    if (n)
+        memcpy(rt_ent, tris, sizeof(float) * 9 * (size_t)n);
+    rt_ent_n = n;
+}
+
+static id<MTLAccelerationStructure> entity_as(mglb_buffer **tris_out)
+{
+    int n = rt_ent_n;
+    mglb_buffer *pos = mglb_buffer_new((size_t)n * 36), *rec = mglb_buffer_new((size_t)n * 48);
+    if (!pos || !rec) {
+        mglb_buffer_release(pos);
+        mglb_buffer_release(rec);
+        return nil;
+    }
+    memcpy(pos->ptr, rt_ent, (size_t)n * 36);
+    uint32_t *r = rec->ptr;
+    for (int t = 0; t < n; t++, r += 12) {
+        const float *p = rt_ent + (size_t)t * 9;
+        float e1[3] = {p[3] - p[0], p[4] - p[1], p[5] - p[2]}, e2[3] = {p[6] - p[0], p[7] - p[1], p[8] - p[2]};
+        float c[3] = {e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]};
+        float l1 = fabsf(c[0]) + fabsf(c[1]) + fabsf(c[2]), o[2];
+        if (l1 > 0) {
+            c[0] /= l1, c[1] /= l1, c[2] /= l1;
+        } else
+            c[0] = 0, c[1] = 1, c[2] = 0;
+        if (c[2] >= 0)
+            o[0] = c[0], o[1] = c[1];
+        else
+            o[0] = (1 - fabsf(c[1])) * (c[0] >= 0 ? 1 : -1), o[1] = (1 - fabsf(c[0])) * (c[1] >= 0 ? 1 : -1);
+        memset(r, 0, 48);
+        r[3] = 0x200; /* solid, untextured */
+        r[4] = r[5] = r[6] = 0xFF999999u;
+        r[7] = (uint32_t)(uint16_t)(int16_t)lrintf(o[0] * 32767.0f) | (uint32_t)(uint16_t)(int16_t)lrintf(o[1] * 32767.0f) << 16;
+        r[8] = r[9] = r[10] = 0xF000u; /* full sky light, no block light */
+    }
+    MTLAccelerationStructureTriangleGeometryDescriptor *tg = [MTLAccelerationStructureTriangleGeometryDescriptor descriptor];
+    tg.vertexBuffer = OBJ(id<MTLBuffer>, pos->mtl);
+    tg.vertexStride = 12;
+    tg.vertexFormat = MTLAttributeFormatFloat3;
+    tg.triangleCount = (NSUInteger)n;
+    tg.opaque = NO; /* the same path as terrain: mcm_opaque_at passes them at once (cutoff byte 0) */
+    MTLPrimitiveAccelerationStructureDescriptor *pd = [MTLPrimitiveAccelerationStructureDescriptor descriptor];
+    pd.geometryDescriptors = @[ tg ];
+    pd.usage = MTLAccelerationStructureUsagePreferFastBuild;
+    use_buffer(pos);
+    id<MTLAccelerationStructure> as = build_as(pd);
+    mglb_buffer_release(pos);
+    if (!as) {
+        mglb_buffer_release(rec);
+        return nil;
+    }
+    use_buffer(rec);
+    *tris_out = rec;
+    return as;
+}
+
 static void rt_update(const mgl_rt_geom *g, int n);
 void mglb_rt_update(const mgl_rt_geom *g, int n)
 {
@@ -2941,14 +3031,15 @@ static void rt_update(const mgl_rt_geom *g, int n)
     }
     rt_frame++;
     NSMutableArray<id<MTLAccelerationStructure>> *parts = [NSMutableArray arrayWithCapacity:(NSUInteger)n];
-    mglb_buffer *inst = mglb_buffer_new(sizeof(MTLAccelerationStructureUserIDInstanceDescriptor) * (size_t)(n ? n : 1));
+    size_t slots = (size_t)n + 1; /* + the entities */
+    mglb_buffer *inst = mglb_buffer_new(sizeof(MTLAccelerationStructureUserIDInstanceDescriptor) * slots);
     if (!inst)
         return;
     MTLAccelerationStructureUserIDInstanceDescriptor *descs = inst->ptr;
-    mglb_buffer *table = mglb_buffer_new(8 * (size_t)(n ? n : 1));
+    mglb_buffer *table = mglb_buffer_new(8 * slots);
     uint64_t *addr = table->ptr;
     free(rt_tris_c);
-    rt_tris_c = (__unsafe_unretained id<MTLResource> *)calloc((size_t)(n ? n : 1), sizeof(id));
+    rt_tris_c = (__unsafe_unretained id<MTLResource> *)calloc(slots, sizeof(id));
     int count = 0;
     RtSection *__strong *secs = (RtSection *__strong *)calloc((size_t)(n ? n : 1), sizeof(RtSection *));
     int *sec_geom = calloc((size_t)(n ? n : 1), sizeof(int));
@@ -2990,6 +3081,25 @@ static void rt_update(const mgl_rt_geom *g, int n)
         secs[i] = nil;
     free(secs);
     free(sec_geom);
+    mglb_buffer *ent_tris = NULL;
+    id<MTLAccelerationStructure> ent = count && rt_ent_n ? entity_as(&ent_tris) : nil;
+    if (ent) { /* already camera-relative: identity transform; solid, so mask 1 like opaque terrain */
+        addr[count] = OBJ(id<MTLBuffer>, ent_tris->mtl).gpuAddress;
+        rt_tris_c[count] = OBJ(id<MTLBuffer>, ent_tris->mtl);
+        MTLAccelerationStructureUserIDInstanceDescriptor *d = &descs[count];
+        memset(d, 0, sizeof *d);
+        d->transformationMatrix.columns[0] = MTLPackedFloat3Make(1, 0, 0);
+        d->transformationMatrix.columns[1] = MTLPackedFloat3Make(0, 1, 0);
+        d->transformationMatrix.columns[2] = MTLPackedFloat3Make(0, 0, 1);
+        d->mask = 0x01;
+        d->accelerationStructureIndex = (uint32_t)count;
+        d->userID = 0xFFFFFFFFu;
+        [parts addObject:ent];
+        count++;
+    }
+    use_buffer(rt_ent_tris); /* last frame's draws read it: the pool keeps it until they are done */
+    mglb_buffer_release(rt_ent_tris);
+    rt_ent_tris = ent_tris;
     if (!count) {
         mglb_buffer_release(table);
         rt_tris_n = 0;
@@ -3019,8 +3129,8 @@ static void rt_update(const mgl_rt_geom *g, int n)
     if (debug < 0)
         debug = getenv("MGL_RT_DEBUG") && atoi(getenv("MGL_RT_DEBUG"));
     if (!logged++ || (debug && rt_frame % 120 == 0))
-        mgl_log("ray tracing: scene built from %d of %d terrain sections (%lu cached)", count, n,
-                (unsigned long)rt_sections.count);
+        mgl_log("ray tracing: scene built from %d of %d terrain sections (%lu cached), %d entity triangles",
+                count - (ent ? 1 : 0), n, (unsigned long)rt_sections.count, ent ? rt_ent_n : 0);
 }
 
 static void bind_scene(id<MTLRenderCommandEncoder> e, id<MTLComputeCommandEncoder> c)
@@ -3135,6 +3245,7 @@ int mglb_fence_wait(uint64_t id, uint64_t timeout_ns)
     uint64_t start = now_ns();
     int r = wait_serial(id, timeout_ns, start);
     prof.wait_ns += now_ns() - start;
+    pace_wait_ns += now_ns() - start;
     return r;
 }
 
@@ -3173,6 +3284,7 @@ void mglb_finish(void)
     uint64_t t = now_ns();
     [last_cb waitUntilCompleted];
     prof.wait_ns += now_ns() - t;
+    pace_wait_ns += now_ns() - t;
     prof.finishes++;
 }
 
@@ -3184,24 +3296,268 @@ typedef struct mgl_ctx {
     uint64_t frames;
     int vsync;
     uint64_t last_swap_ns;
-    double avg_frame_ms;    /* smoothed CPU frame time, for choosing the paced rate */
+    double avg_frame_ms;    /* smoothed frame cost (max of CPU work and GPU time), for choosing the paced rate */
+    uint64_t last_wait_ns, last_gpu_ns;
     int paced_fps;
+    uint64_t window_start_ns, stepped_up_ns, no_up_until_ns; /* see choose_paced_fps */
+    uint64_t grace_until_ns;
+    int bad_windows, blocked_fps;
+    unsigned up_backoff_s;
+    double win_cost[64];    /* this half second's frame costs, for their median */
+    int win_n;
 } mgl_ctx;
 
-/* Even frame delivery: on a 120 Hz ProMotion screen a game that makes 80 fps would show frames for 8 and
-   17 ms in turn (judder). Presenting with a minimum duration at the highest of 120/60/40/30 that the recent
-   frame time sustains keeps every frame on screen equally long. With vsync off, pacing stays off. */
-static int choose_paced_fps(mgl_ctx *c)
+/* Even frame delivery: on a 120 Hz ProMotion screen a game that makes 47 fps shows frames for 17 and 25 ms in
+   turn (judder, measured 70-80% of frames for SEUS on an M3). Presenting with a minimum duration at one of
+   120/60/40/30/24/20/15 keeps every frame on screen equally long. With vsync off, pacing stays off.
+   The rate follows missed deadlines, not a cost estimate alone: Apple GPUs clock down when pacing leaves them idle,
+   so a frame measured at 22 ms while paced at 30 still fits 40. Every half second (a window):
+   - down one rate after two windows in a row where over 10% of frames stayed on screen longer than 1.25x the
+     target, and only when the cost is over 60% of the budget (cheap frames that miss are hitches, e.g. chunk
+     loading, which a slower rate wouldn't fix); misses in the first second after a change don't count;
+   - up straight to the fastest rate the cost fits with 25% to spare, or else one rate up if it fits at all,
+     unless a try at that rate failed recently (a step down within 3 s of stepping up: that rate is left alone
+     for 10, 20, 40, then 80 s while tries keep failing, so a pack right at a boundary rarely hitches). */
+static _Atomic double pace_target_ms;     /* read by the presented handler */
+static _Atomic unsigned pace_shown, pace_missed;
+
+static void pace_presented(double iv_ms)
 {
-    static const int rates[] = {120, 60, 40, 30};
+    double target = atomic_load(&pace_target_ms);
+    if (target <= 0)
+        return;
+    atomic_fetch_add(&pace_shown, 1);
+    if (iv_ms > target * 1.25)
+        atomic_fetch_add(&pace_missed, 1);
+}
+
+/* Low Power Mode and heat (MGL_POWER_ADAPT=0 turns this off): with pacing on, cap the paced rate at 60 fps in
+   Low Power Mode or when macOS reports the Mac as seriously hot, and at 30 when critical, so the game backs off
+   evenly instead of the system throttling the GPU under it at random. Changes are logged as they happen. */
+static int power_cap_fps(void)
+{
+    static int adapt = -1, last_cap = -1;
+    if (adapt < 0) {
+        const char *e = getenv("MGL_POWER_ADAPT");
+        adapt = !e || atoi(e) != 0;
+    }
+    if (!adapt)
+        return 0;
+    static unsigned calls;
+    if (calls++ % 60) /* look about once a second */
+        return last_cap > 0 ? last_cap : 0;
+    NSProcessInfo *pi = [NSProcessInfo processInfo];
+    NSProcessInfoThermalState th = pi.thermalState;
+    BOOL low = pi.lowPowerModeEnabled;
+    int cap = th >= NSProcessInfoThermalStateCritical ? 30 : (low || th >= NSProcessInfoThermalStateSerious) ? 60 : 0;
+    if (cap != last_cap) {
+        static const char *names[] = {"nominal", "fair", "serious", "critical"};
+        char capstr[16] = "none";
+        if (cap)
+            snprintf(capstr, sizeof capstr, "%d fps", cap);
+        mgl_log("power: Low Power Mode %s, thermal state %s, frame rate cap %s", low ? "on" : "off",
+                th >= 0 && th <= 3 ? names[th] : "?", capstr);
+        last_cap = cap;
+    }
+    return cap;
+}
+
+/* Even presenting rates, fastest first. Down to 15: a heavy pack panning (SEUS ~20 real fps) paced at 30 got
+   deadlines it never met and showed 13-16 uneven fps; 20 is even, and with interpolation 20 real shows as an even
+   40 on 120 Hz. 12 only with interpolation (shown as 24): SEUS panning at 52-62 ms a frame couldn't hold 15 shown
+   as 30 (every other frame held 1-2 refreshes longer); alone 12 fps is too slow to be worth evenness. */
+static const int pace_rates[] = {120, 60, 40, 30, 24, 20, 15, 12};
+enum { PACE_N = sizeof pace_rates / sizeof pace_rates[0] };
+
+/* Which rates may be used with shown_per_frame frames on screen per real frame; returns the slowest one's index.
+   Only rates that are a whole number of the screen's refreshes (40 on a 60 Hz screen would judder) and within the
+   power cap. A screen none of them divides (e.g. 144 Hz) gets them all, as before. */
+static int pace_allowed(int shown_per_frame, int allowed[PACE_N])
+{
+    static int hz;
+    if (!hz) {
+        hz = (int)[NSScreen mainScreen].maximumFramesPerSecond;
+        if (hz <= 0)
+            hz = 60;
+        mgl_log("frame pacing: screen refreshes at %d Hz", hz);
+    }
+    int cap = power_cap_fps(), any = 0;
+    for (int i = 0; i < PACE_N; i++)
+        any |= allowed[i] = hz % (pace_rates[i] * shown_per_frame) == 0 && pace_rates[i] * shown_per_frame <= hz &&
+                            (!cap || pace_rates[i] <= cap) && (shown_per_frame > 1 || pace_rates[i] >= 15);
+    for (int i = 0; i < PACE_N && !any; i++)
+        any |= allowed[i] = (!cap || pace_rates[i] <= cap) && (shown_per_frame > 1 || pace_rates[i] >= 15);
+    if (!any)
+        allowed[PACE_N - 1] = 1;
+    int slowest = PACE_N - 1;
+    while (!allowed[slowest])
+        slowest--;
+    return slowest;
+}
+
+/* The fastest allowed real rate a frame costing cost_ms keeps up with, with 10% to spare. */
+static int pace_fit(double cost_ms, int shown_per_frame)
+{
+    int allowed[PACE_N], fit = pace_allowed(shown_per_frame, allowed);
+    for (int i = fit; i >= 0; i--)
+        if (allowed[i] && cost_ms * 1.1 <= 1000.0 / pace_rates[i])
+            fit = i;
+    return pace_rates[fit];
+}
+
+static int choose_paced_fps(mgl_ctx *c, int shown_per_frame)
+{
+    const int *rates = pace_rates;
+    enum { N = PACE_N };
     const char *forced = getenv("MGL_TARGET_FPS");
     if (forced && atoi(forced) > 0)
         return atoi(forced);
-    double ms = c->avg_frame_ms * 1.1; /* 10% headroom so a single slow frame doesn't break the rhythm */
-    for (int i = 0; i < 4; i++)
-        if (ms <= 1000.0 / rates[i])
-            return rates[i];
-    return 30;
+    int allowed[N], slowest = pace_allowed(shown_per_frame, allowed);
+    uint64_t t = now_ns();
+    int cur = -1;
+    for (int i = 0; i < N; i++)
+        if (rates[i] == c->paced_fps)
+            cur = i;
+    if (cur < 0 || !allowed[cur]) { /* first frame, or the cap or screen changed: the fastest allowed rate the cost fits */
+        int fit = slowest;
+        for (int i = slowest; i >= 0; i--)
+            if (allowed[i] && c->avg_frame_ms <= 1000.0 / rates[i])
+                fit = i;
+        c->window_start_ns = t;
+        c->grace_until_ns = t + 1000000000ull;
+        return rates[fit];
+    }
+    if (t - c->window_start_ns < 500000000ull)
+        return c->paced_fps;
+    c->window_start_ns = t;
+    /* The half second's median frame cost and at least 3 missed deadlines: one hitch (M3 static SEUS: a 50 ms
+       frame) mustn't knock interpolation from 30 shown as 60 down to 20 shown as 40 for good. */
+    double cost = c->avg_frame_ms;
+    if (c->win_n >= 3) {
+        double v[64];
+        int n = c->win_n;
+        memcpy(v, c->win_cost, n * sizeof v[0]);
+        for (int i = 1; i < n; i++) /* insertion sort, n <= 64 */
+            for (int j = i; j > 0 && v[j - 1] > v[j]; j--) {
+                double x = v[j];
+                v[j] = v[j - 1];
+                v[j - 1] = x;
+            }
+        cost = v[n / 2];
+    }
+    c->win_n = 0;
+    unsigned shown = atomic_exchange(&pace_shown, 0), missed = atomic_exchange(&pace_missed, 0);
+    double budget = 1000.0 / c->paced_fps;
+    int bad = t >= c->grace_until_ns && shown >= 4 && missed >= 3 && missed * 10 > shown && cost > 0.6 * budget;
+    c->bad_windows = bad ? c->bad_windows + 1 : 0;
+    if (c->bad_windows >= 2 && cur < slowest) {
+        if (t - c->stepped_up_ns < 3000000000ull) { /* the try at this rate failed */
+            c->up_backoff_s = c->up_backoff_s ? (c->up_backoff_s < 80 ? c->up_backoff_s * 2 : 80) : 10;
+            c->blocked_fps = c->paced_fps;
+            c->no_up_until_ns = t + c->up_backoff_s * 1000000000ull;
+        }
+        c->bad_windows = 0;
+        c->grace_until_ns = t + 1000000000ull;
+        int down = cur + 1;
+        while (!allowed[down])
+            down++;
+        return rates[down];
+    }
+    if (c->stepped_up_ns && t - c->stepped_up_ns > 10000000000ull)
+        c->up_backoff_s = 0; /* the last step up held */
+    int best = cur, next = -1; /* next: the first allowed rate faster than the current one */
+    for (int i = cur - 1; i >= 0; i--) {
+        if (!allowed[i])
+            continue;
+        if (t < c->no_up_until_ns && rates[i] >= c->blocked_fps)
+            break;
+        if (next < 0)
+            next = i;
+        double b = 1000.0 / rates[i];
+        /* one step up needs the cost within the budget; with interpolation within 83% of it, since two presents
+           per frame make a miss costlier (M3 SEUS panning at 54-61 ms kept trying 15 shown as 30, budget 66.7, and
+           juddered until it fell back to 12) */
+        double step_margin = shown_per_frame > 1 ? 1.2 : 1.0;
+        if (cost * 1.25 <= b || (i == next && cost * step_margin <= b))
+            best = i;
+    }
+    if (best < cur) {
+        c->stepped_up_ns = t;
+        c->bad_windows = 0;
+        c->grace_until_ns = t + 1000000000ull;
+        return rates[best];
+    }
+    return c->paced_fps;
+}
+
+/* MGL_PRESENT_STATS=1 (or MGL_PROFILE): once a second, log how evenly frames reached the screen, from the
+   drawables' presentedTime: shown fps, mean and spread of the time each frame stayed on screen, the worst one,
+   and judder = share of frames whose time on screen differs from the previous frame's by more than 2 ms.
+   MGL_PRESENT_STATS=2 also logs the first 16 times on screen of each second, in ms. */
+static pthread_mutex_t pstat_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct {
+    double last, sum, sum2, worst, prev_iv, seq[16];
+    unsigned long n, judder, dropped;
+} pstat;
+
+static void present_stat(double when)
+{
+    pthread_mutex_lock(&pstat_lock);
+    if (when <= 0)
+        pstat.dropped++;
+    else {
+        if (pstat.last > 0) {
+            double iv = (when - pstat.last) * 1000.0;
+            if (iv > 0 && iv < 250) {
+                if (pstat.n < 16)
+                    pstat.seq[pstat.n] = iv;
+                pstat.n++;
+                pstat.sum += iv;
+                pstat.sum2 += iv * iv;
+                if (iv > pstat.worst)
+                    pstat.worst = iv;
+                if (pstat.prev_iv > 0 && fabs(iv - pstat.prev_iv) > 2.0)
+                    pstat.judder++;
+                pstat.prev_iv = iv;
+            }
+        }
+        pstat.last = when;
+    }
+    pthread_mutex_unlock(&pstat_lock);
+}
+
+static void present_stats_report(void)
+{
+    static uint64_t start;
+    uint64_t t = now_ns();
+    if (!start)
+        start = t;
+    if (t - start < 1000000000ull)
+        return;
+    start = t;
+    pthread_mutex_lock(&pstat_lock);
+    if (pstat.n) {
+        double mean = pstat.sum / pstat.n, var = pstat.sum2 / pstat.n - mean * mean;
+        mgl_log("present stats: %.1f shown fps, on screen %.2f ms avg, %.2f ms spread, %.2f ms worst, %.1f%% judder, %lu dropped",
+                1000.0 / mean, mean, var > 0 ? sqrt(var) : 0.0, pstat.worst, 100.0 * pstat.judder / pstat.n, pstat.dropped);
+        static int seq = -1;
+        if (seq < 0) {
+            const char *e = getenv("MGL_PRESENT_STATS");
+            seq = e && atoi(e) >= 2;
+        }
+        if (seq) {
+            char line[200];
+            int k = 0;
+            for (unsigned long i = 0; i < pstat.n && i < 16 && k < (int)sizeof line; i++)
+                k += snprintf(line + k, sizeof line - k, " %.1f", pstat.seq[i]);
+            mgl_log("present stats: times on screen (ms):%s", line);
+        }
+    }
+    double last = pstat.last, prev_iv = pstat.prev_iv;
+    memset(&pstat, 0, sizeof pstat);
+    pstat.last = last;
+    pstat.prev_iv = prev_iv;
+    pthread_mutex_unlock(&pstat_lock);
 }
 
 static mgl_ctx *current;
@@ -3305,6 +3661,454 @@ static id<MTLTexture> upscale(mgl_ctx *c, id<MTLTexture> in, NSUInteger ow, NSUI
     return out;
 }
 
+
+/* ================================================================ MetalFX frame interpolation (MCMETAL_FRAMEGEN=1)
+
+   Experimental, macOS 26+. MetalFX makes an extra frame between two real ones from both pictures, motion vectors
+   and depth, so ~48 real fps can show as ~96. Packs don't hand us motion vectors, so they are worked out from the
+   depth and Iris's camera uniforms (current and previous view and projection, camera position): camera motion
+   only, so moving mobs, water waves and particles are guessed by MetalFX from the pictures alone. The held item
+   (depth below MCMETAL_FG_HAND, default 0.56 like packs use) gets no motion.
+   The HUD: Minecraft clears the main target's depth just before drawing it, and there we copy the world picture
+   (no HUD) and depth (fg_snapshot); MetalFX gets that and the finished frame with the HUD ("composited UI") and
+   keeps the HUD from smearing. A frame without that clear (menus, loading) is shown as is and resets MetalFX.
+   Each swap then presents the made-up frame, then the real one half a frame later: about half a frame more
+   input lag. MCMETAL_FG_FLIP=1 flips the motion's Y for MetalFX, MCMETAL_FG_NEG=1 its sign (conventions to check
+   on a real Mac). */
+#if defined(__MAC_26_0) && __MAC_OS_X_VERSION_MAX_ALLOWED >= __MAC_26_0
+#define MGL_HAVE_FRAMEGEN 1
+#endif
+
+static int fg_enabled(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        on = 0;
+#ifdef MGL_HAVE_FRAMEGEN
+        const char *e = getenv("MCMETAL_FRAMEGEN");
+        if (e && atoi(e) > 0) {
+            if (@available(macOS 26.0, *)) {
+                init_device();
+                on = [MTLFXFrameInterpolatorDescriptor supportsDevice:dev];
+                mgl_log("frame interpolation: %s", on ? "on" : "this Mac can't (MetalFX says no)");
+            } else
+                mgl_log("frame interpolation needs macOS 26");
+        }
+#else
+        if (getenv("MCMETAL_FRAMEGEN"))
+            mgl_log("frame interpolation: this build has no macOS 26 SDK");
+#endif
+    }
+    return on;
+}
+
+/* The world snapshot (picture without the HUD, depth, camera motion) is shared by frame interpolation and the
+   temporal upscaler; only the interpolator itself needs the macOS 26 SDK. */
+static struct {
+    id<MTLTexture> color[2], depth, motion, ui, out; /* color[cur] = this frame's world picture */
+    int cur, w, h;
+    MTLPixelFormat fmt;
+    uint64_t snap_frame;       /* frames_presented when the last snapshot was taken */
+    int have_prev;             /* the previous frame had a snapshot too */
+    float view[16], proj[16];  /* camera at the snapshot, for MetalFX */
+    id<MTLRenderPipelineState> mv_pipe;
+    id fi;                     /* id<MTLFXFrameInterpolator> */
+    int failed, reset;         /* failed: the interpolator */
+    int snap_failed;
+    double hand;
+} fg;
+
+static const char *fg_msl =
+    "#include <metal_stdlib>\nusing namespace metal;\n"
+    "struct FgU { float4x4 inv_proj, inv_view, prev_view, prev_proj; float4 cam_delta; float2 size; float hand, flip; };\n"
+    "vertex float4 fg_vs(uint v [[vertex_id]]) { float2 p = float2((v << 1) & 2, v & 2); return float4(p * 2.0 - 1.0, 0.0, 1.0); }\n"
+    "struct FgOut { float2 mv [[color(0)]]; float d [[depth(any)]]; };\n"
+    "fragment FgOut fg_fs(float4 pos [[position]], depth2d<float> dep [[texture(0)]], constant FgU &u [[buffer(0)]]) {\n"
+    "    uint2 px = uint2(pos.xy);\n"
+    "    float d = dep.read(px);\n"
+    "    FgOut o; o.d = d; o.mv = float2(0.0);\n"
+    "    if (d < u.hand) return o;\n"
+    "    float2 uv = (float2(px) + 0.5) / u.size;\n" /* texture rows are GL rows here, so uv is GL's */
+    "    float4 v = u.inv_proj * float4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);\n"
+    "    v /= v.w;\n"
+    "    float3 w = (u.inv_view * v).xyz + u.cam_delta.xyz;\n"
+    "    float4 pc = u.prev_proj * (u.prev_view * float4(w, 1.0));\n"
+    "    if (pc.w <= 0.0) return o;\n"
+    "    float2 m = (pc.xy / pc.w * 0.5 + 0.5) - uv;\n"
+    "    o.mv = float2(m.x, m.y * u.flip) * u.cam_delta.w;\n"
+    "    return o;\n"
+    "}\n";
+
+static void mat_inverse(const float *m, float *out)
+{
+    float inv[16];
+    inv[0] = m[5] * m[10] * m[15] - m[5] * m[11] * m[14] - m[9] * m[6] * m[15] + m[9] * m[7] * m[14] + m[13] * m[6] * m[11] - m[13] * m[7] * m[10];
+    inv[4] = -m[4] * m[10] * m[15] + m[4] * m[11] * m[14] + m[8] * m[6] * m[15] - m[8] * m[7] * m[14] - m[12] * m[6] * m[11] + m[12] * m[7] * m[10];
+    inv[8] = m[4] * m[9] * m[15] - m[4] * m[11] * m[13] - m[8] * m[5] * m[15] + m[8] * m[7] * m[13] + m[12] * m[5] * m[11] - m[12] * m[7] * m[9];
+    inv[12] = -m[4] * m[9] * m[14] + m[4] * m[10] * m[13] + m[8] * m[5] * m[14] - m[8] * m[6] * m[13] - m[12] * m[5] * m[10] + m[12] * m[6] * m[9];
+    inv[1] = -m[1] * m[10] * m[15] + m[1] * m[11] * m[14] + m[9] * m[2] * m[15] - m[9] * m[3] * m[14] - m[13] * m[2] * m[11] + m[13] * m[3] * m[10];
+    inv[5] = m[0] * m[10] * m[15] - m[0] * m[11] * m[14] - m[8] * m[2] * m[15] + m[8] * m[3] * m[14] + m[12] * m[2] * m[11] - m[12] * m[3] * m[10];
+    inv[9] = -m[0] * m[9] * m[15] + m[0] * m[11] * m[13] + m[8] * m[1] * m[15] - m[8] * m[3] * m[13] - m[12] * m[1] * m[11] + m[12] * m[3] * m[9];
+    inv[13] = m[0] * m[9] * m[14] - m[0] * m[10] * m[13] - m[8] * m[1] * m[14] + m[8] * m[2] * m[13] + m[12] * m[1] * m[10] - m[12] * m[2] * m[9];
+    inv[2] = m[1] * m[6] * m[15] - m[1] * m[7] * m[14] - m[5] * m[2] * m[15] + m[5] * m[3] * m[14] + m[13] * m[2] * m[7] - m[13] * m[3] * m[6];
+    inv[6] = -m[0] * m[6] * m[15] + m[0] * m[7] * m[14] + m[4] * m[2] * m[15] - m[4] * m[3] * m[14] - m[12] * m[2] * m[7] + m[12] * m[3] * m[6];
+    inv[10] = m[0] * m[5] * m[15] - m[0] * m[7] * m[13] - m[4] * m[1] * m[15] + m[4] * m[3] * m[13] + m[12] * m[1] * m[7] - m[12] * m[3] * m[5];
+    inv[14] = -m[0] * m[5] * m[14] + m[0] * m[6] * m[13] + m[4] * m[1] * m[14] - m[4] * m[2] * m[13] - m[12] * m[1] * m[6] + m[12] * m[2] * m[5];
+    inv[3] = -m[1] * m[6] * m[11] + m[1] * m[7] * m[10] + m[5] * m[2] * m[11] - m[5] * m[3] * m[10] - m[9] * m[2] * m[7] + m[9] * m[3] * m[6];
+    inv[7] = m[0] * m[6] * m[11] - m[0] * m[7] * m[10] - m[4] * m[2] * m[11] + m[4] * m[3] * m[10] + m[8] * m[2] * m[7] - m[8] * m[3] * m[6];
+    inv[11] = -m[0] * m[5] * m[11] + m[0] * m[7] * m[9] + m[4] * m[1] * m[11] - m[4] * m[3] * m[9] - m[8] * m[1] * m[7] + m[8] * m[3] * m[5];
+    inv[15] = m[0] * m[5] * m[10] - m[0] * m[6] * m[9] - m[4] * m[1] * m[10] + m[4] * m[2] * m[9] + m[8] * m[1] * m[6] - m[8] * m[2] * m[5];
+    float det = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];
+    det = det != 0 ? 1.0f / det : 0.0f;
+    for (int i = 0; i < 16; i++)
+        out[i] = inv[i] * det;
+}
+
+static id<MTLTexture> fg_texture(MTLPixelFormat pf, int w, int h, MTLTextureUsage usage)
+{
+    MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:pf width:w height:h mipmapped:NO];
+    td.usage = usage | MTLTextureUsageShaderRead;
+    td.storageMode = MTLStorageModePrivate;
+    return [dev newTextureWithDescriptor:td];
+}
+
+/* The snapshot's textures and motion shader, for a w x h main target. */
+static int snap_setup(int w, int h, MTLPixelFormat fmt)
+{
+    if (fg.color[0] && fg.w == w && fg.h == h && fg.fmt == fmt)
+        return 1;
+    fg.w = w;
+    fg.h = h;
+    fg.fmt = fmt;
+    fg.fi = nil; /* the interpolator is made for one size */
+    for (int i = 0; i < 2; i++)
+        fg.color[i] = fg_texture(fmt, w, h, 0);
+    fg.depth = fg_texture(MTLPixelFormatDepth32Float, w, h, MTLTextureUsageRenderTarget);
+    fg.motion = fg_texture(MTLPixelFormatRG16Float, w, h, MTLTextureUsageRenderTarget);
+    fg.have_prev = 0;
+    fg.reset = 1;
+    if (!fg.mv_pipe) {
+        NSError *e = nil;
+        id<MTLLibrary> lib = [dev newLibraryWithSource:[NSString stringWithUTF8String:fg_msl] options:nil error:&e];
+        MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
+        pd.vertexFunction = [lib newFunctionWithName:@"fg_vs"];
+        pd.fragmentFunction = [lib newFunctionWithName:@"fg_fs"];
+        pd.colorAttachments[0].pixelFormat = MTLPixelFormatRG16Float;
+        pd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+        fg.mv_pipe = lib ? [dev newRenderPipelineStateWithDescriptor:pd error:&e] : nil;
+        if (!fg.mv_pipe) {
+            mgl_log("camera motion shader failed: %s", e.localizedDescription.UTF8String);
+            fg.snap_failed = 1;
+            return 0;
+        }
+    }
+    const char *hand = getenv("MCMETAL_FG_HAND");
+    fg.hand = hand ? atof(hand) : 0.56;
+    return 1;
+}
+
+#ifdef MGL_HAVE_FRAMEGEN
+API_AVAILABLE(macos(26.0)) static int fg_setup(void)
+{
+    if (fg.fi)
+        return 1;
+    MTLFXFrameInterpolatorDescriptor *d = [[MTLFXFrameInterpolatorDescriptor alloc] init];
+    d.colorTextureFormat = fg.fmt;
+    d.outputTextureFormat = fg.fmt;
+    d.uiTextureFormat = fg.fmt;
+    d.depthTextureFormat = MTLPixelFormatDepth32Float;
+    d.motionTextureFormat = MTLPixelFormatRG16Float;
+    d.inputWidth = fg.w;
+    d.inputHeight = fg.h;
+    d.outputWidth = fg.w;
+    d.outputHeight = fg.h;
+    id<MTLFXFrameInterpolator> fi = [d newFrameInterpolatorWithDevice:dev];
+    if (!fi) {
+        mgl_log("frame interpolation: MetalFX wouldn't make an interpolator for %dx%d", fg.w, fg.h);
+        fg.failed = 1;
+        return 0;
+    }
+    fg.fi = fi;
+    fg.ui = fg_texture(fg.fmt, fg.w, fg.h, fi.uiTextureUsage);
+    fg.out = fg_texture(fg.fmt, fg.w, fg.h, fi.outputTextureUsage | MTLTextureUsageRenderTarget);
+    fg.reset = 1;
+    mgl_log("frame interpolation: %dx%d ready", fg.w, fg.h);
+    return 1;
+}
+#endif
+
+static void fg_snapshot(const mgl_target *t)
+{
+    {
+        if (fg.snap_failed || !mgl->window_color || t->width != mgl->window_color->d.width ||
+            t->height != mgl->window_color->d.height || (mgl_cam.seen & 0x3f) != 0x3f)
+            return;
+        id<MTLTexture> col = OBJ(id<MTLTexture>, t->tex[0]->mtl), dep = OBJ(id<MTLTexture>, t->depth->mtl);
+        if (!snap_setup(t->width, t->height, col.pixelFormat))
+            return;
+#ifdef MGL_HAVE_FRAMEGEN
+        if (fg_enabled() && !fg.failed) {
+            if (@available(macOS 26.0, *))
+                fg_setup();
+        }
+#endif
+        if (fg.snap_frame != frames_presented + 1) { /* first snapshot this frame: use the other picture slot */
+            fg.have_prev = fg.snap_frame == frames_presented; /* the previous frame had one */
+            fg.cur ^= 1;
+        }
+        fg.snap_frame = frames_presented + 1;
+        end_encoders();
+        id<MTLBlitCommandEncoder> b = [current_cb() blitCommandEncoder];
+        [b copyFromTexture:col toTexture:fg.color[fg.cur]];
+        [b endEncoding];
+
+        struct {
+            float inv_proj[16], inv_view[16], prev_view[16], prev_proj[16];
+            float cam_delta[4];
+            float size[2], hand, flip;
+        } u;
+        mat_inverse(mgl_cam.mat[1], u.inv_proj);
+        mat_inverse(mgl_cam.mat[0], u.inv_view);
+        memcpy(u.prev_view, mgl_cam.mat[2], 64);
+        memcpy(u.prev_proj, mgl_cam.mat[3], 64);
+        for (int i = 0; i < 3; i++)
+            u.cam_delta[i] = mgl_cam.pos[0][i] - mgl_cam.pos[1][i];
+        static int neg = -1, flip = -1;
+        if (neg < 0) {
+            neg = opt("MCMETAL_FG_NEG");
+            flip = opt("MCMETAL_FG_FLIP");
+        }
+        u.cam_delta[3] = neg ? -1.0f : 1.0f;
+        u.size[0] = (float)t->width;
+        u.size[1] = (float)t->height;
+        u.hand = (float)fg.hand;
+        u.flip = flip ? -1.0f : 1.0f;
+        memcpy(fg.view, mgl_cam.mat[0], 64);
+        memcpy(fg.proj, mgl_cam.mat[1], 64);
+
+        MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
+        rp.colorAttachments[0].texture = fg.motion;
+        rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+        rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+        rp.depthAttachment.texture = fg.depth;
+        rp.depthAttachment.loadAction = MTLLoadActionDontCare;
+        rp.depthAttachment.storeAction = MTLStoreActionStore;
+        id<MTLRenderCommandEncoder> e = [current_cb() renderCommandEncoderWithDescriptor:rp];
+        static id<MTLDepthStencilState> always;
+        if (!always) {
+            MTLDepthStencilDescriptor *dd = [[MTLDepthStencilDescriptor alloc] init];
+            dd.depthCompareFunction = MTLCompareFunctionAlways;
+            dd.depthWriteEnabled = YES;
+            always = [dev newDepthStencilStateWithDescriptor:dd];
+        }
+        [e setRenderPipelineState:fg.mv_pipe];
+        [e setDepthStencilState:always];
+        [e setFragmentTexture:dep atIndex:0];
+        [e setFragmentBytes:&u length:sizeof u atIndex:0];
+        [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+        [e endEncoding];
+    }
+}
+
+/* The made-up frame between the last two real ones, or nil (no snapshot this frame or the last, or off). Called at
+   swap, with the finished frame (HUD included) in window_color. */
+static id<MTLTexture> fg_interpolate(double frame_s)
+{
+#ifdef MGL_HAVE_FRAMEGEN
+    if (@available(macOS 26.0, *)) {
+        if (!fg_enabled() || fg.failed || !fg.fi)
+            return nil;
+        int fresh = fg.snap_frame == frames_presented + 1;
+        if (!fresh || !fg.have_prev) {
+            fg.reset = 1;
+            return nil;
+        }
+        id<MTLTexture> win = OBJ(id<MTLTexture>, mgl->window_color->mtl);
+        if (win.pixelFormat != fg.fmt || (int)win.width != fg.w || (int)win.height != fg.h)
+            return nil;
+        id<MTLBlitCommandEncoder> b = [current_cb() blitCommandEncoder];
+        [b copyFromTexture:win toTexture:fg.ui];
+        [b endEncoding];
+        id<MTLFXFrameInterpolator> fi = fg.fi;
+        fi.colorTexture = fg.color[fg.cur];
+        fi.prevColorTexture = fg.color[fg.cur ^ 1];
+        fi.uiTexture = fg.ui;
+        fi.uiTextureComposited = YES; /* the colour texture has the HUD in it */
+        fi.depthTexture = fg.depth;
+        fi.motionTexture = fg.motion;
+        fi.outputTexture = fg.out;
+        fi.motionVectorScaleX = (float)fg.w;
+        fi.motionVectorScaleY = (float)fg.h;
+        fi.depthReversed = NO;
+        fi.deltaTime = (float)frame_s;
+        const float *p = fg.proj;
+        float fov = 2.0f * atanf(1.0f / p[5]);
+        fi.fieldOfView = fov * 180.0f / (float)M_PI;
+        fi.aspectRatio = p[5] / p[0];
+        fi.nearPlane = p[14] / (p[10] - 1.0f);
+        fi.farPlane = p[14] / (p[10] + 1.0f);
+        fi.shouldResetHistory = fg.reset;
+        fg.reset = 0;
+        [fi encodeToCommandBuffer:current_cb()];
+        return fg.out;
+    }
+#else
+    (void)frame_s;
+#endif
+    return nil;
+}
+
+/* MetalFX must not blend across a pause in interpolation */
+static void fg_history_reset(void)
+{
+    fg.reset = 1;
+}
+
+/* ================================================================ MetalFX temporal upscaler (MCMETAL_UPSCALE=2)
+
+   Like MCMETAL_UPSCALE=1 the game renders at half the Retina size each way, but MetalFX's temporal upscaler
+   rebuilds the full-size world picture from this frame and the last ones (using the world snapshot's depth and
+   camera motion, the same as frame interpolation), instead of sharpening one frame on its own. The HUD isn't
+   in the snapshot: pixels where the finished frame differs from the world picture (and their neighbours) come
+   from the spatial upscaler instead, so text and the hotbar don't smear. Needs a shader pack (Iris's camera
+   uniforms); without one, and in menus, frames use the spatial upscaler. No jitter: packs do their own TAA.
+   Measured on an M3 Max (1728x965 -> 3456x1930, 2026-10-22): NOT worth it yet. ~2-4 ms more GPU (SEUS 25.4 ->
+   27.2 ms, Complementary 5.4 -> 9.8), so pacing drops a step (SEUS 40 -> 30, Complementary 118 -> 59), and the
+   picture is no sharper (very slightly softer on SEUS): without jitter there's no sub-pixel detail to gather.
+   Kept as an experiment for a jittered path. */
+static int tu_enabled(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("MCMETAL_UPSCALE");
+        on = e && atoi(e) == 2;
+        if (on)
+            mgl_log("temporal upscaler: on (with a shader pack; spatial otherwise)");
+    }
+    return on;
+}
+
+static struct {
+    id fx; /* id<MTLFXTemporalScaler> */
+    id<MTLTexture> out, final;
+    id<MTLRenderPipelineState> pipe;
+    MTLPixelFormat pipe_fmt;
+    NSUInteger ow, oh;
+    int failed, reset, logged;
+} tu = {.reset = 1};
+
+static const char *tu_msl =
+    "#include <metal_stdlib>\nusing namespace metal;\n"
+    "vertex float4 tu_vs(uint v [[vertex_id]]) { float2 p = float2((v << 1) & 2, v & 2); return float4(p * 2.0 - 1.0, 0.0, 1.0); }\n"
+    /* all textures in GL row order, the output too: row r of each is the same place */
+    "fragment float4 tu_fs(float4 pos [[position]], texture2d<float> world_up [[texture(0)]], texture2d<float> full_up [[texture(1)]],\n"
+    "                      texture2d<float> full [[texture(2)]], texture2d<float> world [[texture(3)]]) {\n"
+    "    uint2 o = uint2(pos.xy);\n"
+    "    int2 isz = int2(full.get_width(), full.get_height());\n"
+    "    int2 c = int2(pos.xy / float2(world_up.get_width(), world_up.get_height()) * float2(isz));\n"
+    "    float m = 0.0;\n"
+    "    for (int y = -1; y <= 1; y++)\n"
+    "        for (int x = -1; x <= 1; x++) {\n"
+    "            uint2 q = uint2(clamp(c + int2(x, y), int2(0), isz - 1));\n"
+    "            float3 d = abs(full.read(q).rgb - world.read(q).rgb);\n"
+    "            m = max(m, max(d.r, max(d.g, d.b)));\n"
+    "        }\n"
+    "    float4 r = m > 0.002 ? full_up.read(o) : world_up.read(o);\n"
+    "    return float4(r.rgb, 1.0);\n"
+    "}\n";
+
+/* The finished frame (window_color, HUD included) upscaled to ow x oh with the world from the temporal upscaler,
+   or nil (off, no fresh snapshot, or MetalFX can't): then the caller uses the spatial upscaler. */
+static id<MTLTexture> tu_frame(mgl_ctx *c, id<MTLTexture> win, NSUInteger ow, NSUInteger oh)
+{
+    if (!tu_enabled() || tu.failed)
+        return nil;
+    if (fg.snap_frame != frames_presented + 1 || !fg.color[0] || (int)win.width != fg.w || (int)win.height != fg.h ||
+        win.pixelFormat != fg.fmt) {
+        tu.reset = 1;
+        return nil;
+    }
+    if (!tu.fx || tu.ow != ow || tu.oh != oh || [(id<MTLFXTemporalScaler>)tu.fx colorTextureFormat] != fg.fmt ||
+        [(id<MTLFXTemporalScaler>)tu.fx inputWidth] != (NSUInteger)fg.w || [(id<MTLFXTemporalScaler>)tu.fx inputHeight] != (NSUInteger)fg.h) {
+        MTLFXTemporalScalerDescriptor *d = [[MTLFXTemporalScalerDescriptor alloc] init];
+        d.colorTextureFormat = fg.fmt;
+        d.outputTextureFormat = fg.fmt;
+        d.depthTextureFormat = MTLPixelFormatDepth32Float;
+        d.motionTextureFormat = MTLPixelFormatRG16Float;
+        d.inputWidth = fg.w;
+        d.inputHeight = fg.h;
+        d.outputWidth = ow;
+        d.outputHeight = oh;
+        d.autoExposureEnabled = NO;
+        id<MTLFXTemporalScaler> fx = [MTLFXTemporalScalerDescriptor supportsDevice:dev] ? [d newTemporalScalerWithDevice:dev] : nil;
+        if (!fx) {
+            mgl_log("temporal upscaler: MetalFX wouldn't make one for %dx%d -> %lux%lu, using the spatial one", fg.w, fg.h,
+                    (unsigned long)ow, (unsigned long)oh);
+            tu.failed = 1;
+            return nil;
+        }
+        tu.fx = fx;
+        tu.ow = ow;
+        tu.oh = oh;
+        tu.out = fg_texture(fg.fmt, (int)ow, (int)oh, fx.outputTextureUsage);
+        tu.final = fg_texture(fg.fmt, (int)ow, (int)oh, MTLTextureUsageRenderTarget);
+        tu.reset = 1;
+        mgl_log("temporal upscaler: %dx%d -> %lux%lu", fg.w, fg.h, (unsigned long)ow, (unsigned long)oh);
+    }
+    if (!tu.pipe || tu.pipe_fmt != fg.fmt) {
+        NSError *e = nil;
+        id<MTLLibrary> lib = [dev newLibraryWithSource:[NSString stringWithUTF8String:tu_msl] options:nil error:&e];
+        MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
+        pd.vertexFunction = [lib newFunctionWithName:@"tu_vs"];
+        pd.fragmentFunction = [lib newFunctionWithName:@"tu_fs"];
+        pd.colorAttachments[0].pixelFormat = fg.fmt;
+        tu.pipe = lib ? [dev newRenderPipelineStateWithDescriptor:pd error:&e] : nil;
+        tu.pipe_fmt = fg.fmt;
+        if (!tu.pipe) {
+            mgl_log("temporal upscaler: HUD shader failed: %s", e.localizedDescription.UTF8String);
+            tu.failed = 1;
+            return nil;
+        }
+    }
+    id<MTLTexture> hud = upscale(c, win, ow, oh); /* the whole frame, spatially, for the HUD's pixels */
+    if (!hud)
+        return nil;
+    id<MTLFXTemporalScaler> fx = tu.fx;
+    fx.colorTexture = fg.color[fg.cur];
+    fx.depthTexture = fg.depth;
+    fx.motionTexture = fg.motion;
+    fx.outputTexture = tu.out;
+    fx.inputContentWidth = fg.w;
+    fx.inputContentHeight = fg.h;
+    fx.jitterOffsetX = 0;
+    fx.jitterOffsetY = 0;
+    fx.motionVectorScaleX = (float)fg.w;
+    fx.motionVectorScaleY = (float)fg.h;
+    fx.depthReversed = NO;
+    fx.reset = tu.reset;
+    tu.reset = 0;
+    [fx encodeToCommandBuffer:current_cb()];
+
+    MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
+    rp.colorAttachments[0].texture = tu.final;
+    rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+    rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+    id<MTLRenderCommandEncoder> e = [current_cb() renderCommandEncoderWithDescriptor:rp];
+    [e setRenderPipelineState:tu.pipe];
+    [e setFragmentTexture:tu.out atIndex:0];
+    [e setFragmentTexture:hud atIndex:1];
+    [e setFragmentTexture:win atIndex:2];
+    [e setFragmentTexture:fg.color[fg.cur] atIndex:3];
+    [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    [e endEncoding];
+    upscaled = tu.final; /* test screenshots */
+    if (!tu.logged) {
+        tu.logged = 1;
+        mgl_log("temporal upscaler: first frame drawn");
+    }
+    return tu.final;
+}
+
 void mglb_window_size(int *w, int *h)
 {
     *w = current ? current->w : 0;
@@ -3374,6 +4178,176 @@ static void profile_frame(unsigned long draws)
     atomic_store(&prof_gpu_ns, 0);
 }
 
+/* Each part of an interpolated frame goes in its own command buffer so the made-up frame's GPU cost is known (for
+   fg_worth_it). MCMETAL_FG_TIMING=1 logs each part's GPU time and the gap before the GPU started it (a gap means
+   the GPU sat waiting, e.g. for a drawable), averaged once a second. */
+enum { FG_GAME, FG_MAKE, FG_SHOW_MID, FG_SHOW_REAL, FG_STAGES };
+static _Atomic uint64_t fg_stage_ns[FG_STAGES], fg_stage_gap_ns[FG_STAGES], fg_stage_n[FG_STAGES];
+static _Atomic uint64_t fg_last_end_ns; /* GPU end of the last timed command buffer, ns */
+
+static int fg_timing(void)
+{
+    static int on = -1;
+    if (on < 0)
+        on = opt("MCMETAL_FG_TIMING");
+    return on;
+}
+
+static _Atomic uint64_t fg_extra_ns, fg_extra_frames; /* GPU time of making + showing the made-up frames */
+
+static void fg_time_stage(int stage)
+{
+    [current_cb() addCompletedHandler:^(id<MTLCommandBuffer> done) {
+      if (done.GPUEndTime <= done.GPUStartTime)
+          return;
+      uint64_t s = (uint64_t)(done.GPUStartTime * 1e9), e = (uint64_t)(done.GPUEndTime * 1e9);
+      if (stage == FG_MAKE || stage == FG_SHOW_MID)
+          atomic_fetch_add(&fg_extra_ns, e - s);
+      if (stage == FG_MAKE)
+          atomic_fetch_add(&fg_extra_frames, 1);
+      if (!fg_timing())
+          return;
+      uint64_t prev = atomic_exchange(&fg_last_end_ns, e);
+      atomic_fetch_add(&fg_stage_ns[stage], e - s);
+      if (prev && s > prev)
+          atomic_fetch_add(&fg_stage_gap_ns[stage], s - prev);
+      atomic_fetch_add(&fg_stage_n[stage], 1);
+    }];
+    commit();
+}
+
+static void fg_timing_report(void)
+{
+    static uint64_t last;
+    uint64_t t = now_ns();
+    if (!fg_timing() || t - last < 1000000000ull)
+        return;
+    last = t;
+    static const char *names[FG_STAGES] = {"game", "interpolate", "show made-up", "show real"};
+    char line[400];
+    int n = snprintf(line, sizeof line, "frame interpolation timing (gpu ms / gap before ms):");
+    for (int i = 0; i < FG_STAGES && n < (int)sizeof line; i++) {
+        uint64_t k = atomic_exchange(&fg_stage_n[i], 0), ns = atomic_exchange(&fg_stage_ns[i], 0),
+                 gap = atomic_exchange(&fg_stage_gap_ns[i], 0);
+        if (k)
+            n += snprintf(line + n, sizeof line - n, " %s %.2f / %.2f;", names[i], ns * 1e-6 / k, gap * 1e-6 / k);
+    }
+    mgl_log("%s", line);
+}
+
+/* Interpolation only pays when it shows more frames than the real ones could alone: static SEUS on an M3 makes an
+   even 40 real fps, while with interpolation (~5 ms more GPU) it only held 20 real shown as 40 (more lag, same
+   smoothness) or wobbled between that and 30 shown as 60. So every half second compare the two, from the frame
+   cost and the made-up frames' measured GPU time, and pause or resume interpolation after 2 s of agreement and at
+   least 3 s after the last switch. MCMETAL_FG_ALWAYS=1 keeps it on. */
+static int fg_paused;
+
+static void fg_decide(mgl_ctx *c)
+{
+    static uint64_t window_ns, switched_ns;
+    static double extra_ms;
+    static int votes, always = -1;
+    if (always < 0)
+        always = opt("MCMETAL_FG_ALWAYS");
+    uint64_t t = now_ns();
+    if (always || t - window_ns < 500000000ull)
+        return;
+    window_ns = t;
+    uint64_t ns = atomic_exchange(&fg_extra_ns, 0), n = atomic_exchange(&fg_extra_frames, 0);
+    if (n)
+        extra_ms = ns * 1e-6 / n;
+    if (extra_ms <= 0 || c->avg_frame_ms <= 0 || c->paced_fps <= 0 || (!fg_paused && !n) || t - switched_ns < 3000000000ull) {
+        votes = 0;
+        return;
+    }
+    int single, dual, vote;
+    if (!fg_paused) {
+        dual = c->paced_fps;
+        single = pace_fit(c->avg_frame_ms - extra_ms, 1);
+        vote = single >= 2 * dual;
+    } else {
+        single = c->paced_fps;
+        dual = pace_fit(c->avg_frame_ms + extra_ms, 2);
+        vote = 2 * dual > single;
+    }
+    votes = vote ? votes + 1 : 0;
+    if (votes < 4)
+        return;
+    votes = 0;
+    switched_ns = t;
+    fg_paused = !fg_paused;
+    c->paced_fps = 0; /* pick the rate afresh */
+    fg_history_reset();
+    if (fg_paused)
+        mgl_log("frame interpolation paused: real frames alone make an even %d fps (interpolated: %d shown as %d; made-up frames cost %.1f ms)",
+                single, dual, 2 * dual, extra_ms);
+    else
+        mgl_log("frame interpolation back on: %d real fps shown as %d beats %d real (made-up frames cost %.1f ms)", dual, 2 * dual,
+                single, extra_ms);
+}
+
+static atomic_int presents_waiting; /* drawn but not yet on screen */
+
+/* Count a drawable as waiting until it is shown, and feed pacing and MGL_PRESENT_STATS its time on screen. */
+static void watch_drawable(id<CAMetalDrawable> drawable)
+{
+    [current_cb() addCompletedHandler:^(id<MTLCommandBuffer> done) {
+      (void)done;
+      atomic_fetch_add(&presents_waiting, 1);
+    }];
+    static int stats = -1;
+    if (stats < 0)
+        stats = opt_profile > 0 || opt("MGL_PRESENT_STATS");
+    [drawable addPresentedHandler:^(id<MTLDrawable> d) {
+      atomic_fetch_sub(&presents_waiting, 1);
+      static double last_shown;
+      static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER; /* handlers may run on more than one thread */
+      double when = d.presentedTime, iv = 0;
+      if (when > 0) {
+          pthread_mutex_lock(&lock);
+          if (last_shown > 0 && when > last_shown)
+              iv = (when - last_shown) * 1000.0;
+          if (when > last_shown)
+              last_shown = when;
+          pthread_mutex_unlock(&lock);
+          if (iv > 0)
+              pace_presented(iv);
+      }
+      if (stats)
+          present_stat(when);
+    }];
+}
+
+/* Draw a frame (GL row order) into the drawable the right way up, through MetalFX's upscaler when that's on. */
+static void draw_to_drawable(mgl_ctx *c, id<MTLTexture> src, id<CAMetalDrawable> drawable)
+{
+    if (upscale_on()) {
+        NSUInteger ow = drawable.texture.width, oh = drawable.texture.height;
+        id<MTLTexture> up = src == OBJ(id<MTLTexture>, mgl->window_color->mtl) ? tu_frame(c, src, ow, oh) : nil;
+        if (!up)
+            up = upscale(c, src, ow, oh);
+        if (up)
+            src = up;
+    }
+    MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
+    rp.colorAttachments[0].texture = drawable.texture;
+    rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+    rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+    id<MTLRenderCommandEncoder> e = [current_cb() renderCommandEncoderWithDescriptor:rp];
+    id<MTLRenderPipelineState> ps = blit_pipeline(MTLPixelFormatBGRA8Unorm);
+    if (ps) {
+        [e setRenderPipelineState:ps];
+        [e setViewport:(MTLViewport){0, 0, (double)drawable.texture.width, (double)drawable.texture.height, 0, 1}];
+        /* top of the window = last GL row */
+        float rect[4] = {0, 1, 1, 0};
+        [e setVertexBytes:rect length:sizeof rect atIndex:0];
+        [e setFragmentTexture:src atIndex:0];
+        [e setFragmentSamplerState:blit_sampler(1) atIndex:0];
+        [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    }
+    [e endEncoding];
+}
+
 /* Copy GL framebuffer 0 into the window, flipping it the right way up. */
 MGL_EXPORT void mgl_glfw_swap(void *ctx)
 {
@@ -3393,61 +4367,98 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
     static int every_frame = -1;
     if (every_frame < 0)
         every_frame = getenv("MGL_PRESENT_EVERY_FRAME") && atoi(getenv("MGL_PRESENT_EVERY_FRAME"));
-    static atomic_int presents_waiting;
     int skip = !c->vsync && !every_frame && atomic_load(&presents_waiting) >= 2;
     uint64_t t_draw = now_ns();
     id<CAMetalDrawable> drawable = skip ? nil : [c->layer nextDrawable];
     prof.wait_ns += now_ns() - t_draw;
+    pace_wait_ns += now_ns() - t_draw;
     prof.skipped_presents += skip;
     if (drawable) {
-        [current_cb() addCompletedHandler:^(id<MTLCommandBuffer> done) {
-          (void)done;
-          atomic_fetch_add(&presents_waiting, 1);
-        }];
-        [drawable addPresentedHandler:^(id<MTLDrawable> d) {
-          (void)d;
-          atomic_fetch_sub(&presents_waiting, 1);
-        }];
-        id<MTLTexture> src = OBJ(id<MTLTexture>, mgl->window_color->mtl);
-        if (upscale_on()) {
-            id<MTLTexture> up = upscale(c, src, drawable.texture.width, drawable.texture.height);
-            if (up)
-                src = up;
-        }
-        MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
-        rp.colorAttachments[0].texture = drawable.texture;
-        rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
-        rp.colorAttachments[0].storeAction = MTLStoreActionStore;
-        id<MTLRenderCommandEncoder> e = [current_cb() renderCommandEncoderWithDescriptor:rp];
-        id<MTLRenderPipelineState> ps = blit_pipeline(MTLPixelFormatBGRA8Unorm);
-        if (ps) {
-            [e setRenderPipelineState:ps];
-            [e setViewport:(MTLViewport){0, 0, (double)drawable.texture.width, (double)drawable.texture.height, 0, 1}];
-            /* top of the window = last GL row */
-            float rect[4] = {0, 1, 1, 0};
-            [e setVertexBytes:rect length:sizeof rect atIndex:0];
-            [e setFragmentTexture:src atIndex:0];
-            [e setFragmentSamplerState:blit_sampler(1) atIndex:0];
-            [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
-        }
-        [e endEncoding];
-        uint64_t t = now_ns();
-        if (c->last_swap_ns) {
-            double ms = (double)(t - c->last_swap_ns) * 1e-6;
-            if (ms < 250)
-                c->avg_frame_ms = c->avg_frame_ms ? c->avg_frame_ms * 0.9 + ms * 0.1 : ms;
-        }
-        c->last_swap_ns = t;
-        if (opt_pacing > 0 && c->vsync && c->avg_frame_ms > 0) {
-            int fps = choose_paced_fps(c);
+        watch_drawable(drawable);
+        /* Frame interpolation: the made-up frame, then the real one half a frame after it. deltaTime is the paced
+           real frame time once there is one. */
+        double frame_s = c->paced_fps > 0 ? 1.0 / c->paced_fps : c->avg_frame_ms > 0 ? c->avg_frame_ms * 1e-3 : 1.0 / 60;
+        if (fg_enabled())
+            fg_time_stage(FG_GAME);
+        id<MTLTexture> mid = fg_paused ? nil : fg_interpolate(frame_s);
+        if (mid)
+            fg_time_stage(FG_MAKE);
+        static int fg_no_present = -1;
+        if (fg_no_present < 0)
+            fg_no_present = opt("MCMETAL_FG_NO_PRESENT");
+        if (mid && fg_no_present) /* test: make the extra frame but don't show it (its GPU cost alone) */
+            mid = nil;
+        if (mid) {
+            /* Real frames paced like without interpolation, at a rate whose double divides the screen's refresh
+               (on 120 Hz: 60 or 30 real, shown as 120 or 60), each shown frame for exactly half a real one.
+               Not from the measured frame time: the GPU time per frame grows when presents wait, so that would
+               slow the game down step by step (measured: SEUS fell to 10-12 fps). */
+            int fps = choose_paced_fps(c, 2);
             if (fps != c->paced_fps) {
                 c->paced_fps = fps;
+                atomic_store(&pace_target_ms, 500.0 / fps);
+                mgl_log("frame interpolation: %d real fps shown as an even %d (frame time %.1f ms)", fps, 2 * fps, c->avg_frame_ms);
+            }
+            double half = 0.5 / fps;
+            static int passthru = -1;
+            if (passthru < 0)
+                passthru = opt("MCMETAL_FG_PASSTHRU");
+            /* test: MCMETAL_FG_PASSTHRU=1 shows the real frame in the made-up frame's place (same presenting, no
+               made-up picture shown), to tell the interpolator's cost from the cost of showing its output */
+            draw_to_drawable(c, passthru ? OBJ(id<MTLTexture>, mgl->window_color->mtl) : mid, drawable);
+            static int show_mid = -1;
+            if (show_mid < 0)
+                show_mid = opt("MCMETAL_FG_SHOW_MID");
+            if (show_mid) { /* test: show only made-up frames (test screenshots of the upscaled frame then see them) */
+                [current_cb() presentDrawable:drawable afterMinimumDuration:2 * half];
+                fg_time_stage(FG_SHOW_MID);
+                drawable = nil;
+            } else {
+                [current_cb() presentDrawable:drawable afterMinimumDuration:half];
+                fg_time_stage(FG_SHOW_MID);
+                commit(); /* send the made-up frame on its way before waiting for the second drawable */
+                uint64_t t_d2 = now_ns();
+                drawable = [c->layer nextDrawable];
+                prof.wait_ns += now_ns() - t_d2;
+                pace_wait_ns += now_ns() - t_d2;
+                if (drawable) {
+                    watch_drawable(drawable);
+                    draw_to_drawable(c, OBJ(id<MTLTexture>, mgl->window_color->mtl), drawable);
+                    [current_cb() presentDrawable:drawable afterMinimumDuration:half];
+                    fg_time_stage(FG_SHOW_REAL);
+                }
+            }
+        } else
+            draw_to_drawable(c, OBJ(id<MTLTexture>, mgl->window_color->mtl), drawable);
+        uint64_t t = now_ns(), gpu = atomic_load(&pace_gpu_ns);
+        if (c->last_swap_ns) {
+            double cpu = (double)(t - c->last_swap_ns - (pace_wait_ns - c->last_wait_ns)) * 1e-6;
+            double gms = (double)(gpu - c->last_gpu_ns) * 1e-6, ms = cpu > gms ? cpu : gms;
+            if (ms > 0 && ms < 250) {
+                c->avg_frame_ms = c->avg_frame_ms ? c->avg_frame_ms * 0.9 + ms * 0.1 : ms;
+                if (c->win_n < 64)
+                    c->win_cost[c->win_n++] = ms;
+            }
+        }
+        c->last_swap_ns = t;
+        c->last_wait_ns = pace_wait_ns;
+        c->last_gpu_ns = gpu;
+        if (fg_enabled() && opt_pacing > 0 && c->vsync)
+            fg_decide(c);
+        if (mid || !drawable) {
+        } else if (opt_pacing > 0 && c->vsync && c->avg_frame_ms > 0) {
+            int fps = choose_paced_fps(c, 1);
+            if (fps != c->paced_fps) {
+                c->paced_fps = fps;
+                atomic_store(&pace_target_ms, 1000.0 / fps);
                 mgl_log("frame pacing: presenting at an even %d fps (frame time %.1f ms)", fps, c->avg_frame_ms);
             }
             [current_cb() presentDrawable:drawable afterMinimumDuration:1.0 / fps];
         } else {
             [current_cb() presentDrawable:drawable];
         }
+        if (!mid && fg_enabled())
+            fg_time_stage(FG_SHOW_REAL);
     }
     commit();
     archive_maybe_save();
@@ -3459,8 +4470,15 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
                 frame_probes ? [NSString stringWithFormat:@", %lu probed draws", frame_probes].UTF8String : "");
     if (opt_profile > 0)
         profile_frame(frame_draws);
+    if (opt_profile > 0 || opt("MGL_PRESENT_STATS"))
+        present_stats_report();
+    fg_timing_report();
     frame_draws = frame_sections = frame_dispatches = frame_probes = 0;
-    /* keep at most ~2 frames in flight */
-    if (cb_serial > 3)
-        mglb_fence_wait(submitted_serial - 2, 100000000ull);
+    /* keep at most ~2 frames in flight: wait for the frame before last (by frame, not command buffer, since an
+       interpolated frame commits several) */
+    static uint64_t frame_end_serial[2];
+    uint64_t before_last = frame_end_serial[c->frames & 1];
+    frame_end_serial[c->frames & 1] = submitted_serial;
+    if (before_last)
+        mglb_fence_wait(before_last, 100000000ull);
 }
