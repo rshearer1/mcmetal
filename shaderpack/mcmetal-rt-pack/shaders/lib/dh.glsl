@@ -16,7 +16,7 @@
 #endif
 
 #ifdef VSH
-in int dhMaterialId;
+// (dhMaterialId: Iris declares it in DH vertex shaders)
 out vec4 tint;
 out vec2 lmcoord;
 out vec3 normalW;

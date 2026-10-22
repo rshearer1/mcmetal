@@ -16,7 +16,7 @@ uniform sampler2D colortex0, colortex5, colortex8, colortex11, depthtex0, deptht
 #ifdef DISTANT_HORIZONS
 uniform sampler2D dhDepthTex0;
 uniform mat4 dhProjectionInverse;
-uniform float dhRenderDistance;
+uniform int dhRenderDistance;   // blocks (Iris provides an int)
 #endif
 
 in vec2 texcoord;
@@ -38,7 +38,7 @@ void main() {
     float fogEnd = far;
 #ifdef DISTANT_HORIZONS
     // Distant Horizons: the world goes on past the real chunks (dh_terrain), so fog uses the LOD's depth and range
-    fogEnd = max(dhRenderDistance, far);
+    fogEnd = max(float(dhRenderDistance), far);
     float dhDepth = texture(dhDepthTex0, texcoord).r;
     if (depth >= 1.0 && dhDepth < 1.0) {
         vec4 vd = dhProjectionInverse * vec4(vec3(texcoord, dhDepth) * 2.0 - 1.0, 1.0);
@@ -75,7 +75,9 @@ void main() {
         col = mix(col, vec3(0.6, 0.7, 0.8) * (skyAmb * 0.4), 1.0 - exp(-dist * 2.0));
     } else if (depth < 1.0) {
         float haze = (1.0 - exp(-dist * 0.0012 * FOG_DENSITY * (1.0 + 5.0 * rainStrength)));
-        float edge = smoothstep(fogEnd * 0.8, fogEnd, dist);   // hide the edge of the loaded world
+        // hide the edge of the loaded world (chunks load in a column round the player: measured across, not up/down,
+        // or high up the ground below would all count as past the edge)
+        float edge = smoothstep(fogEnd * 0.8, fogEnd, length(p.xz));
         float amount = max(haze, edge) * smoothstep(0.0, 0.2, float(eyeBrightnessSmooth.y) / 240.0 + edge);
         if (amount > 0.001) col = mix(col, skyColor(p / dist, sunDir), amount);
     }
