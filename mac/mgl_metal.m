@@ -3087,6 +3087,8 @@ typedef struct mgl_ctx {
     uint64_t grace_until_ns;
     int bad_windows, blocked_fps;
     unsigned up_backoff_s;
+    double win_cost[64];    /* this half second's frame costs, for their median */
+    int win_n;
 } mgl_ctx;
 
 /* Even frame delivery: on a 120 Hz ProMotion screen a game that makes 47 fps shows frames for 17 and 25 ms in
@@ -3212,9 +3214,25 @@ static int choose_paced_fps(mgl_ctx *c, int shown_per_frame)
     if (t - c->window_start_ns < 500000000ull)
         return c->paced_fps;
     c->window_start_ns = t;
+    /* The half second's median frame cost and at least 3 missed deadlines: one hitch (M3 static SEUS: a 50 ms
+       frame) mustn't knock interpolation from 30 shown as 60 down to 20 shown as 40 for good. */
+    double cost = c->avg_frame_ms;
+    if (c->win_n >= 3) {
+        double v[64];
+        int n = c->win_n;
+        memcpy(v, c->win_cost, n * sizeof v[0]);
+        for (int i = 1; i < n; i++) /* insertion sort, n <= 64 */
+            for (int j = i; j > 0 && v[j - 1] > v[j]; j--) {
+                double x = v[j];
+                v[j] = v[j - 1];
+                v[j - 1] = x;
+            }
+        cost = v[n / 2];
+    }
+    c->win_n = 0;
     unsigned shown = atomic_exchange(&pace_shown, 0), missed = atomic_exchange(&pace_missed, 0);
     double budget = 1000.0 / c->paced_fps;
-    int bad = t >= c->grace_until_ns && shown >= 4 && missed * 10 > shown && c->avg_frame_ms > 0.6 * budget;
+    int bad = t >= c->grace_until_ns && shown >= 4 && missed >= 3 && missed * 10 > shown && cost > 0.6 * budget;
     c->bad_windows = bad ? c->bad_windows + 1 : 0;
     if (c->bad_windows >= 2 && cur < slowest) {
         if (t - c->stepped_up_ns < 3000000000ull) { /* the try at this rate failed */
@@ -3244,7 +3262,7 @@ static int choose_paced_fps(mgl_ctx *c, int shown_per_frame)
            per frame make a miss costlier (M3 SEUS panning at 54-61 ms kept trying 15 shown as 30, budget 66.7, and
            juddered until it fell back to 12) */
         double step_margin = shown_per_frame > 1 ? 1.2 : 1.0;
-        if (c->avg_frame_ms * 1.25 <= b || (i == next && c->avg_frame_ms * step_margin <= b))
+        if (cost * 1.25 <= b || (i == next && cost * step_margin <= b))
             best = i;
     }
     if (best < cur) {
@@ -4039,8 +4057,11 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
         if (c->last_swap_ns) {
             double cpu = (double)(t - c->last_swap_ns - (pace_wait_ns - c->last_wait_ns)) * 1e-6;
             double gms = (double)(gpu - c->last_gpu_ns) * 1e-6, ms = cpu > gms ? cpu : gms;
-            if (ms > 0 && ms < 250)
+            if (ms > 0 && ms < 250) {
                 c->avg_frame_ms = c->avg_frame_ms ? c->avg_frame_ms * 0.9 + ms * 0.1 : ms;
+                if (c->win_n < 64)
+                    c->win_cost[c->win_n++] = ms;
+            }
         }
         c->last_swap_ns = t;
         c->last_wait_ns = pace_wait_ns;
