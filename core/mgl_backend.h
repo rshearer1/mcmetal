@@ -166,8 +166,8 @@ typedef struct mgl_draw {
     const int *multi_count;        /* GLsizei */
     const void *const *multi_offset;
     const int *multi_base;         /* GLint */
-    /* GPU chunk culling (mgl_cull.c): non-zero draws the multi-draw's surviving sections from the backend's
-       indirect command buffer, commands cull_cmd - 1 .. cull_cmd + multi_n - 2, instead of one call each */
+    /* GPU chunk culling (mgl_cull.c): non-zero draws the multi-draw's sections from the backend's culled
+       indirect arguments, entries cull_cmd - 1 .. cull_cmd + multi_n - 2 */
     int cull_cmd;
 } mgl_draw;
 
@@ -223,7 +223,7 @@ typedef struct mgl_cull_pass {
 } mgl_cull_pass;
 int mglb_cull_supported(void);
 /* Culls `n` section draws of `nregions` regions (index buffers in ibufs[], 32-bit indices) and writes the
-   indirect commands. Returns a base that, added to a draw's index, names its command (opaque to the front end),
+   indirect draw arguments. Returns a base that, added to a draw's index, names its entry (opaque to the front end),
    or -1 when culling can't run now (draw normally). */
 int mglb_cull_run(const mgl_cull_pass *p, const mgl_cull_draw *draws, int n, mglb_buffer *const *ibufs, int nregions);
 

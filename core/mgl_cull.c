@@ -1,9 +1,9 @@
 /* GPU chunk culling (MCMETAL_GPU_CULL=1). mcmetal's mod (mod/src/mcmetal/loader/sodium/CullHooks.java) calls
    mcmGpuCull before Sodium draws a terrain pass, with every region it is about to draw: Sodium's multi-draw arrays
    for that region, its index buffer, where the region sits relative to the camera and which section each run of
-   sub-draws belongs to. The backend tests every section's box against the pass's view on the GPU and writes the
-   survivors into an indirect command buffer; the region's glMultiDrawElementsBaseVertex then runs those commands
-   in one call. A multi-draw that doesn't match a prepared region is drawn the normal way, so a mismatch costs
+   sub-draws belongs to. The backend tests every section's box against the pass's view on the GPU and writes each
+   section's indirect draw arguments (no instances when it is out of view); the region's
+   glMultiDrawElementsBaseVertex then draws from those. A multi-draw that doesn't match a prepared region is drawn the normal way, so a mismatch costs
    speed, never pictures. */
 #include <string.h>
 #include "mgl_state.h"

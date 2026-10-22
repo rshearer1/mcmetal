@@ -118,8 +118,10 @@ public final class CullHooks {
         if (on == null || on.isEmpty() || on.equals("0") || GL.getFunctionProvider() == null)
             return false;
         long f = GL.getFunctionProvider().getFunctionAddress("mcmGpuCull");
-        if (f == 0)
-            return false; // not mcmetal (Apple's OpenGL fallback)
+        if (f == 0) { // not mcmetal (Apple's OpenGL fallback), or a GL wrapper in front of it
+            System.out.println("[mcmetal] GPU chunk culling: mcmGpuCull not found in the GL library, culling stays off");
+            return false;
+        }
         endCmd = MemoryUtil.nmemCalloc(1, HEADER);
         MemoryUtil.memPutInt(endCmd, 2);
         MemoryUtil.memPutInt(endCmd + 12, 1);
