@@ -41,7 +41,7 @@ static id<MTLComputeCommandEncoder> cenc;
                           an object may be missing for a frame or two the first time it is seen)
    MGL_FRAME_PACING=0     ON BY DEFAULT (M3: SEUS 47 fps with ~75% judder -> an even 40, plain world even 120);
                           =0 turns it off. Waits on completion signals instead of polling, and presents at an even rate
-                          (120/60/40/30 fps, whichever the last frames' cost sustains, only rates that divide the screen's
+                          (120/60/40/30/24/20/15 fps, whichever the last frames' cost sustains, only rates that divide the screen's
                           refresh rate; MGL_TARGET_FPS forces one, over the power cap too: it's a test override).
                           Only with vsync on. MGL_PRESENT_STATS=1 logs how evenly frames reach the screen. */
 static int opt(const char *name)
@@ -3091,7 +3091,7 @@ typedef struct mgl_ctx {
 
 /* Even frame delivery: on a 120 Hz ProMotion screen a game that makes 47 fps shows frames for 17 and 25 ms in
    turn (judder, measured 70-80% of frames for SEUS on an M3). Presenting with a minimum duration at one of
-   120/60/40/30 keeps every frame on screen equally long. With vsync off, pacing stays off.
+   120/60/40/30/24/20/15 keeps every frame on screen equally long. With vsync off, pacing stays off.
    The rate follows missed deadlines, not a cost estimate alone: Apple GPUs clock down when pacing leaves them idle,
    so a frame measured at 22 ms while paced at 30 still fits 40. Every half second (a window):
    - down one rate after two windows in a row where over 10% of frames stayed on screen longer than 1.25x the
@@ -3146,7 +3146,10 @@ static int power_cap_fps(void)
 
 static int choose_paced_fps(mgl_ctx *c, int shown_per_frame)
 {
-    static const int rates[] = {120, 60, 40, 30};
+    /* down to 15: a heavy pack panning (SEUS ~20 real fps) paced at 30 got deadlines it never met and showed
+       13-16 uneven fps; 20 is even, and with interpolation 20 real shows as an even 40 on 120 Hz */
+    static const int rates[] = {120, 60, 40, 30, 24, 20, 15};
+    enum { N = sizeof rates / sizeof rates[0] };
     const char *forced = getenv("MGL_TARGET_FPS");
     if (forced && atoi(forced) > 0)
         return atoi(forced);
@@ -3159,19 +3162,19 @@ static int choose_paced_fps(mgl_ctx *c, int shown_per_frame)
             hz = 60;
         mgl_log("frame pacing: screen refreshes at %d Hz", hz);
     }
-    int cap = power_cap_fps(), allowed[4], any = 0;
-    for (int i = 0; i < 4; i++)
+    int cap = power_cap_fps(), allowed[N], any = 0;
+    for (int i = 0; i < N; i++)
         any |= allowed[i] = hz % (rates[i] * shown_per_frame) == 0 && rates[i] * shown_per_frame <= hz && (!cap || rates[i] <= cap);
-    for (int i = 0; i < 4 && !any; i++)
+    for (int i = 0; i < N && !any; i++)
         any |= allowed[i] = !cap || rates[i] <= cap;
     if (!any)
-        allowed[3] = 1;
-    int slowest = 3;
+        allowed[N - 1] = 1;
+    int slowest = N - 1;
     while (!allowed[slowest])
         slowest--;
     uint64_t t = now_ns();
     int cur = -1;
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < N; i++)
         if (rates[i] == c->paced_fps)
             cur = i;
     if (cur < 0 || !allowed[cur]) { /* first frame, or the cap or screen changed: the fastest allowed rate the cost fits */
