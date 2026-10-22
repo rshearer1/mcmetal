@@ -792,11 +792,8 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
         pack_store(&comp, &gout[i], gout[i].name, voff[i]);
     sb_printf(&comp, "  mgl_ov[rec + %du] = uintBitsToFloat(mgl_strip);\n  mgl_emitted++;\n}\n"
                      "void mgl_end_primitive() { mgl_strip++; }\n", R - 1);
-    sb_puts(&comp, "void main() {\n  uint prim = gl_GlobalInvocationID.x;\n  if (prim >= uint(mgl_draw_info.x)) return;\n"
-                   "  mgl_prim_id = int(prim);\n  mgl_emitted = 0u;\n  mgl_strip = 0u;\n"
-                   "  for (int c = 0; c < 3; c++) {\n"
-                   "    uint vtx = mgl_index(prim * 3u + uint(c)) + uint(mgl_draw_info.z);\n"
-                   "    mgl_vertex_id = int(vtx);\n    mgl_instance_id = 0;\n");
+    /* one vertex-stage run: fetch the attributes of vtx, run the vertex shader, store the results as input c */
+    sb_puts(&comp, "void mgl_run_vs(uint vtx, int c) {\n    mgl_vertex_id = int(vtx);\n    mgl_instance_id = 0;\n");
     for (int i = 0; i < nattrs; i++) {
         vs_attr *a = &attrs[i];
         const char *fetch = a->is_int || a->is_uint ? "mgl_fetchi" : "mgl_fetchf";
@@ -814,13 +811,53 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
     sb_puts(&comp, probe == 5 ? "    mgl_v_Position = mgl_probe_sum * 1e-6 + vec4(0.0, 0.0, 0.0, 1.0);\n    mgl_v_PointSize = 1.0;\n" :
                    probe == 2 ? "    mgl_v_Position = vec4(0.0, 0.0, 0.0, 1.0);\n    mgl_v_PointSize = 1.0;\n" : "    mgl_v_Position = vec4(0.0, 0.0, 0.0, 1.0);\n    mgl_v_PointSize = 1.0;\n    mgl_v_init();\n    mgl_v_main();\n");
     sb_puts(&comp, "    mgl_gin[c].pos = mgl_v_Position;\n    mgl_gin[c].pointSize = mgl_v_PointSize;\n");
+    int fed[32] = {0};
     for (int i = 0; i < ngin; i++) { /* only inputs the vertex shader writes; the rest stay zero */
         tok t = {T_ID, gin[i].name, (int)strlen(gin[i].name)};
         const char *v = lookup(&rv, &t);
-        if (v)
+        if (v) {
             sb_printf(&comp, "    %s[c] = %s;\n", gin[i].name, v);
+            fed[i] = 1;
+        }
     }
-    sb_puts(&comp, probe == 1 ? "  }\n  mgl_oc[prim] = mgl_emitted;\n}\n" : "  }\n  mgl_g_main();\n  mgl_oc[prim] = mgl_emitted;\n}\n");
+    sb_puts(&comp, "}\n");
+    const char *gs_call = probe == 1 ? "" : "  mgl_g_main();\n";
+    /* MGL_GS_PAIR=0: one thread per triangle. Default: one thread per pair of consecutive triangles, which reuses
+       the vertex-stage results of shared corners (Sodium's quads are 0 1 2, 2 3 0: four runs instead of six). The
+       dispatch still has a thread per triangle; the second half returns at once. */
+    int pair = !getenv("MGL_GS_PAIR") || atoi(getenv("MGL_GS_PAIR")) != 0;
+    if (!pair) {
+        sb_printf(&comp, "void main() {\n  uint prim = gl_GlobalInvocationID.x;\n  if (prim >= uint(mgl_draw_info.x)) return;\n"
+                         "  mgl_prim_id = int(prim);\n  mgl_emitted = 0u;\n  mgl_strip = 0u;\n"
+                         "  for (int c = 0; c < 3; c++)\n    mgl_run_vs(mgl_index(prim * 3u + uint(c)) + uint(mgl_draw_info.z), c);\n"
+                         "%s  mgl_oc[prim] = mgl_emitted;\n}\n", gs_call);
+    } else {
+        sb_puts(&comp, "mgl_gin_t mgl_gprev[3];\n");
+        for (int i = 0; i < ngin; i++)
+            if (fed[i])
+                sb_printf(&comp, "%s %s_mgl_prev[3];\n", gin[i].type, gin[i].name);
+        sb_printf(&comp, "void main() {\n  uint prim = gl_GlobalInvocationID.x * 2u;\n  if (prim >= uint(mgl_draw_info.x)) return;\n"
+                         "  uint first[3];\n"
+                         "  for (int c = 0; c < 3; c++) {\n"
+                         "    first[c] = mgl_index(prim * 3u + uint(c)) + uint(mgl_draw_info.z);\n    mgl_run_vs(first[c], c);\n  }\n"
+                         "  mgl_prim_id = int(prim);\n  mgl_emitted = 0u;\n  mgl_strip = 0u;\n"
+                         "%s  mgl_oc[prim] = mgl_emitted;\n"
+                         "  prim++;\n  if (prim >= uint(mgl_draw_info.x)) return;\n"
+                         "  mgl_gprev = mgl_gin;\n", gs_call);
+        for (int i = 0; i < ngin; i++)
+            if (fed[i])
+                sb_printf(&comp, "  %s_mgl_prev = %s;\n", gin[i].name, gin[i].name);
+        sb_puts(&comp, "  for (int c = 0; c < 3; c++) {\n"
+                       "    uint vtx = mgl_index(prim * 3u + uint(c)) + uint(mgl_draw_info.z);\n"
+                       "    int j = vtx == first[0] ? 0 : vtx == first[1] ? 1 : vtx == first[2] ? 2 : -1;\n"
+                       "    if (j < 0) {\n      mgl_run_vs(vtx, c);\n      continue;\n    }\n"
+                       "    mgl_gin[c] = mgl_gprev[j];\n");
+        for (int i = 0; i < ngin; i++)
+            if (fed[i])
+                sb_printf(&comp, "    %s[c] = %s_mgl_prev[j];\n", gin[i].name, gin[i].name);
+        sb_printf(&comp, "  }\n  mgl_prim_id = int(prim);\n  mgl_emitted = 0u;\n  mgl_strip = 0u;\n"
+                         "%s  mgl_oc[prim] = mgl_emitted;\n}\n", gs_call);
+    }
 
     /* ---- passthrough vertex shader: strip -> triangle list ---- */
     sb_puts(&pass, "#version 450\n"
