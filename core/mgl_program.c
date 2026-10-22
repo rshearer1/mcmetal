@@ -403,7 +403,7 @@ static void add_ray_tracing(mgl_shader *s)
 }
 
 /* MCMETAL_PHOTON_RT=1: ray-traced shadows for Photon's coloured block light (the job its Photonics slot leaves to
-   the Photonics mod). Photon's light comes from a flood-filled light volume that bends round corners and has no
+   the Photonics mod; =2 shows the shadow factor instead of the light). Photon's light comes from a flood-filled light volume that bends round corners and has no
    sharp shadows. We keep that light (its brightness and colour are Photon's own), and scale it by what the four
    nearest light blocks (Photon's ids 32-79, its own colour table) can actually see: one shadow ray each from the
    surface to the light's centre. Where every light is hidden, a quarter stays as bounce light. A light in view
@@ -414,7 +414,7 @@ static void add_photon_rt(mgl_shader *s)
     static int on = -1;
     if (on < 0) {
         const char *e = getenv("MCMETAL_PHOTON_RT");
-        on = e && *e && *e != '0';
+        on = e && *e && *e != '0' ? (*e == '2' ? 2 : 1) : 0;
     }
     char *f = on && s->type == GL_FRAGMENT_SHADER ? strstr(s->source, "vec3 get_lpv_blocklight(") : NULL;
     if (!f || !strstr(s->source, "vec3 get_block_lighting(") || strstr(s->source, "mcm_photon_lpv"))
@@ -453,7 +453,9 @@ static void add_photon_rt(mgl_shader *s)
         "vec3 get_lpv_blocklight(vec3 scene_pos, vec3 normal, vec3 mc_blocklight, float ao) {\n"
         "  vec3 lpv = mcm_photon_lpv(scene_pos, normal, mc_blocklight, ao);\n"
         /* no block light here worth shadowing: skip the rays */
+        "#ifndef MCM_PHOTON_RT_DEBUG\n"
         "  if (dot(lpv, vec3(0.2126, 0.7152, 0.0722)) < 0.002) return lpv;\n"
+        "#endif\n"
         "  vec3 o = scene_pos + normal * 0.02;\n"
         "  vec3 c[4], dir[4]; float dist[4]; float w[4];\n"
         "  vec3 all_ = vec3(0.0); float total = 0.0; int n = 0;\n"
@@ -478,17 +480,23 @@ static void add_photon_rt(mgl_shader *s)
         "    if (w[i] < 0.1 * total || dist[i] <= 0.9 || mcm_trace(o + dir[i] * 0.01, dir[i], dist[i] - 0.9) < 0.0)\n"
         "      seen += c[i];\n"
         "  }\n"
+        "#ifdef MCM_PHOTON_RT_DEBUG\n"
+        "  return 8.0 * mix(vec3(0.25), min(seen / max(all_, vec3(1e-4)), vec3(2.0)), 0.75); /* the shadow factor alone */\n"
+        "#endif\n"
         "  return lpv * mix(vec3(0.25), min(seen / max(all_, vec3(1e-4)), vec3(2.0)), 0.75);\n"
         "}\n";
     size_t pre = (size_t)(f - s->source);
     const char *nm = "vec3 mcm_photon_lpv(";
     size_t oldnm = strlen("vec3 get_lpv_blocklight(");
     size_t head = (size_t)(end - (f + oldnm)), rest = strlen(end);
-    char *n = malloc(pre + strlen(nm) + head + sizeof wrap + rest);
+    char *n = malloc(pre + strlen(nm) + head + 32 + sizeof wrap + rest);
     char *o = n;
     memcpy(o, s->source, pre); o += pre;
     memcpy(o, nm, strlen(nm)); o += strlen(nm);
     memcpy(o, f + oldnm, head); o += head;
+    if (on == 2) { /* MCMETAL_PHOTON_RT=2: show the shadow factor instead of the light (white = every light in view) */
+        memcpy(o, "\n#define MCM_PHOTON_RT_DEBUG", 28); o += 28;
+    }
     memcpy(o, wrap, sizeof wrap - 1); o += sizeof wrap - 1;
     memcpy(o, end, rest + 1);
     free(s->source);
