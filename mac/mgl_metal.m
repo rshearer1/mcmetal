@@ -532,6 +532,12 @@ struct mglb_buffer {
     uint64_t gpu_write; /* command buffer of the last GPU copy into it (mglb_buffer_copy) */
     uint64_t written; /* write_seq at the last CPU write (mglb_buffer_written) */
     struct mglb_buffer *next_free;
+    /* MGL_PRIVATE_BUFFERS: a GPU-only copy that draws read instead of mtl (see draw_buf). mtl stays the real
+       contents: CPU writes go there and drop the copy, GPU copies into the buffer go to both. */
+    void *priv;
+    int priv_ok, priv_queued, priv_keep, no_private;
+    uint64_t priv_seen;              /* written when last looked at */
+    unsigned long long priv_since;   /* frames_presented since when it was unchanged */
 };
 
 #define POOL_CLASSES 32
@@ -572,6 +578,7 @@ mglb_buffer *mglb_buffer_new(size_t size)
             b->next_free = NULL;
             b->size = size;
             b->written = ++write_seq;
+            b->priv_ok = b->no_private = 0;
             return b;
         }
     }
@@ -593,10 +600,12 @@ mglb_buffer *mglb_buffer_new(size_t size)
 void *mglb_buffer_ptr(mglb_buffer *b) { return b ? b->ptr : NULL; }
 size_t mglb_buffer_size(mglb_buffer *b) { return b ? b->size : 0; }
 
+static void priv_forget(mglb_buffer *b);
 void mglb_buffer_release(mglb_buffer *b)
 {
     if (!b)
         return;
+    priv_forget(b);
     int c = size_class(b->cap);
     if (pool_count[c] < (b->cap > ((size_t)16 << 20) ? 2 : 64)) { /* don't hoard big buffers */
         b->next_free = pool[c];
@@ -607,6 +616,8 @@ void mglb_buffer_release(mglb_buffer *b)
     }
     buf_live_bytes -= b->cap;
     release_obj(b->mtl); /* Metal keeps it alive for command buffers still using it */
+    if (b->priv)
+        release_obj(b->priv);
     free(b);
 }
 
@@ -617,13 +628,110 @@ int mglb_buffer_in_use(mglb_buffer *b)
 
 void mglb_buffer_written(mglb_buffer *b)
 {
-    if (b && b->written != UINT64_MAX)
+    if (!b)
+        return;
+    if (b->priv_keep) /* a GPU copy mglb_buffer_copy also made into the private copy */
+        b->priv_keep = 0;
+    else
+        b->priv_ok = 0;
+    if (b->written != UINT64_MAX)
         b->written = ++write_seq;
 }
 void mglb_buffer_volatile(mglb_buffer *b)
 {
-    if (b)
+    if (b) {
         b->written = UINT64_MAX; /* until the memory goes back to the pool */
+        b->priv_ok = 0;
+    }
+}
+
+/* ---- MGL_PRIVATE_BUFFERS=1 (off by default until measured): big buffers that only the GPU reads (Sodium's
+   region buffers, its quad index buffer) get a copy in private GPU memory once the CPU has left them unchanged
+   for a couple of frames; draws then read that copy. Shared memory can be slower to read for draws that fetch the same data many times
+   (mcopt measured half speed for a re-read index buffer). Sodium fills its region buffers with GPU copies
+   (MGL_GPU_COPY), which mglb_buffer_copy repeats into the private copy, so they stay private while chunks load.
+   The shared memory stays the real contents: the CPU (ray tracing, readbacks) still reads it. ---- */
+#define PRIV_MIN ((size_t)1 << 20)
+static int opt_private = -1;
+static mglb_buffer **priv_queue;
+static int priv_nq, priv_capq;
+static unsigned long priv_made, priv_bytes, priv_refreshed;
+
+static void priv_forget(mglb_buffer *b)
+{
+    b->priv_ok = 0;
+    if (b->priv_queued) {
+        for (int i = 0; i < priv_nq; i++)
+            if (priv_queue[i] == b) {
+                priv_queue[i] = priv_queue[--priv_nq];
+                break;
+            }
+        b->priv_queued = 0;
+    }
+}
+
+/* the buffer a draw reads: the private copy when it is current */
+static id<MTLBuffer> draw_buf(mglb_buffer *b)
+{
+    if (b->priv_ok)
+        return OBJ(id<MTLBuffer>, b->priv);
+    if (opt_private < 0) {
+        const char *e = getenv("MGL_PRIVATE_BUFFERS");
+        opt_private = e && *e && *e != '0';
+        mgl_log("private GPU copies of draw-only buffers %s (MGL_PRIVATE_BUFFERS)", opt_private ? "on" : "off");
+    }
+    if (opt_private && b->cap >= PRIV_MIN && b->written != UINT64_MAX && !b->no_private && !b->priv_queued) {
+        if (b->priv_seen != b->written) {
+            b->priv_seen = b->written;
+            b->priv_since = frames_presented;
+        } else if (frames_presented - b->priv_since >= 2) {
+            if (priv_nq == priv_capq) {
+                priv_capq = priv_capq ? priv_capq * 2 : 64;
+                priv_queue = realloc(priv_queue, sizeof *priv_queue * (size_t)priv_capq);
+            }
+            priv_queue[priv_nq++] = b;
+            b->priv_queued = 1;
+        }
+    }
+    return OBJ(id<MTLBuffer>, b->mtl);
+}
+
+/* After a frame is committed: copy the queued buffers into private memory, in a command buffer of its own that
+   runs after every write already submitted and before the draws that will read the copies. */
+static void priv_promote(void)
+{
+    if (!priv_nq)
+        return;
+    id<MTLCommandBuffer> side = [queue commandBuffer];
+    id<MTLBlitCommandEncoder> e = [side blitCommandEncoder];
+    for (int i = 0; i < priv_nq; i++) {
+        mglb_buffer *b = priv_queue[i];
+        b->priv_queued = 0;
+        if (b->written != b->priv_seen || b->written == UINT64_MAX || b->no_private)
+            continue; /* written since it was queued */
+        if (!b->priv) {
+            id<MTLBuffer> m = [dev newBufferWithLength:b->cap options:MTLResourceStorageModePrivate];
+            if (!m)
+                continue;
+            b->priv = retain_obj(m);
+            priv_made++;
+            priv_bytes += b->cap;
+        } else {
+            priv_refreshed++;
+        }
+        [e copyFromBuffer:OBJ(id<MTLBuffer>, b->mtl) sourceOffset:0 toBuffer:OBJ(id<MTLBuffer>, b->priv)
+              destinationOffset:0 size:b->cap];
+        b->priv_ok = 1;
+    }
+    priv_nq = 0;
+    [e endEncoding];
+    [side commit];
+    static unsigned long logged;
+    if (priv_made + priv_refreshed >= logged + 200 || !logged) {
+        logged = priv_made + priv_refreshed;
+        mgl_log("private GPU copies: %lu made (%lu MB), %lu refreshed after CPU writes", priv_made, priv_bytes >> 20,
+                priv_refreshed);
+    }
 }
 
 static void use_buffer(mglb_buffer *b)
@@ -642,6 +750,11 @@ int mglb_buffer_copy(mglb_buffer *src, size_t src_off, mglb_buffer *dst, size_t 
     id<MTLBlitCommandEncoder> e = blit_encoder_for(NULL, NULL);
     [e copyFromBuffer:OBJ(id<MTLBuffer>, src->mtl) sourceOffset:src_off toBuffer:OBJ(id<MTLBuffer>, dst->mtl)
         destinationOffset:dst_off size:size];
+    if (dst->priv_ok) { /* keep the private copy current too (the caller's mglb_buffer_written then keeps it) */
+        [e copyFromBuffer:OBJ(id<MTLBuffer>, src->mtl) sourceOffset:src_off toBuffer:OBJ(id<MTLBuffer>, dst->priv)
+            destinationOffset:dst_off size:size];
+        dst->priv_keep = 1;
+    }
     use_buffer(src);
     use_buffer(dst);
     dst->gpu_write = cb_serial;
@@ -2015,7 +2128,7 @@ static void draw_culled(id<MTLRenderCommandEncoder> e, const mgl_draw *d, MTLPri
     int cmd = d->cull_cmd - 1;
     struct cull_slot *c = &cslot[cmd >> CULL_SLOT_SHIFT];
     NSUInteger first = (NSUInteger)(cmd & ((1 << CULL_SLOT_SHIFT) - 1));
-    id<MTLBuffer> ib = OBJ(id<MTLBuffer>, d->index_buf->mtl);
+    id<MTLBuffer> ib = draw_buf(d->index_buf);
     for (int i = 0; i < d->multi_n; i++)
         if (d->multi_count[i] > 0)
             [e drawIndexedPrimitives:pt indexType:MTLIndexTypeUInt32 indexBuffer:ib indexBufferOffset:0
@@ -3162,6 +3275,7 @@ static void bind_stage_resources(id<MTLRenderCommandEncoder> e, id<MTLComputeCom
             continue;
         id<MTLBuffer> b = OBJ(id<MTLBuffer>, d->ssbo[i]->mtl);
         mglb_buffer_written(d->ssbo[i]); /* the GPU may write it: nothing cached from its old contents */
+        d->ssbo[i]->no_private = 1;
         NSUInteger at = (NSUInteger)(MGL_BUF_SSBO_BASE + i);
         if (c) [c setBuffer:b offset:d->ssbo_offset[i] atIndex:at];
         else if (s == 0) [e setVertexBuffer:b offset:d->ssbo_offset[i] atIndex:at];
@@ -3290,7 +3404,7 @@ void mglb_draw(const mgl_draw *d)
     else
         [e setDepthBias:0 slopeScale:0 clamp:0];
     for (int i = 0; i < d->num_vbufs; i++) {
-        [e setVertexBuffer:OBJ(id<MTLBuffer>, d->vbufs[i].buf->mtl) offset:d->vbufs[i].offset
+        [e setVertexBuffer:draw_buf(d->vbufs[i].buf) offset:d->vbufs[i].offset
                    atIndex:(NSUInteger)(MGL_BUF_VERTEX_BASE + i)];
         use_buffer(d->vbufs[i].buf);
     }
@@ -3331,7 +3445,7 @@ void mglb_draw(const mgl_draw *d)
     if (d->multi_n > 0 && d->cull_cmd > 0 && cull_state > 0) {
         draw_culled(e, d, pt);
     } else if (d->multi_n > 0) {
-        id<MTLBuffer> ib = OBJ(id<MTLBuffer>, d->index_buf->mtl);
+        id<MTLBuffer> ib = draw_buf(d->index_buf);
         MTLIndexType it = d->index_type == GL_UNSIGNED_SHORT ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32;
         for (int i = 0; i < d->multi_n; i++)
             if (d->multi_count[i] > 0) {
@@ -3345,7 +3459,7 @@ void mglb_draw(const mgl_draw *d)
         int bv = apply_base_vertex(e, d, d->base_vertex);
         [e drawIndexedPrimitives:pt indexCount:(NSUInteger)d->count
                        indexType:d->index_type == GL_UNSIGNED_SHORT ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32
-                     indexBuffer:OBJ(id<MTLBuffer>, d->index_buf->mtl) indexBufferOffset:d->index_offset
+                     indexBuffer:draw_buf(d->index_buf) indexBufferOffset:d->index_offset
                    instanceCount:(NSUInteger)d->instances baseVertex:bv baseInstance:0];
         use_buffer(d->index_buf);
     } else {
@@ -3837,10 +3951,10 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
         [c setBytes:desc length:sizeof desc atIndex:MGL_BUF_INTERNAL_BASE];
         for (int i = 0; i < 4; i++) { /* unused slots get any valid buffer */
             mglb_buffer *b = i < d->num_vbufs ? d->vbufs[i].buf : d->num_vbufs ? d->vbufs[0].buf : NULL;
-            [c setBuffer:b ? OBJ(id<MTLBuffer>, b->mtl) : ovb offset:0 atIndex:(NSUInteger)(MGL_BUF_INTERNAL_BASE + 1 + i)];
+            [c setBuffer:b ? draw_buf(b) : ovb offset:0 atIndex:(NSUInteger)(MGL_BUF_INTERNAL_BASE + 1 + i)];
             use_buffer(b);
         }
-        [c setBuffer:d->index_buf ? OBJ(id<MTLBuffer>, d->index_buf->mtl) : ovb offset:0 atIndex:MGL_BUF_INTERNAL_BASE + 5];
+        [c setBuffer:d->index_buf ? draw_buf(d->index_buf) : ovb offset:0 atIndex:MGL_BUF_INTERNAL_BASE + 5];
         use_buffer(d->index_buf);
         [c setBuffer:ovb offset:ovo atIndex:MGL_BUF_INTERNAL_BASE + 6];
         [c setBuffer:ocb offset:oco atIndex:MGL_BUF_INTERNAL_BASE + 7];
@@ -6238,6 +6352,7 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
             fg_time_stage(FG_SHOW_REAL);
     }
     commit();
+    priv_promote();
     archive_maybe_save();
     frames_presented = c->frames + 1;
     note_started(frame_draws);
