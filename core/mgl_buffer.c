@@ -2,7 +2,17 @@
    GL ordering rules are kept by renaming: if the GPU may still read a buffer that GL code is about to
    overwrite (glBufferSubData, non-persistent maps), we switch to fresh memory and copy the old contents. */
 #include <string.h>
+#include <time.h>
 #include "mgl_state.h"
+
+mgl_buf_stats mgl_bstats; /* MGL_PROFILE counts these; the backend logs and resets them each second */
+
+static uint64_t buf_now(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec;
+}
 
 mgl_buffer *mgl_buffer_obj(GLuint name)
 {
@@ -121,12 +131,17 @@ static mglb_buffer *new_mem(size_t size)
 /* Fresh memory for b; keep the old contents when copy is set. */
 static void rename_mem(mgl_buffer *b, int copy)
 {
+    uint64_t t0 = buf_now();
     mglb_buffer *fresh = new_mem(b->size ? b->size : 1);
-    if (copy && b->mem)
+    if (copy && b->mem) {
         memcpy(mglb_buffer_ptr(fresh), mglb_buffer_ptr(b->mem), b->size);
+        mgl_bstats.rename_copy_bytes += b->size;
+    }
     if (b->mem)
         mglb_buffer_release(b->mem);
     b->mem = fresh;
+    mgl_bstats.renames++;
+    mgl_bstats.rename_ns += buf_now() - t0;
 }
 
 static void buffer_data(mgl_buffer *b, GLsizeiptr size, const void *data)
@@ -146,6 +161,8 @@ static void buffer_data(mgl_buffer *b, GLsizeiptr size, const void *data)
     if (data && size)
         memcpy(mglb_buffer_ptr(b->mem), data, (size_t)size);
     mgl_rt_note_write(b->mem, 0, (size_t)size);
+    mgl_bstats.datas++;
+    mgl_bstats.data_bytes += (uint64_t)size;
 }
 
 void glBufferData(GLenum target, GLsizeiptr size, const void *data, GLenum usage)
@@ -286,8 +303,12 @@ static void copy_sub_data(mgl_buffer *src, mgl_buffer *dst, GLintptr ro, GLintpt
     /* CPU copy; if the destination is busy, rename it first so earlier draws keep the old data. */
     if (!(dst->storage_flags & GL_MAP_PERSISTENT_BIT) && mglb_buffer_in_use(dst->mem))
         rename_mem(dst, 1);
+    uint64_t t0 = buf_now();
     memmove((char *)mglb_buffer_ptr(dst->mem) + wo, (char *)mglb_buffer_ptr(src->mem) + ro, (size_t)size);
     mgl_rt_note_write(dst->mem, (size_t)wo, (size_t)size);
+    mgl_bstats.copies++;
+    mgl_bstats.copy_bytes += (uint64_t)size;
+    mgl_bstats.copy_ns += buf_now() - t0;
 }
 
 void glCopyBufferSubData(GLenum rt, GLenum wt, GLintptr ro, GLintptr wo, GLsizeiptr size)

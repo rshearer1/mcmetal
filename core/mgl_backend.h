@@ -41,6 +41,18 @@ void mglb_texture_release(mglb_texture *t);
 void mglb_texture_upload(mglb_texture *t, int level, int x, int y, int z, int w, int h, int d,
                          const void *data, size_t bytes_per_row, size_t bytes_per_image);
 void mglb_texture_generate_mipmaps(mglb_texture *t);
+/* textures start with only render-target and sample usage (so Apple GPUs can compress them); these add image
+   writes or format/swizzle views the first time a texture needs them (it is remade, contents kept) */
+void mglb_texture_need_image(mglb_texture *t);
+void mglb_texture_need_view(mglb_texture *t);
+
+/* MGL_PROFILE: CPU-side buffer traffic in core/mgl_buffer.c, logged and reset by the backend once a second */
+typedef struct {
+    uint64_t renames, rename_copy_bytes, rename_ns; /* fresh memory for a buffer the GPU still reads (and bytes copied over) */
+    uint64_t copies, copy_bytes, copy_ns;           /* glCopyBufferSubData (the CPU memmove; renames it causes count above) */
+    uint64_t datas, data_bytes;                     /* glBufferData */
+} mgl_buf_stats;
+extern mgl_buf_stats mgl_bstats;
 /* reads w x h texels at (x, y) of a colour texture into out, tightly packed, GL row order; waits for the GPU */
 void mglb_texture_read(mglb_texture *t, int level, int x, int y, int w, int h, void *out);
 enum mgl_format mglb_texture_format(mglb_texture *t);

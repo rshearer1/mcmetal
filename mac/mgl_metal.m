@@ -58,6 +58,7 @@ static int opt_profile = -1;
 static struct {
     unsigned long draws, passes, reopened, dontcare, blits, computes, cbs, finishes, skipped_presents;
     unsigned long gs_draws, gs_tris, gs_bytes; /* geometry-shader draws, their input triangles and record bytes */
+    unsigned long tex_views, pipe_lookups, big_uniforms; /* per-draw texture views made, pipeline dictionary lookups, >4 KB uniform copies */
     uint64_t wait_ns, start_ns, frames;
 } prof;
 static _Atomic uint64_t prof_gpu_ns;
@@ -674,6 +675,7 @@ struct mglb_texture {
        repeat of that clear has nothing to do (Iris clears images every frame that nothing draws into) */
     int clean;
     float cval[4];
+    MTLTextureUsage usage;
 };
 static void tex_dirty(mglb_texture *t) { if (t) t->clean = 0; }
 static void target_dirty(const mgl_target *t)
@@ -767,6 +769,16 @@ static int bytes_per_texel(MTLPixelFormat pf)
     }
 }
 
+static int tex_compress(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("MGL_TEX_COMPRESS");
+        on = !(e && *e == '0');
+    }
+    return on;
+}
+
 mglb_texture *mglb_texture_new(const mglb_texture_desc *d)
 {
     init_device();
@@ -792,11 +804,11 @@ mglb_texture *mglb_texture_new(const mglb_texture_desc *d)
         td.textureType = MTLTextureType2D;
     }
     td.storageMode = MTLStorageModePrivate;
-    td.usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget | MTLTextureUsagePixelFormatView;
-    if (!is_depth_format(pf) && pf != MTLPixelFormatRGBA8Unorm_sRGB)
-        td.usage |= MTLTextureUsageShaderWrite;
-    if (pf == MTLPixelFormatR32Uint || pf == MTLPixelFormatR32Sint)
-        td.usage |= MTLTextureUsageShaderAtomic; /* imageAtomic* on r32ui/r32i images (MSL 3.1 texture atomics) */
+    td.usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget;
+    if (!tex_compress())
+        td.usage |= MTLTextureUsagePixelFormatView | (!is_depth_format(pf) && pf != MTLPixelFormatRGBA8Unorm_sRGB ? MTLTextureUsageShaderWrite : 0);
+    if (pf == MTLPixelFormatR32Uint || pf == MTLPixelFormatR32Sint) /* image formats: atomics and writes from the start */
+        td.usage |= MTLTextureUsageShaderAtomic | MTLTextureUsageShaderWrite; /* imageAtomic* (MSL 3.1 texture atomics) */
     id<MTLTexture> t = [dev newTextureWithDescriptor:td];
     if (!t) {
         mgl_log("texture creation failed (%dx%dx%d format %d)", d->width, d->height, d->depth, d->format);
@@ -806,8 +818,56 @@ mglb_texture *mglb_texture_new(const mglb_texture_desc *d)
     mt->mtl = retain_obj(t);
     mt->d = *d;
     mt->pf = pf;
+    mt->usage = td.usage;
     return mt;
 }
+
+/* Lossless compression: Apple GPUs keep render targets and textures compressed in memory (less bandwidth for every
+   load, store and sample), but not a texture made with ShaderWrite or PixelFormatView usage. Every texture used to
+   get both, so no shader pack target or shadow map was ever compressed. Now a texture starts with only what drawing
+   into it and sampling it need; the first time something needs more (bound as an image, a swizzle, a copy through
+   another format's view) it is remade with the extra usage, its contents copied over on the GPU, and swapped in
+   under the same mglb_texture. MGL_TEX_COMPRESS=0: every texture gets the old usage from the start. */
+static unsigned long tex_upgrades; /* MGL_PROFILE: textures remade with more usage */
+static void tex_need_usage(mglb_texture *t, MTLTextureUsage need)
+{
+    if (!t || (t->usage & need) == need)
+        return;
+    if (is_depth_format(t->pf) || t->pf == MTLPixelFormatRGBA8Unorm_sRGB)
+        need &= ~MTLTextureUsageShaderWrite; /* never writable as images */
+    if ((t->usage & need) == need)
+        return;
+    id<MTLTexture> old = OBJ(id<MTLTexture>, t->mtl);
+    MTLTextureDescriptor *td = [[MTLTextureDescriptor alloc] init];
+    td.textureType = old.textureType;
+    td.pixelFormat = old.pixelFormat;
+    td.width = old.width;
+    td.height = old.height;
+    td.depth = old.depth;
+    td.arrayLength = old.arrayLength;
+    td.mipmapLevelCount = old.mipmapLevelCount;
+    td.storageMode = MTLStorageModePrivate;
+    td.usage = t->usage | need;
+    id<MTLTexture> fresh = [dev newTextureWithDescriptor:td];
+    if (!fresh) {
+        mgl_log("texture usage upgrade failed (%lux%lu format %lu)", (unsigned long)old.width, (unsigned long)old.height,
+                (unsigned long)old.pixelFormat);
+        return;
+    }
+    /* keep the contents (pending clears of it are replayed into the old one first) */
+    [blit_encoder_for(t, NULL) copyFromTexture:old toTexture:fresh];
+    release_obj(t->mtl); /* the copy (and earlier work) keep the old one alive until the GPU is done */
+    t->mtl = retain_obj(fresh);
+    t->usage = td.usage;
+    tex_upgrades++;
+    if (opt_profile > 0)
+        mgl_log("texture %lux%lux%lu format %lu remade with usage 0x%lx (compression off for it)", (unsigned long)old.width,
+                (unsigned long)old.height, (unsigned long)(old.depth > 1 ? old.depth : old.arrayLength),
+                (unsigned long)old.pixelFormat, (unsigned long)td.usage);
+}
+
+void mglb_texture_need_image(mglb_texture *t) { tex_need_usage(t, MTLTextureUsageShaderWrite); }
+void mglb_texture_need_view(mglb_texture *t) { tex_need_usage(t, MTLTextureUsagePixelFormatView); }
 
 void mglb_texture_release(mglb_texture *t)
 {
@@ -980,7 +1040,8 @@ void mglb_texture_copy(mglb_texture *src, int src_level, int sx, int sy, int sz,
             mgl_log("depth copy between different formats skipped");
             return;
         }
-        stex = [stex newTextureViewWithPixelFormat:dst->pf];
+        tex_need_usage(src, MTLTextureUsagePixelFormatView);
+        stex = [OBJ(id<MTLTexture>, src->mtl) newTextureViewWithPixelFormat:dst->pf];
     }
     id<MTLBlitCommandEncoder> e = blit_encoder_for(src, dst);
     int s3 = src->d.type == MGLT_3D, d3 = dst->d.type == MGLT_3D;
@@ -1795,6 +1856,7 @@ static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_targ
     static id<MTLRenderPipelineState> last_ps;
     if (last_ps && !memcmp(&k, &last_key, sizeof k))
         return last_ps;
+    prof.pipe_lookups++;
     NSData *key = [NSData dataWithBytes:&k length:sizeof k];
     if (!pipelines)
         pipelines = [NSMutableDictionary dictionary];
@@ -2627,6 +2689,7 @@ static void bind_stage_resources(id<MTLRenderCommandEncoder> e, id<MTLComputeCom
             else if (s == 0) [e setVertexBytes:src length:n atIndex:MGL_BUF_DEFAULT_UNIFORMS];
             else [e setFragmentBytes:src length:n atIndex:MGL_BUF_DEFAULT_UNIFORMS];
         } else {
+            prof.big_uniforms++;
             mglb_buffer *tmp = mglb_buffer_new(n + 16);
             memcpy(tmp->ptr, d->uniforms[s], n);
             id<MTLBuffer> b = OBJ(id<MTLBuffer>, tmp->mtl);
@@ -2663,12 +2726,12 @@ static void bind_stage_resources(id<MTLRenderCommandEncoder> e, id<MTLComputeCom
         id<MTLTexture> tex = bt->tex ? OBJ(id<MTLTexture>, bt->tex->mtl) : dummy_texture(bt->dim, bt->sample_kind, bt->is_shadow);
         if (bt->is_image)
             tex_dirty(bt->tex);
-        if (bt->is_image && bt->tex && bt->image_level > 0)
+        if (bt->is_image && bt->tex && bt->image_level > 0 && ++prof.tex_views)
             tex = [tex newTextureViewWithPixelFormat:tex.pixelFormat textureType:tex.textureType
                                               levels:NSMakeRange((NSUInteger)bt->image_level, 1)
                                               slices:NSMakeRange(0, tex.textureType == MTLTextureType3D ? 1 : tex.arrayLength)];
         /* fetch-only textures past slot 15 use a constexpr sampler in the shader (see mgl_xlate.c) */
-        if (bt->tex && (bt->swizzle[0] | bt->swizzle[1] | bt->swizzle[2] | bt->swizzle[3]))
+        if (bt->tex && (bt->swizzle[0] | bt->swizzle[1] | bt->swizzle[2] | bt->swizzle[3]) && ++prof.tex_views)
             tex = swizzled_view(tex, bt->swizzle);
         id<MTLSamplerState> smp = bt->is_image || i >= 16 ? nil : get_sampler(&bt->sampler, bt->is_shadow);
         if (c) {
@@ -4514,6 +4577,14 @@ static void profile_frame(unsigned long draws)
             "buffers and %.1f waits for a chunk per frame", buf_live_bytes / 1048576.0, buf_pooled_bytes / 1048576.0, tr_n,
             TR_MAX, tr_oneoff / f, tr_waits / f);
     tr_oneoff = tr_waits = 0;
+    mgl_log("profile: cpu buffer traffic per frame: %.1f renames (%.2f MB copied, %.2f ms), %.1f glCopyBufferSubData "
+            "(%.2f MB, %.2f ms), %.0f glBufferData (%.2f MB); %.1f texture views made, %.1f pipeline lookups, %.1f big "
+            "uniform blocks; %lu textures remade for image/view use", mgl_bstats.renames / f,
+            mgl_bstats.rename_copy_bytes / f / 1048576.0, mgl_bstats.rename_ns / f * 1e-6, mgl_bstats.copies / f,
+            mgl_bstats.copy_bytes / f / 1048576.0, mgl_bstats.copy_ns / f * 1e-6, mgl_bstats.datas / f,
+            mgl_bstats.data_bytes / f / 1048576.0, prof.tex_views / f, prof.pipe_lookups / f, prof.big_uniforms / f,
+            tex_upgrades);
+    memset(&mgl_bstats, 0, sizeof mgl_bstats);
     if (pt_ok > 0)
         pt_report(f);
     memset(&prof, 0, sizeof prof);

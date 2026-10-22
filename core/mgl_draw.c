@@ -233,6 +233,7 @@ static void gather_textures(mgl_draw *d, mgl_program *p, int compute)
                 int unit = p->image_unit_of[i];
                 mgl_texture *t = unit >= 0 && unit < MGL_MAX_IMAGE_UNITS ? mgl_texture_obj(mgl->images[unit].texture) : NULL;
                 bt->tex = t ? t->mem : NULL;
+                mglb_texture_need_image(bt->tex); /* textures start without image writes (lossless compression) */
                 bt->image_level = unit >= 0 && unit < MGL_MAX_IMAGE_UNITS ? mgl->images[unit].level : 0;
             } else if (p->x.uses_scene && !strcmp(slot->name, "mcm_atlas")) {
                 bt->tex = mgl_rt_atlas; /* mcm_trace's alpha test reads the terrain's block atlas */
@@ -244,8 +245,10 @@ static void gather_textures(mgl_draw *d, mgl_program *p, int compute)
                     continue;
                 mgl_texture *t = mgl_texture_obj(mgl->bound_tex[unit][tex_index_for_dim(slot->dim)]);
                 bt->tex = t ? t->mem : NULL;
-                if (t && t->has_swizzle)
+                if (t && t->has_swizzle) {
                     memcpy(bt->swizzle, t->swizzle, sizeof bt->swizzle);
+                    mglb_texture_need_view(bt->tex);
+                }
                 mgl_sampler *so = mgl_table_get(&mgl->samplers, mgl->bound_sampler[unit]);
                 if (so)
                     bt->sampler = so->s;
