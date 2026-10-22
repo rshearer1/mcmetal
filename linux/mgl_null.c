@@ -42,6 +42,11 @@ void mglb_texture_read(mglb_texture *t, int level, int x, int y, int w, int h, v
 void mglb_texture_upload(mglb_texture *t, int level, int x, int y, int z, int w, int h, int d, const void *data,
                          size_t bpr, size_t bpi) { uploads++; }
 void mglb_texture_generate_mipmaps(mglb_texture *t) {}
+void mglb_texture_need_image(mglb_texture *t) {}
+void mglb_texture_need_view(mglb_texture *t) {}
+int mglb_buffer_copy(mglb_buffer *src, size_t so, mglb_buffer *dst, size_t dof, size_t n) { return 0; }
+int mglb_buffer_gpu_writing(mglb_buffer *b) { return 0; }
+void mglb_buffer_wait_writes(mglb_buffer *b) {}
 void mglb_texture_clear(mglb_texture *t, int level, const void *texel) {}
 void mglb_texture_copy(mglb_texture *s, int sl, int sx, int sy, int sz, mglb_texture *d, int dl, int dx, int dy,
                        int dz, int w, int h, int dd) {}
