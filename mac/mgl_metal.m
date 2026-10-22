@@ -3231,10 +3231,11 @@ static int choose_paced_fps(mgl_ctx *c, int shown_per_frame)
 
 /* MGL_PRESENT_STATS=1 (or MGL_PROFILE): once a second, log how evenly frames reached the screen, from the
    drawables' presentedTime: shown fps, mean and spread of the time each frame stayed on screen, the worst one,
-   and judder = share of frames whose time on screen differs from the previous frame's by more than 2 ms. */
+   and judder = share of frames whose time on screen differs from the previous frame's by more than 2 ms.
+   MGL_PRESENT_STATS=2 also logs the first 16 times on screen of each second, in ms. */
 static pthread_mutex_t pstat_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct {
-    double last, sum, sum2, worst, prev_iv;
+    double last, sum, sum2, worst, prev_iv, seq[16];
     unsigned long n, judder, dropped;
 } pstat;
 
@@ -3247,6 +3248,8 @@ static void present_stat(double when)
         if (pstat.last > 0) {
             double iv = (when - pstat.last) * 1000.0;
             if (iv > 0 && iv < 250) {
+                if (pstat.n < 16)
+                    pstat.seq[pstat.n] = iv;
                 pstat.n++;
                 pstat.sum += iv;
                 pstat.sum2 += iv * iv;
@@ -3276,6 +3279,18 @@ static void present_stats_report(void)
         double mean = pstat.sum / pstat.n, var = pstat.sum2 / pstat.n - mean * mean;
         mgl_log("present stats: %.1f shown fps, on screen %.2f ms avg, %.2f ms spread, %.2f ms worst, %.1f%% judder, %lu dropped",
                 1000.0 / mean, mean, var > 0 ? sqrt(var) : 0.0, pstat.worst, 100.0 * pstat.judder / pstat.n, pstat.dropped);
+        static int seq = -1;
+        if (seq < 0) {
+            const char *e = getenv("MGL_PRESENT_STATS");
+            seq = e && atoi(e) >= 2;
+        }
+        if (seq) {
+            char line[200];
+            int k = 0;
+            for (unsigned long i = 0; i < pstat.n && i < 16 && k < (int)sizeof line; i++)
+                k += snprintf(line + k, sizeof line - k, " %.1f", pstat.seq[i]);
+            mgl_log("present stats: times on screen (ms):%s", line);
+        }
     }
     double last = pstat.last, prev_iv = pstat.prev_iv;
     memset(&pstat, 0, sizeof pstat);
