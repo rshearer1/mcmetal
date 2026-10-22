@@ -114,8 +114,9 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
         python3 -I "$SRC/tools/bare_mc.py" launch "$WORK" --java "$JAVA" "${wargs[@]}" \
         ${LIBARGS[@]+"${LIBARGS[@]}"} > "$OUT/$name/launch.out" 2>&1 &
     local t=0
+    local poll=$([ "${GAME_BENCH:-}" = true ] && echo 1 || echo 5) # bench: notice the world within a second
     while [ $t -lt "$secs" ]; do
-        sleep 5; t=$((t + 5))
+        sleep $poll; t=$((t + poll))
         pid=$(cat "$WORK/client.pid" 2>/dev/null)
         if [ $t -gt 20 ] && [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then echo "game exited after ${t}s"; break; fi
         if [ "${GAME_BENCH:-}" = true ] && [ -n "$world" ]; then
@@ -152,7 +153,8 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
             echo "got $want screenshots in the world after ${t}s"; break
         fi
     done
-    pid=$(cat "$WORK/client.pid" 2>/dev/null); [ -n "$pid" ] && kill "$pid" 2>/dev/null; sleep 5
+    pid=$(cat "$WORK/client.pid" 2>/dev/null); [ -n "$pid" ] && kill "$pid" 2>/dev/null
+    local k=0; while [ -n "$pid" ] && [ $k -lt 10 ] && kill -0 "$pid" 2>/dev/null; do sleep 0.5; k=$((k + 1)); done
     [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null
     cp "$WORK/client.log" "$OUT/$name/client.log" 2>/dev/null
     # mcmetal clears the mod's start marker once real screens are drawn; left behind, the next launch would
