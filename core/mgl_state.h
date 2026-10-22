@@ -115,7 +115,8 @@ typedef struct mgl_program {
     mgl_xlate_result x;
     mglb_program *gpu;
     int rt_pos_loc, rt_ent_loc, rt_region_off, rt_mv_off, rt_proj_off; /* terrain capture (mgl_rt.c); rt_pos_loc -1 = not terrain */
-    int rt_epos_loc, rt_emv_off; /* entity capture (mgl_rt.c): float3 position input and model-view, -1 = none */
+    int rt_epos_loc, rt_emv_off, rt_eproj_off; /* entity capture (mgl_rt.c): float3 position, model-view, projection */
+    int rt_entity;              /* 1 = draws entities (by Iris program name or the entity vertex format's overlay input) */
     unsigned char *ublock[3];   /* default-block shadow per stage (vertex, fragment, compute) */
     int unit_of[MGL_MAX_TEXTURES * 3]; /* GL texture unit per x.textures[] entry (glUniform1i on a sampler) */
     int image_unit_of[MGL_MAX_TEXTURES * 3];

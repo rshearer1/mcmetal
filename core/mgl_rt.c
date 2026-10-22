@@ -30,6 +30,7 @@ static double scene_wanted;  /* last time a program that casts rays was drawn; c
 static float view_proj[16];
 static int have_view;
 static float terrain_mv[16]; /* the terrain pass's model-view (camera rotation; positions are camera-relative) */
+static float terrain_proj[16];
 static int have_terrain_mv;
 static float *ent_tris;      /* this frame's entity triangles, camera-relative, 9 floats each */
 static int ent_n, ent_cap;
@@ -48,6 +49,8 @@ static int uniform_offset(const mgl_program *p, const char *name)
             return p->x.uniforms[i].offset[MGL_VERTEX];
     return -1;
 }
+
+static int rt_debug(void);
 
 void mgl_rt_link(mgl_program *p)
 {
@@ -68,24 +71,47 @@ void mgl_rt_link(mgl_program *p)
     if (p->rt_pos_loc < 0 || p->rt_region_off < 0)
         p->rt_pos_loc = -1; /* not a terrain program */
     /* entities: a float3 position (vanilla's Position, or Iris's / OptiFine-style core names) and a model-view */
-    p->rt_epos_loc = p->rt_emv_off = -1;
-    for (int i = 0; i < p->x.num_attribs; i++)
-        if ((!strcmp(p->x.attribs[i].name, "Position") || !strcmp(p->x.attribs[i].name, "iris_Position") ||
-             !strcmp(p->x.attribs[i].name, "vaPosition")) && !p->x.attribs[i].is_int && p->x.attribs[i].vecsize == 3)
+    p->rt_epos_loc = p->rt_emv_off = p->rt_eproj_off = -1;
+    p->rt_entity = 0;
+    int overlay = 0;
+    for (int i = 0; i < p->x.num_attribs; i++) {
+        const char *n = p->x.attribs[i].name;
+        if ((!strcmp(n, "Position") || !strcmp(n, "iris_Position") || !strcmp(n, "vaPosition")) &&
+            !p->x.attribs[i].is_int && p->x.attribs[i].vecsize == 3)
             p->rt_epos_loc = p->x.attribs[i].location;
+        /* the overlay coordinate (hurt flash) is only in the entity vertex format: entities, block entities, items */
+        overlay |= !strcmp(n, "UV1") || !strcmp(n, "iris_UV1") || !strcmp(n, "vaUV1");
+    }
     static const char *const mv_names[] = {"iris_ModelViewMat", "ModelViewMat", "modelViewMatrix", "iris_ModelViewMatrix"};
+    static const char *const proj_names[] = {"iris_ProjMat", "ProjMat", "projectionMatrix", "iris_ProjectionMatrix"};
     for (int i = 0; i < 4 && p->rt_emv_off < 0; i++)
         p->rt_emv_off = uniform_offset(p, mv_names[i]);
+    for (int i = 0; i < 4 && p->rt_eproj_off < 0; i++)
+        p->rt_eproj_off = uniform_offset(p, proj_names[i]);
+    /* Iris doesn't label its programs (debug_name stays empty unless the game calls glObjectLabel), so the
+       vertex format is the main signal; MCMETAL_RT_ENTITIES=all takes every other solid world draw (clouds too) */
+    static int all = -1;
+    if (all < 0)
+        all = getenv("MCMETAL_RT_ENTITIES") && !strcmp(getenv("MCMETAL_RT_ENTITIES"), "all");
+    p->rt_entity = p->rt_pos_loc < 0 && p->rt_epos_loc >= 0 && p->rt_emv_off >= 0 && p->rt_eproj_off >= 0 &&
+                   (overlay || all || !strncmp(p->debug_name, "gbuffers_entities", 17) ||
+                    !strncmp(p->debug_name, "gbuffers_block", 14));
+    if (rt_debug() && p->rt_pos_loc < 0 && p->rt_epos_loc >= 0) {
+        char names[256] = "";
+        for (int i = 0; i < p->x.num_attribs; i++)
+            snprintf(names + strlen(names), sizeof names - strlen(names), "%s%s", i ? "," : "", p->x.attribs[i].name);
+        mgl_log("rt debug: program with a float3 position: entity %d (overlay %d, mv %d, proj %d), inputs %s",
+                p->rt_entity, overlay, p->rt_emv_off >= 0, p->rt_eproj_off >= 0, names);
+    }
 }
 
 static void mat_mul(float *o, const float *a, const float *b);
 
-/* Entity programs by Iris's names for them (gbuffers_entities*, gbuffers_block: block entities like chests and
-   signs). Not gbuffers_hand: the held item isn't in the world. Not the shadow pass: the same entities again. */
+/* Entity programs (mgl_rt_link decides). Per draw, record_entity also wants the main pass's projection, which
+   leaves out the held item (its own field of view) and the shadow pass (orthographic). */
 static int entity_program(const mgl_program *p)
 {
-    return p->rt_epos_loc >= 0 && p->rt_emv_off >= 0 &&
-           (!strncmp(p->debug_name, "gbuffers_entities", 17) || !strncmp(p->debug_name, "gbuffers_block", 14));
+    return p->rt_entity;
 }
 
 static void rigid_inverse(const float *m, float *o) /* rotation + translation, column-major */
@@ -103,8 +129,17 @@ static void rigid_inverse(const float *m, float *o) /* rotation + translation, c
    Entity buffers are rewritten every frame, so the corners are copied now. */
 static void record_entity(const mgl_program *p, const mgl_draw *d)
 {
-    if (!have_terrain_mv || d->primitive != GL_TRIANGLES || d->instances > 1)
+    if (!have_terrain_mv || d->primitive != GL_TRIANGLES || d->instances > 1 || !d->depth_write)
         return;
+    const float *proj = (const float *)(p->ublock[MGL_VERTEX] + p->rt_eproj_off);
+    for (int i = 0; i < 16; i++)
+        if (fabsf(proj[i] - terrain_proj[i]) > 1e-3f * (fabsf(terrain_proj[i]) + 1e-3f))
+            return; /* not the world camera: the hand, the shadow map, a GUI item */
+    const float *emv = (const float *)(p->ublock[MGL_VERTEX] + p->rt_emv_off);
+    for (int c = 0; c < 3; c++)
+        for (int r = 0; r < 3; r++)
+            if (fabsf(emv[c * 4 + r] - terrain_mv[c * 4 + r]) > 1e-3f)
+                return; /* world draws carry the camera's rotation; the held item (same projection at some FOVs) doesn't */
     const mgl_vertex_attr *a = &d->attrs[p->rt_epos_loc];
     if (!a->enabled || a->type != MGLV_FLOAT || a->size < 3 || a->buffer < 0 || a->buffer >= d->num_vbufs)
         return;
@@ -264,6 +299,7 @@ void mgl_rt_record(mgl_program *p, const mgl_draw *d)
         mat_mul(view_proj, (const float *)(p->ublock[MGL_VERTEX] + p->rt_proj_off),
                 (const float *)(p->ublock[MGL_VERTEX] + p->rt_mv_off));
         memcpy(terrain_mv, p->ublock[MGL_VERTEX] + p->rt_mv_off, sizeof terrain_mv);
+        memcpy(terrain_proj, p->ublock[MGL_VERTEX] + p->rt_proj_off, sizeof terrain_proj);
         have_view = have_terrain_mv = 1;
     }
 
