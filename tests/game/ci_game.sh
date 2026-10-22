@@ -343,7 +343,7 @@ dh_phase() { # dh / dh-shaders / dh-PACK: Distant Horizons at noon, without a pa
     fi
     PACK=${file:-${PACK:-}} GAME_SHOTS=${GAME_SHOTS:-16} run_phase "$1" 360 metal "$2"
     rm -f "$G/mods/distanthorizons.jar" "$G/config/DistantHorizons.toml" "$G/saves/metal/data"/DistantHorizons.sqlite*
-    [ "$purl" != - ] && rm -rf "$G/shaderpacks/$file"
+    if [ "$purl" != - ]; then rm -rf "$G/shaderpacks/$file"; fi
 }
 
 # packnight-NAME turns each pack's coloured block light on (all ship with it off except Solas and RV)
