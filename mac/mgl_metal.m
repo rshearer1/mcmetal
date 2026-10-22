@@ -726,9 +726,10 @@ static void priv_promote(void)
     priv_nq = 0;
     [e endEncoding];
     [side commit];
-    static unsigned long logged;
-    if (priv_made + priv_refreshed >= logged + 200 || !logged) {
-        logged = priv_made + priv_refreshed;
+    static unsigned long next_log = 1; /* at 1, 2, 4, 8, ... copies */
+    if (priv_made + priv_refreshed >= next_log) {
+        while (next_log <= priv_made + priv_refreshed)
+            next_log *= 2;
         mgl_log("private GPU copies: %lu made (%lu MB), %lu refreshed after CPU writes", priv_made, priv_bytes >> 20,
                 priv_refreshed);
     }
