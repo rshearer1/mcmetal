@@ -334,8 +334,13 @@ static void end_encoders_at(int line)
 {
     if (!gs_recording)
         gs_flush_at(line);
-    if (!keep_clears)
+    if (!keep_clears && npclear) {
+        if (flush_log_on()) {
+            static line_tally replay = {"pending clears replayed as passes"};
+            tally_line(&replay, line);
+        }
         materialize_clears();
+    }
     if (renc && renc_target.width >= 2048 && renc_target.width == renc_target.height && flush_log_on()) {
         static line_tally big = {"square shadow-map passes ended"};
         tally_line(&big, line);
@@ -2605,6 +2610,10 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
     for (int st = 0; st < 3 && npclear && !reads_cleared; st++)
         for (int i = 0; i < MGL_MAX_TEXTURES && !reads_cleared; i++)
             reads_cleared = d->textures[st][i].tex && pending_clear_uses(d->textures[st][i].tex);
+    if (reads_cleared && flush_log_on()) {
+        static line_tally gs_reads = {"geometry-shader draws reading a pending clear's image"};
+        tally_line(&gs_reads, __LINE__);
+    }
     gs_recording = 1;
     keep_clears = !reads_cleared;
     id<MTLComputeCommandEncoder> c = compute_encoder();
