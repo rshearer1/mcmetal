@@ -425,6 +425,7 @@ static void define_storage(mgl_texture *t, GLenum internal, int w, int h, int d,
         want = maxl;
     if (want < 1)
         want = 1;
+    t->internal_format = internal; /* RGBA8 serves GL_RGB and GL_RGBA alike, so keep which one this is */
     if (t->mem && t->desc.format == f && t->desc.width == w && t->desc.height == h && t->desc.depth == d &&
         t->desc.levels >= want)
         return;
@@ -436,7 +437,6 @@ static void define_storage(mgl_texture *t, GLenum internal, int w, int h, int d,
     t->desc.height = h;
     t->desc.depth = d;
     t->desc.levels = want;
-    t->internal_format = internal;
     t->base_w = w;
     t->base_h = h;
     t->base_d = d;
