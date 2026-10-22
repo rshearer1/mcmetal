@@ -664,11 +664,15 @@ static const char *compute_prelude =
     "layout(std430, binding = 25) readonly buffer mgl_i5_ { uint mgl_ib[]; };\n"
     "layout(std430, binding = 26) writeonly buffer mgl_i6_ { float mgl_ov[]; };\n"
     "layout(std430, binding = 27) writeonly buffer mgl_i7_ { uint mgl_oc[]; };\n"
+    /* a multi-draw as one job: [0].x = sections (0 = a single draw, see mgl_draw_info), then per section its first
+       triangle slot (even), triangles, base vertex and first index */
+    "layout(std430, binding = 28) readonly buffer mgl_i8_ { uvec4 mgl_sec[]; };\n"
     "uniform ivec4 mgl_draw_info; /* triangles, index type (0 none, 1 u16, 2 u32), base vertex, first index */\n"
     "vec4 mgl_v_Position; float mgl_v_PointSize; int mgl_vertex_id; int mgl_instance_id;\n"
     "struct mgl_gin_t { vec4 pos; float pointSize; };\nmgl_gin_t mgl_gin[3];\n"
     "vec4 mgl_g_Position; float mgl_g_PointSize; int mgl_prim_id; int mgl_g_PrimitiveID; int mgl_g_Layer;\n"
-    "int mgl_g_ViewportIndex; const int mgl_invocation_id = 0; uint mgl_emitted; uint mgl_strip;\n"
+    "int mgl_g_ViewportIndex; const int mgl_invocation_id = 0; uint mgl_emitted; uint mgl_strip; uint mgl_slot;\n"
+    "uint mgl_first; uint mgl_bv; uint mgl_ntri;\n"
     "void mgl_emit();\nvoid mgl_end_primitive();\n"
     "uint mgl_word(int b, uint w) {\n"
     "  if (b == 0) return mgl_vb0[w];\n  if (b == 1) return mgl_vb1[w];\n  if (b == 2) return mgl_vb2[w];\n"
@@ -702,8 +706,15 @@ static const char *compute_prelude =
     "    if (type == 3) x = int(b << 24u) >> 24;\n    else if (type == 5) x = int(b << 16u) >> 16;\n"
     "    else if (type == 0) x = int(uintBitsToFloat(b));\n    else x = int(b);\n"
     "    r[c] = x;\n  }\n  return r;\n}\n"
+    /* sets the section of triangle slot g and returns g's triangle within it (>= mgl_ntri: a padding slot) */
+    "uint mgl_locate(uint g) {\n"
+    "  uint n = mgl_sec[0].x;\n"
+    "  if (n == 0u) { mgl_first = uint(mgl_draw_info.w); mgl_bv = uint(mgl_draw_info.z); mgl_ntri = uint(mgl_draw_info.x); return g; }\n"
+    "  uint lo = 1u, hi = n;\n"
+    "  while (lo < hi) { uint m = (lo + hi + 1u) >> 1u; if (mgl_sec[m].x <= g) lo = m; else hi = m - 1u; }\n"
+    "  uvec4 e = mgl_sec[lo];\n  mgl_first = e.w; mgl_bv = e.z; mgl_ntri = e.y;\n  return g - e.x;\n}\n"
     "uint mgl_index(uint i) {\n"
-    "  uint k = uint(mgl_draw_info.w) + i;\n  if (mgl_draw_info.y == 0) return k;\n"
+    "  uint k = mgl_first + i;\n  if (mgl_draw_info.y == 0) return k;\n"
     "  if (mgl_draw_info.y == 1) return (mgl_ib[k >> 1u] >> ((k & 1u) * 16u)) & 0xffffu;\n"
     "  return mgl_ib[k];\n}\n";
 
@@ -913,7 +924,7 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
                          "  uint mgl_rec = 0u;\n", max_vertices);
     else
     sb_printf(&comp, "void mgl_emit() {\n  if (mgl_emitted >= %du) return;\n"
-                     "  uint mgl_rec = (uint(mgl_prim_id) * %du + mgl_emitted) * %du;\n"
+                     "  uint mgl_rec = (mgl_slot * %du + mgl_emitted) * %du;\n"
                      "  mgl_ov[mgl_rec] = mgl_g_Position.x;\n  mgl_ov[mgl_rec + 1u] = mgl_g_Position.y;\n"
                      "  mgl_ov[mgl_rec + 2u] = mgl_g_Position.z;\n  mgl_ov[mgl_rec + 3u] = mgl_g_Position.w;\n",
               max_vertices, max_vertices, R);
@@ -976,10 +987,11 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
     if (sh_bytes * local * 2 > 28 * 1024) /* stay well inside Apple GPUs' 32 KB */
         share = 0;
     if (!share) {
-        sb_printf(&comp, "void main() {\n  uint prim = gl_GlobalInvocationID.x;\n  if (prim >= uint(mgl_draw_info.x)) return;\n"
-                         "  for (int c = 0; c < 3; c++)\n    mgl_run_vs(mgl_index(prim * 3u + uint(c)) + uint(mgl_draw_info.z), c);\n"
-                         "  mgl_prim_id = int(prim);\n  mgl_emitted = 0u;\n  mgl_strip = 0u;\n"
-                         "%s  mgl_oc[prim] = mgl_emitted;\n}\n", gs_call);
+        sb_printf(&comp, "void main() {\n  uint g = gl_GlobalInvocationID.x;\n  if (g >= uint(mgl_draw_info.x)) return;\n"
+                         "  uint prim = mgl_locate(g);\n  if (prim >= mgl_ntri) { mgl_oc[g] = 0u; return; }\n"
+                         "  for (int c = 0; c < 3; c++)\n    mgl_run_vs(mgl_index(prim * 3u + uint(c)) + mgl_bv, c);\n"
+                         "  mgl_prim_id = int(prim);\n  mgl_slot = g;\n  mgl_emitted = 0u;\n  mgl_strip = 0u;\n"
+                         "%s  mgl_oc[g] = mgl_emitted;\n}\n", gs_call);
     } else {
         sb_printf(&comp, "shared mgl_gin_t mgl_gin_sh[%d];\n", local * 2);
         for (int i = 0; i < ngin; i++)
@@ -995,12 +1007,14 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
                 sb_printf(&comp, "  %s[c] = %s_mgl_sh[slot];\n", gin[i].name, gin[i].name);
         sb_printf(&comp, "}\n"
                          "void main() {\n"
-                         "  uint ntri = uint(mgl_draw_info.x), bv = uint(mgl_draw_info.z);\n"
-                         "  uint prim = gl_GlobalInvocationID.x;\n"
+                         "  uint g = gl_GlobalInvocationID.x;\n"
+                         "  uint prim = mgl_locate(min(g, uint(mgl_draw_info.x) - 1u));\n"
+                         "  if (g >= uint(mgl_draw_info.x)) prim = 0xffffffffu;\n" /* past the end: no quad, then return */
+                         "  uint ntri = mgl_ntri, bv = mgl_bv;\n"
                          "  uint lt = gl_LocalInvocationID.x;\n"
                          "  bool odd = (lt & 1u) != 0u;\n"
                          "  uint pa = prim & ~1u;\n" /* the pair's first triangle; local size is even, so the pair shares a group */
-                         "  bool quad = pa + 1u < ntri;\n"
+                         "  bool quad = prim != 0xffffffffu && pa + 1u < ntri;\n"
                          "  uint a0 = 0u, a1 = 0u, a2 = 0u, b1 = 0u;\n"
                          "  if (quad) {\n"
                          "    a0 = mgl_index(pa * 3u); a1 = mgl_index(pa * 3u + 1u); a2 = mgl_index(pa * 3u + 2u);\n"
@@ -1013,15 +1027,16 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
                          "    mgl_run_vs((odd ? b1 : a1) + bv, 0);\n    mgl_put_sh(s + (odd ? 3u : 1u), 0);\n"
                          "  }\n"
                          "  barrier();\n"
-                         "  if (prim >= ntri) return;\n"
+                         "  if (g >= uint(mgl_draw_info.x)) return;\n"
+                         "  if (prim >= ntri) { mgl_oc[g] = 0u; return; }\n"
                          "  if (quad) {\n"
                          "    mgl_get_sh(odd ? s + 2u : s, 0);\n    mgl_get_sh(odd ? s + 3u : s + 1u, 1);\n"
                          "    mgl_get_sh(odd ? s : s + 2u, 2);\n"
                          "  } else {\n"
                          "    for (int c = 0; c < 3; c++)\n      mgl_run_vs(mgl_index(prim * 3u + uint(c)) + bv, c);\n"
                          "  }\n"
-                         "  mgl_prim_id = int(prim);\n  mgl_emitted = 0u;\n  mgl_strip = 0u;\n"
-                         "%s  mgl_oc[prim] = mgl_emitted;\n}\n", gs_call);
+                         "  mgl_prim_id = int(prim);\n  mgl_slot = g;\n  mgl_emitted = 0u;\n  mgl_strip = 0u;\n"
+                         "%s  mgl_oc[g] = mgl_emitted;\n}\n", gs_call);
     }
 
     free(ks.s);

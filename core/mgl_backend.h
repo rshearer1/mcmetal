@@ -169,6 +169,10 @@ typedef struct mgl_draw {
     /* GPU chunk culling (mgl_cull.c): non-zero draws the multi-draw's sections from the backend's culled
        indirect arguments, entries cull_cmd - 1 .. cull_cmd + multi_n - 2 */
     int cull_cmd;
+    /* geometry-shader multi-draw as one job: gs_sec_n sections, 4 ints each (first triangle slot, triangles,
+       base vertex, first index); 0 = a single draw */
+    int gs_sec_n;
+    const int32_t (*gs_sec)[4];
 } mgl_draw;
 
 /* ---- ray tracing (step 2, see STEP2-RAYTRACING.md and mgl_rt.c) ---- */
