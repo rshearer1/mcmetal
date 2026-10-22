@@ -2882,6 +2882,7 @@ static int gsc_slot[GSC_MAX * 2]; /* index + 1 into gsc_e, 0 = empty */
 static uint64_t gsc_frame;
 static size_t gsc_limit = (size_t)-1;
 static unsigned long gsc_hits, gsc_stores, gsc_misses, gsc_skips, gsc_full;
+static int gsc_last_ranges; /* MGL_PROFILE: the last cached draw's uniform ranges (-1 = whole block) */
 
 static size_t gsc_cap_bytes(void)
 {
@@ -3049,6 +3050,26 @@ static void gsc_mix(gsc_hash *h, const void *data, size_t n)
 }
 #define GSC_MIX(h, v) do { __typeof__(v) mix_v_ = (v); gsc_mix(h, &mix_v_, sizeof mix_v_); } while (0)
 
+/* Why draws miss (MGL_PROFILE): per draw site (the same draw minus buffer contents and uniform values), what
+   changed since the frame before */
+#define GSC_SITES 16384
+static struct { uint64_t site, bufs, unis, frame; } gsc_site[GSC_SITES];
+static unsigned long gsc_why_bufs, gsc_why_unis, gsc_why_new;
+
+static void gsc_note_site(uint64_t site, uint64_t bufs, uint64_t unis)
+{
+    unsigned h = (unsigned)(site ^ site >> 32) & (GSC_SITES - 1);
+    if (gsc_site[h].site == site && gsc_site[h].frame + 1 == gsc_frame) {
+        gsc_why_bufs += gsc_site[h].bufs != bufs;
+        gsc_why_unis += gsc_site[h].unis != unis;
+    } else if (gsc_site[h].frame != gsc_frame || gsc_site[h].site != site)
+        gsc_why_new++;
+    gsc_site[h].site = site;
+    gsc_site[h].bufs = bufs;
+    gsc_site[h].unis = unis;
+    gsc_site[h].frame = gsc_frame;
+}
+
 /* the draw's inputs as a key; 0 when the draw can't be cached */
 static int gsc_key(const mgl_draw *d, const int32_t desc[16][4], int triangles, uint64_t *k0, uint64_t *k1)
 {
@@ -3066,7 +3087,8 @@ static int gsc_key(const mgl_draw *d, const int32_t desc[16][4], int triangles, 
             gsc_skips++;
             return 0;
         }
-    gsc_hash h = {0x243F6A8885A308D3ull, 0x13198A2E03707344ull};
+    /* three parts: the draw itself, its buffers' write counters, the uniform values it reads */
+    gsc_hash h = {0x243F6A8885A308D3ull, 0x13198A2E03707344ull}, hb = h, hu = h;
     GSC_MIX(&h, (uintptr_t)d->program);
     GSC_MIX(&h, (uintptr_t)d->program->compute);
     GSC_MIX(&h, triangles);
@@ -3078,7 +3100,7 @@ static int gsc_key(const mgl_draw *d, const int32_t desc[16][4], int triangles, 
             return 0;
         }
         GSC_MIX(&h, (uintptr_t)b);
-        GSC_MIX(&h, b ? b->written : 0);
+        GSC_MIX(&hb, b ? b->written : 0);
         GSC_MIX(&h, d->vbufs[i].offset);
     }
     if (d->index_buf) {
@@ -3087,7 +3109,7 @@ static int gsc_key(const mgl_draw *d, const int32_t desc[16][4], int triangles, 
             return 0;
         }
         GSC_MIX(&h, (uintptr_t)d->index_buf);
-        GSC_MIX(&h, d->index_buf->written);
+        GSC_MIX(&hb, d->index_buf->written);
     }
     for (int i = 0; i < 12; i++)
         if (d->ubo[i]) {
@@ -3097,12 +3119,29 @@ static int gsc_key(const mgl_draw *d, const int32_t desc[16][4], int triangles, 
             }
             GSC_MIX(&h, i);
             GSC_MIX(&h, (uintptr_t)d->ubo[i]);
-            GSC_MIX(&h, d->ubo[i]->written);
+            GSC_MIX(&hb, d->ubo[i]->written);
             GSC_MIX(&h, d->ubo_offset[i]);
         }
-    /* default uniforms, which hold mgl_draw_info: triangles, index type, base vertex, first index */
-    if (d->uniforms[2] && d->uniform_size[2])
-        gsc_mix(&h, d->uniforms[2], (size_t)d->uniform_size[2]);
+    /* the default uniforms the stages read (mgl_draw_info among them: triangles, index type, base vertex, first
+       index). Only those: the block also holds every uniform the pack declares, frameTimeCounter included. */
+    gsc_last_ranges = d->uniform_used ? d->num_uniform_used : -1;
+    if (d->uniforms[2] && d->uniform_size[2]) {
+        if (d->num_uniform_used < 0 || !d->uniform_used)
+            gsc_mix(&hu, d->uniforms[2], (size_t)d->uniform_size[2]);
+        else
+            for (int i = 0; i < d->num_uniform_used; i++) {
+                int off = d->uniform_used[i][0], len = d->uniform_used[i][1];
+                if (off >= 0 && len > 0 && off + len <= d->uniform_size[2])
+                    gsc_mix(&hu, (const char *)d->uniforms[2] + off, (size_t)len);
+            }
+    }
+    /* mgl_draw_info (first index, base vertex) is in the uniforms: part of the site too */
+    GSC_MIX(&h, d->index_offset);
+    GSC_MIX(&h, d->base_vertex);
+    GSC_MIX(&h, d->first);
+    gsc_note_site(h.a, hb.a, hu.a);
+    gsc_mix(&h, &hb, sizeof hb);
+    gsc_mix(&h, &hu, sizeof hu);
     *k0 = h.a;
     *k1 = h.b;
     return 1;
@@ -4831,7 +4870,11 @@ static void profile_frame(unsigned long draws)
         mgl_log("profile: geometry-shader cache per frame: %.0f reused, %.0f stored, %.0f computed, %.0f not cacheable, "
                 "%.0f cache full; %.0f MB held in %d slabs", gsc_hits / f, gsc_stores / f, gsc_misses / f, gsc_skips / f,
                 gsc_full / f, held / 1048576.0, gsc_nslabs);
+        mgl_log("profile: geometry-shader cache misses per frame: %.0f buffers rewritten, %.0f uniforms changed, "
+                "%.0f draws not drawn the frame before; uniform ranges hashed: %d", gsc_why_bufs / f, gsc_why_unis / f,
+                gsc_why_new / f, gsc_last_ranges);
         gsc_hits = gsc_stores = gsc_misses = gsc_skips = gsc_full = 0;
+        gsc_why_bufs = gsc_why_unis = gsc_why_new = 0;
     }
     mgl_log("profile: buffers %.0f MB held (%.0f MB pooled), %d of %d transient chunks, %.1f one-off transient "
             "buffers and %.1f waits for a chunk per frame", buf_live_bytes / 1048576.0, buf_pooled_bytes / 1048576.0, tr_n,

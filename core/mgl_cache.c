@@ -114,6 +114,8 @@ void mgl_cache_store(const char *key, const mgl_xlate_result *r)
     for (int s = 0; s < MGL_NUM_STAGES; s++)
         put_str(f, r->msl[s]);
     put(f, r->default_block_size, sizeof r->default_block_size);
+    put(f, r->used_ranges, sizeof r->used_ranges);
+    put(f, r->num_used_ranges, sizeof r->num_used_ranges);
     put(f, r->local_size, sizeof r->local_size);
     put_int(f, r->num_uniforms); put(f, r->uniforms, sizeof *r->uniforms * (size_t)r->num_uniforms);
     put_int(f, r->num_textures); put(f, r->textures, sizeof *r->textures * (size_t)r->num_textures);
@@ -146,7 +148,8 @@ int mgl_cache_load(const char *key, mgl_xlate_result *r)
                               guard == ((int)sizeof(mgl_uniform) ^ (int)sizeof(mgl_texture_slot) << 12);
     for (int s = 0; ok && s < MGL_NUM_STAGES; s++)
         ok = get_str(f, &r->msl[s]);
-    ok = ok && get(f, r->default_block_size, sizeof r->default_block_size) && get(f, r->local_size, sizeof r->local_size);
+    ok = ok && get(f, r->default_block_size, sizeof r->default_block_size) && get(f, r->used_ranges, sizeof r->used_ranges) &&
+         get(f, r->num_used_ranges, sizeof r->num_used_ranges) && get(f, r->local_size, sizeof r->local_size);
     ok = ok && get_arr(f, (void **)&r->uniforms, &r->num_uniforms, sizeof *r->uniforms);
     ok = ok && get_arr(f, (void **)&r->textures, &r->num_textures, sizeof *r->textures);
     ok = ok && get_arr(f, (void **)&r->ubos, &r->num_ubos, sizeof *r->ubos);

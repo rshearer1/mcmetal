@@ -118,6 +118,36 @@ static void reflect_default_block(mgl_xlate_result *r, spvc_compiler comp, int s
         if (u->columns > 1 && spvc_compiler_type_struct_member_matrix_stride(comp, type, i, &mstride) == SPVC_SUCCESS)
             u->matrix_stride = (int)mstride;
     }
+    /* the members this stage reads, as merged byte ranges (sorted by offset) */
+    const spvc_buffer_range *br = NULL;
+    size_t nbr = 0;
+    r->num_used_ranges[stage] = -1;
+    if (spvc_compiler_get_active_buffer_ranges(comp, res->id, &br, &nbr) != SPVC_SUCCESS)
+        return;
+    int (*ur)[2] = r->used_ranges[stage], nu = 0;
+    for (size_t k = 0; k < nbr; k++) {
+        int off = (int)br[k].offset, len = (int)br[k].range, at = nu;
+        while (at > 0 && ur[at - 1][0] > off)
+            at--;
+        if (nu == 64)
+            return; /* too scattered: treat the whole block as read */
+        memmove(&ur[at + 1], &ur[at], sizeof ur[0] * (size_t)(nu - at));
+        ur[at][0] = off;
+        ur[at][1] = len;
+        nu++;
+    }
+    int m = 0;
+    for (int k = 0; k < nu; k++) {
+        if (m && ur[k][0] <= ur[m - 1][0] + ur[m - 1][1]) { /* overlapping or touching: join */
+            int end = ur[k][0] + ur[k][1] > ur[m - 1][0] + ur[m - 1][1] ? ur[k][0] + ur[k][1] : ur[m - 1][0] + ur[m - 1][1];
+            ur[m - 1][1] = end - ur[m - 1][0];
+        } else {
+            ur[m][0] = ur[k][0];
+            ur[m][1] = ur[k][1];
+            m++;
+        }
+    }
+    r->num_used_ranges[stage] = m;
 }
 
 static int image_dim(spvc_type t)

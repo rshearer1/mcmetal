@@ -131,6 +131,7 @@ typedef struct mgl_draw {
     int num_vbufs;
 
     const void *uniforms[3]; int uniform_size[3];   /* default block per stage (vertex, fragment, compute) */
+    const int (*uniform_used)[2]; int num_uniform_used; /* compute stage: byte ranges it reads, -1 = all */
     mglb_buffer *ubo[12]; size_t ubo_offset[12]; size_t ubo_size[12];
     mglb_buffer *ssbo[8]; size_t ssbo_offset[8];   /* by x.ssbos[] index */
     mgl_bound_texture textures[3][MGL_MAX_TEXTURES]; /* per stage, by MSL index */
