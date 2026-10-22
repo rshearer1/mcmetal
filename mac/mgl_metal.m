@@ -2869,7 +2869,7 @@ static id<MTLAccelerationStructure> entity_as(mglb_buffer **tris_out)
     tg.vertexStride = 12;
     tg.vertexFormat = MTLAttributeFormatFloat3;
     tg.triangleCount = (NSUInteger)n;
-    tg.opaque = YES;
+    tg.opaque = NO; /* the same path as terrain: mcm_opaque_at passes them at once (cutoff byte 0) */
     MTLPrimitiveAccelerationStructureDescriptor *pd = [MTLPrimitiveAccelerationStructureDescriptor descriptor];
     pd.geometryDescriptors = @[ tg ];
     pd.usage = MTLAccelerationStructureUsagePreferFastBuild;
