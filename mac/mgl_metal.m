@@ -2666,6 +2666,7 @@ static void bind_stage_resources(id<MTLRenderCommandEncoder> e, id<MTLComputeCom
         if (!d->ssbo[i])
             continue;
         id<MTLBuffer> b = OBJ(id<MTLBuffer>, d->ssbo[i]->mtl);
+        mglb_buffer_written(d->ssbo[i]); /* the GPU may write it: nothing cached from its old contents */
         NSUInteger at = (NSUInteger)(MGL_BUF_SSBO_BASE + i);
         if (c) [c setBuffer:b offset:d->ssbo_offset[i] atIndex:at];
         else if (s == 0) [e setVertexBuffer:b offset:d->ssbo_offset[i] atIndex:at];
@@ -3089,8 +3090,7 @@ static int gsc_key(const mgl_draw *d, const int32_t desc[16][4], int triangles, 
         }
     /* three parts: the draw itself, its buffers' write counters, the uniform values it reads */
     gsc_hash h = {0x243F6A8885A308D3ull, 0x13198A2E03707344ull}, hb = h, hu = h;
-    GSC_MIX(&h, (uintptr_t)d->program);
-    GSC_MIX(&h, (uintptr_t)d->program->compute);
+    GSC_MIX(&h, d->program->id); /* never reused, unlike a freed program's address */
     GSC_MIX(&h, triangles);
     gsc_mix(&h, desc, sizeof(int32_t) * 16 * 4);
     for (int i = 0; i < d->num_vbufs && i < 4; i++) {
@@ -3130,8 +3130,8 @@ static int gsc_key(const mgl_draw *d, const int32_t desc[16][4], int triangles, 
             gsc_mix(&hu, d->uniforms[2], (size_t)d->uniform_size[2]);
         else
             for (int i = 0; i < d->num_uniform_used; i++) {
-                int off = d->uniform_used[i][0], len = d->uniform_used[i][1];
-                if (off >= 0 && len > 0 && off + len <= d->uniform_size[2])
+                long off = d->uniform_used[i][0], len = d->uniform_used[i][1];
+                if (off >= 0 && len > 0 && off + len <= (long)d->uniform_size[2])
                     gsc_mix(&hu, (const char *)d->uniforms[2] + off, (size_t)len);
             }
     }
@@ -3230,6 +3230,16 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
         gs_batch = !getenv("MGL_GS_BATCH") || atoi(getenv("MGL_GS_BATCH")) != 0;
     if (!gs_batch || !same_target(&d->target, &gs_target) || gs_pending.count >= 2048)
         gs_flush();
+    if (hit && npclear) { /* no compute encoder to replay them: the strips' fragment stage may read a cleared image */
+        int reads = 0;
+        for (int st = 0; st < 3 && !reads; st++)
+            for (int i = 0; i < MGL_MAX_TEXTURES && !reads; i++)
+                reads = d->textures[st][i].tex && pending_clear_uses(d->textures[st][i].tex);
+        if (reads) {
+            gs_flush();
+            materialize_clears();
+        }
+    }
     if (!hit) {
         /* the vertex and geometry stages run as compute: pending clears can wait for the strips' render pass unless
            this draw also reads one of their images */

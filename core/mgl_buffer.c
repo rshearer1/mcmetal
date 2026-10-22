@@ -366,6 +366,7 @@ static void clear_sub_data(mgl_buffer *b, GLenum internalformat, size_t offset, 
         rename_mem(b, size != b->size);
     char *p = (char *)mglb_buffer_ptr(b->mem) + offset;
     size_t es = (size_t)element_size(internalformat);
+    note_write(b->mem, offset, size);
     if (!data) {
         memset(p, 0, size);
         return;

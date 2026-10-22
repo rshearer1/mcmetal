@@ -12,7 +12,7 @@
 #include "mgl_log.h"
 
 #define MAGIC 0x4D43534Du /* "MSCM" */
-static const char build_tag[] = "mcmetal-xlate-3 " __DATE__ " " __TIME__;
+static const char build_tag[] = "mcmetal-xlate-4 " __DATE__ " " __TIME__;
 
 static const char *cache_dir(void)
 {
@@ -158,6 +158,14 @@ int mgl_cache_load(const char *key, mgl_xlate_result *r)
     ok = ok && get_arr(f, (void **)&r->outs, &r->num_outs, sizeof *r->outs);
     ok = ok && get_int(f, &r->gs_max_vertices) && get_int(f, &r->gs_record_floats) && get_int(f, &r->uses_scene);
     ok = ok && get_str(f, &r->log);
+    for (int s = 0; ok && s < MGL_NUM_STAGES; s++) { /* a damaged file must not index past used_ranges */
+        int n = r->num_used_ranges[s];
+        if (n < -1 || n > 64)
+            ok = 0;
+        for (int k = 0; ok && k < n; k++)
+            ok = r->used_ranges[s][k][0] >= 0 && r->used_ranges[s][k][1] > 0 &&
+                 (long)r->used_ranges[s][k][0] + r->used_ranges[s][k][1] <= (long)r->default_block_size[s];
+    }
     fclose(f);
     if (!ok) {
         mgl_xlate_free(r);
