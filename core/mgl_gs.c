@@ -762,7 +762,8 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
 
     /* ---- compute shader ---- */
     /* MGL_GS_PROBE (timing experiments only, the picture is wrong): 1 = no geometry stage (nothing emitted),
-       2 = no vertex stage (attributes straight to the geometry stage), 3 = no record writes. MGL_GS_LOCAL = threads
+       2 = no vertex stage (attributes straight to the geometry stage), 3 = no record writes, 4 = constant attributes (no fetch),
+       5 = attribute fetch only (no vertex stage). MGL_GS_LOCAL = threads
        per threadgroup (default 64). Both change the generated shader: run with MGL_CACHE_DIR unset. */
     int probe = getenv("MGL_GS_PROBE") ? atoi(getenv("MGL_GS_PROBE")) : 0;
     int local = getenv("MGL_GS_LOCAL") ? atoi(getenv("MGL_GS_LOCAL")) : 64;
@@ -799,10 +800,20 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
     for (int i = 0; i < nattrs; i++) {
         vs_attr *a = &attrs[i];
         const char *fetch = a->is_int || a->is_uint ? "mgl_fetchi" : "mgl_fetchf";
-        sb_printf(&comp, "    %s = %s(%s(%d, vtx)%s);\n", a->renamed, a->type, fetch, a->location, swz[a->comps]);
+        if (probe == 4) /* constants instead of fetched attributes */
+            sb_printf(&comp, "    %s = %s(%s(%s(1)));\n", a->renamed, a->type, a->is_int || a->is_uint ? "ivec4" : "vec4",
+                      a->is_int || a->is_uint ? "" : "0.5 * float");
+        else
+            sb_printf(&comp, "    %s = %s(%s(%d, vtx)%s);\n", a->renamed, a->type, fetch, a->location, swz[a->comps]);
     }
-    sb_puts(&comp, probe == 2 ? "    mgl_v_Position = vec4(0.0, 0.0, 0.0, 1.0);\n    mgl_v_PointSize = 1.0;\n" : "    mgl_v_Position = vec4(0.0, 0.0, 0.0, 1.0);\n    mgl_v_PointSize = 1.0;\n    mgl_v_init();\n    mgl_v_main();\n"
-                   "    mgl_gin[c].pos = mgl_v_Position;\n    mgl_gin[c].pointSize = mgl_v_PointSize;\n");
+    if (probe == 5) { /* fetch only: keep the fetched attributes alive through the position, no vertex shader */
+        sb_puts(&comp, "    vec4 mgl_probe_sum = vec4(0.0);\n");
+        for (int i = 0; i < nattrs; i++)
+            sb_printf(&comp, "    mgl_probe_sum += vec4(%s(%d, vtx));\n", attrs[i].is_int || attrs[i].is_uint ? "mgl_fetchi" : "mgl_fetchf", attrs[i].location);
+    }
+    sb_puts(&comp, probe == 5 ? "    mgl_v_Position = mgl_probe_sum * 1e-6 + vec4(0.0, 0.0, 0.0, 1.0);\n    mgl_v_PointSize = 1.0;\n" :
+                   probe == 2 ? "    mgl_v_Position = vec4(0.0, 0.0, 0.0, 1.0);\n    mgl_v_PointSize = 1.0;\n" : "    mgl_v_Position = vec4(0.0, 0.0, 0.0, 1.0);\n    mgl_v_PointSize = 1.0;\n    mgl_v_init();\n    mgl_v_main();\n");
+    sb_puts(&comp, "    mgl_gin[c].pos = mgl_v_Position;\n    mgl_gin[c].pointSize = mgl_v_PointSize;\n");
     for (int i = 0; i < ngin; i++) { /* only inputs the vertex shader writes; the rest stay zero */
         tok t = {T_ID, gin[i].name, (int)strlen(gin[i].name)};
         const char *v = lookup(&rv, &t);
