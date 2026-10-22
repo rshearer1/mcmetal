@@ -139,15 +139,21 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     case ${PACK:-} in mcmetal-rt-*) rm -f "$G/shaderpacks/$PACK.txt" ;; esac
     [ -n "${PACK_OPTS:-}" ] && printf '%s\n' $PACK_OPTS > "$G/shaderpacks/${PACK:-ComplementaryReimagined_r5.9.3.zip}.txt"
     [ -f "$G/shaderpacks/${PACK:-ComplementaryReimagined_r5.9.3.zip}.txt" ] && echo "pack options: $(tr '\n' ' ' < "$G/shaderpacks/${PACK:-ComplementaryReimagined_r5.9.3.zip}.txt")"
-    local wargs=(--xmx 3G --size "${GAME_SIZE:-$([ "${GAME_BENCH:-}" = true ] && echo 1920x1200 || echo 1280x720)}")
+    local wargs=(--xmx "${GAME_XMX:-3G}" --size "${GAME_SIZE:-$([ "${GAME_BENCH:-}" = true ] && echo 1920x1200 || echo 1280x720)}")
     [ -n "$world" ] && wargs+=(--world "$world")
     mkdir -p "$OUT/$name/glsl"
     echo "=== phase $name: ${secs}s, world=${world:-none}, shaders=$shaders"
     local started=$SECONDS
     rm -f "$OUT/$name/control"
-    local jvmx=()
-    [ "${GAME_PROFILE:-}" = true ] && jvmx=(-- -XX:FlightRecorderOptions=stackdepth=128
+    local jvmx=(--)
+    [ "${GAME_PROFILE:-}" = true ] && jvmx+=(-XX:FlightRecorderOptions=stackdepth=128
         "-XX:StartFlightRecording=name=mcm,settings=profile,dumponexit=true,filename=$WORK/rec.jfr,jdk.ExecutionSample#period=10ms,jdk.NativeMethodSample#period=10ms")
+    # bench mode: every stop-the-world pause (GC or not) is logged, for gc-report.txt (tools/gc_report.py)
+    rm -f "$OUT/$name/gc.log"
+    [ "${GAME_BENCH:-}" = true ] && jvmx+=("-Xlog:gc,safepoint:file=$OUT/$name/gc.log:time,uptimemillis,level,tags")
+    # GAME_JVM="-XX:+UseZGC -XX:+ZGenerational": JVM options for this run (after ours, so they win; GAME_XMX=8G
+    # sets the heap, default 3G)
+    [ -n "${GAME_JVM:-}" ] && { read -ra _jvm <<< "$GAME_JVM"; jvmx+=("${_jvm[@]}"); echo "JVM options: $GAME_JVM"; }
     MCMETAL_CONTROL=$([ -n "${GAME_SEGMENTS:-}" ] && echo "$OUT/$name/control") \
     MCMETAL_BACKGROUND=${MCMETAL_BACKGROUND-behind} \
     MGL_LOG="$OUT/$name/mgl.log" MGL_SHOT_DIR="$OUT/$name" MGL_SHOT_EVERY=${MGL_SHOT_EVERY-10} \
@@ -167,6 +173,7 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
                 bench_from=$(grep -c '\] fps ' "$WORK/client.log" 2>/dev/null)
                 echo "world on screen, measuring ${GAME_BENCH_SECS:-30}s"
                 cp "$OUT/$name/glprof.txt" "$OUT/$name/glprof-start.txt" 2>/dev/null; local from_s; from_s=$(date +%s)
+                gc_window="$from_s $((from_s + ${GAME_BENCH_SECS:-30}))"
                 sleep "${GAME_BENCH_SECS:-30}"
                 if [ "${GAME_PROFILE:-}" = true ]; then
                     cp "$OUT/$name/glprof.txt" "$OUT/$name/glprof-end.txt" 2>/dev/null
@@ -214,6 +221,11 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
         head -12 "$OUT/$name/jfr-report.txt"
     fi
     rm -f "$WORK/rec.jfr"; jfr_window=
+    if [ -n "${gc_window:-}" ] && [ -f "$OUT/$name/gc.log" ]; then # JVM pauses in the measured window
+        python3 -I "$SRC/tools/gc_report.py" "$OUT/$name/gc.log" $gc_window > "$OUT/$name/gc-report.txt" 2>&1
+        cat "$OUT/$name/gc-report.txt"
+    fi
+    gc_window=
     cp "$WORK/client.log" "$OUT/$name/client.log" 2>/dev/null
     # mcmetal clears the mod's start marker once real screens are drawn; left behind, the next launch would
     # fall back to Apple's OpenGL, so report it and clear it for the next phase

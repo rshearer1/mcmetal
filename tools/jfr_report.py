@@ -9,10 +9,12 @@ code every ~20 ms (jdk.NativeMethodSample: e.g. inside a GL call, i.e. in mcmeta
   - share of samples by mod (first Iris/Sodium/NeoForge/Minecraft frame from the top of the stack),
   - the hottest methods where Java was itself running (self time),
   - the hottest methods anywhere on the stack (inclusive), Iris and Sodium only,
-  - for native samples: which GL function, and which Iris/Sodium/Minecraft method called it.
+  - for native samples: which GL function, and which Iris/Sodium/Minecraft method called it,
+  - every thread's Java samples in the window (numbers folded: "Worker-Main-#"), e.g. chunk builders, the server.
 Only aggregated method names are printed: the recording itself (it also holds the environment) is never uploaded.
 """
 import collections
+import re
 import subprocess
 import sys
 import time
@@ -72,10 +74,13 @@ def main():
     nat_fn, nat_caller, nat_mod = collections.Counter(), collections.Counter(), collections.Counter()
     n_exec = n_nat = 0
     seen, t_lo, t_hi = collections.Counter(), None, None  # to say why nothing matched
+    by_thread = collections.Counter()  # Java samples in the window, every thread
     for typ, start, th, names in samples(tool, rec):
         seen[th] += 1
         if start is not None:
             t_lo, t_hi = min(t_lo or start, start), max(t_hi or start, start)
+            if typ == "jdk.ExecutionSample" and lo <= start <= hi:
+                by_thread[re.sub(r"\d+", "#", th or "?")] += 1
         if th not in (thread if isinstance(thread, tuple) else (thread,)) or not names or start is None or not lo <= start <= hi:
             continue
         first_mod = next((mod_of(n) for n in names if mod_of(n) not in ("JDK", "LWJGL", "other")), "other")
@@ -108,6 +113,8 @@ def main():
     table("Inside native code, by mod that called it", nat_mod, n_nat)
     table("Inside native code, by native function", nat_fn, n_nat)
     table("Inside native code, function <- calling method", nat_caller, n_nat, 40)
+    # JFR samples at most a few threads per 10 ms period, so this is a ranking of busy threads, not exact CPU time
+    table("Java running, by thread (all threads)", by_thread, sum(by_thread.values()), 15)
 
 
 if __name__ == "__main__":

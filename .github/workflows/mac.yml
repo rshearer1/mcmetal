@@ -36,6 +36,9 @@ on:
       segments:
         description: 'bench: more scenes in the same launch after each phase, a file in tests/game/segments/ (e.g. times)'
         default: ''
+      jvm:
+        description: 'JVM options for the game, e.g. "-XX:+UseZGC -XX:+ZGenerational" (bench: JVM pauses in gc-report.txt)'
+        default: ''
 defaults:
   run:
     shell: bash  # bash -eo pipefail: a failing build isn't hidden by `| tee`
@@ -159,6 +162,7 @@ jobs:
           GAME_LOOK: ${{ github.event.inputs.look }}
           GAME_AB_OFF: ${{ github.event.inputs.ab_off }}
           GAME_SEGMENTS: ${{ github.event.inputs.segments }}
+          GAME_JVM: ${{ github.event.inputs.jvm }}
           PHASE: ${{ matrix.phase }}
         run: bash tests/game/ci_game.sh ~/mcgame game-out "$PHASE"
       - uses: actions/upload-artifact@v4
