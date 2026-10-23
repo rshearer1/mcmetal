@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
-#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary sound sound-off water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-underwater ours-vista ours-vista-STYLE-TIME
+#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary sound sound-off sound-apple water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-underwater ours-vista ours-vista-STYLE-TIME
 #   menu menu-noif menu-shaders particles ab-menu ab-menu-noif ab-particles (JEI, ImmediatelyFast, Particle Rain)
 #   pack-NAME packnight-NAME packshadow-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
 #   herd-NAME (the pack over a busy farm: 240 mobs and 64 chests, for entity costs; ab-herd-NAME for A/B)
@@ -445,7 +445,8 @@ sound_phase() { # name [VAR=value ...]
     cp "$G/options.txt" "$G/options.txt.sound"
     sed -i.bak 's/^soundCategory_master:.*/soundCategory_master:1.0/' "$G/options.txt" # at 0 Minecraft plays no sounds at all
     run_phase "$name" 180 metal false "$@"
-    grep -hE "\[mcmetal\] (audio|sound physics)" "$OUT/$name/client.log" | sort | uniq -c
+    grep -hE "\[mcmetal\] (audio|sound)|\[mcmetal-al\]" "$OUT/$name/client.log" | sort | uniq -c | head -20
+    [ -f "$OUT/$name/played.caf" ] && echo "recorded output: $(du -h "$OUT/$name/played.caf" | cut -f1)"
     grep -hE "OpenAL|Sound engine started|sound_physics.*(ERROR|Exception)" "$OUT/$name/client.log" | head -5
     rm -rf "$d" "$G/mods/sound-physics-remastered.jar"
     mv "$G/options.txt.sound" "$G/options.txt"
@@ -465,6 +466,7 @@ for p in $PHASES; do
     complementary) run_phase complementary 300 metal true ;;
     sound) sound_phase sound ;;                       # Sound Physics Remastered, rays off the sound engine thread
     sound-off) sound_phase sound-off MCMETAL_SOUND_PHYSICS_ASYNC=0 ;;  # the same with the fix off
+    sound-apple) sound_phase sound-apple MCMETAL_AUDIO_ENGINE=apple MCMETAL_AL_TAP="$OUT/sound-apple/played.caf" ;;  # on Apple's audio engine (libmcmetal-al)
     water) scene noon; run_phase water 150 metal false ;;                  # Sodium water, glass, waterfall
     water-shaders) scene noon; run_phase water-shaders 240 metal true ;;  # Complementary water + reflections
     night) scene midnight; run_phase night 240 metal true ;;             # Complementary at night, ACT off (as shipped)

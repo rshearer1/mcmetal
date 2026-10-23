@@ -86,6 +86,8 @@ jobs:
             done
           done
           echo "10 runs clean"
+      - name: Audio engine test (libmcmetal-al, MCMETAL_AUDIO_ENGINE=apple)
+        run: MCMETAL_AL_LOG=1 ./build/al_test 2>&1 | tee al-test.txt
       - name: Crash reports from the smoke tests
         if: failure()
         run: |
@@ -149,6 +151,7 @@ jobs:
             build/libmcmetal.dylib
             build/libglfw.dylib
             build/libglprof-mcmetal.dylib
+            build/libmcmetal-al.dylib
             build/gl_smoke
       - uses: actions/upload-artifact@v4
         if: always()
@@ -157,6 +160,7 @@ jobs:
           path: |
             build.log
             smoke*.txt
+            al-test.txt
             smoke*-mgl.log
             msl/
 

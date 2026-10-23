@@ -26,6 +26,13 @@ clang -arch arm64 -dynamiclib -o build/libmcmetal.dylib build/obj/*.o $D/libspir
     -install_name @rpath/libmcmetal.dylib -framework Metal -framework MetalFX -framework QuartzCore -framework Foundation -framework AppKit
 echo "libmcmetal: $(nm -gU build/libmcmetal.dylib | grep -c ' _gl') GL symbols exported"
 
+# 3a. libmcmetal-al.dylib: OpenAL on Apple's AVAudioEngine (audio/mcm_al.m), used when MCMETAL_AUDIO_ENGINE=apple
+clang "${CFLAGS[@]}" -fobjc-arc -dynamiclib audio/mcm_al.m -o build/libmcmetal-al.dylib -install_name @rpath/libmcmetal-al.dylib \
+    -framework AVFoundation -framework AudioToolbox -framework CoreAudio -framework Foundation
+echo "libmcmetal-al: $(nm -gU build/libmcmetal-al.dylib | grep -c ' _al') OpenAL symbols exported"
+clang "${CFLAGS[@]}" -fobjc-arc tests/al_test.m -o build/al_test -Lbuild -lmcmetal-al -Wl,-rpath,@executable_path \
+    -framework AVFoundation -framework Foundation
+
 # 3b. glprof (tools/glprof.h): GL call profiler that wraps exactly the GL functions libmcmetal exports
 nm -gU build/libmcmetal.dylib | grep ' _gl' > build/gen/mcmetal-gl-names.txt
 python3 -I gen/gen_glprof.py build/gl.xml build/gen/glprof_gen.c build/gen/mcmetal-gl-names.txt
