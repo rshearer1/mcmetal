@@ -11,11 +11,14 @@ void *mgl_hc_calloc(size_t c, size_t n, const char *file, int line);
 void *mgl_hc_realloc(void *p, size_t n, const char *file, int line);
 char *mgl_hc_strdup(const char *s, const char *file, int line);
 void mgl_hc_free(void *p, const char *file, int line);
+static inline void *mgl_hc_calloc_at(const char *file, int line, size_t c, size_t n) { return mgl_hc_calloc(c, n, file, line); }
+static inline void *mgl_hc_realloc_at(const char *file, int line, void *p, size_t n) { return mgl_hc_realloc(p, n, file, line); }
 #ifndef MGL_HEAPCHECK_IMPL
-#define malloc(n) mgl_hc_malloc((n), __FILE__, __LINE__)
-#define calloc(c, n) mgl_hc_calloc((c), (n), __FILE__, __LINE__)
-#define realloc(p, n) mgl_hc_realloc((p), (n), __FILE__, __LINE__)
-#define strdup(s) mgl_hc_strdup((s), __FILE__, __LINE__)
-#define free(p) mgl_hc_free((p), __FILE__, __LINE__)
+/* variadic: an Objective-C message in the argument ([x a:b, c]) has commas the preprocessor would split on */
+#define malloc(...) mgl_hc_malloc((__VA_ARGS__), __FILE__, __LINE__)
+#define calloc(...) mgl_hc_calloc_at(__FILE__, __LINE__, __VA_ARGS__)
+#define realloc(...) mgl_hc_realloc_at(__FILE__, __LINE__, __VA_ARGS__)
+#define strdup(...) mgl_hc_strdup((__VA_ARGS__), __FILE__, __LINE__)
+#define free(...) mgl_hc_free((__VA_ARGS__), __FILE__, __LINE__)
 #endif
 #endif
