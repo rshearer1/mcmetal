@@ -435,10 +435,10 @@ for p in $PHASES; do
     ours-caustics-mask) GAME_LOOK="-90 45" scene 6000 clear pool; PACK_OPTS="DEBUG_VIEW=7 ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-caustics-mask 180 metal true ;;
     ours-underwater) GAME_LOOK="-90 -10" scene 6000 clear pool_under; PACK=mcmetal-rt-pack run_phase ours-underwater 180 metal true ;;
     ours-sky) GAME_LOOK="-60 -25" scene 2000; PACK=mcmetal-rt-pack run_phase ours-sky 180 metal true ;;  # clouds
-    ours-vista) GAME_LOOK="${VISTA_LOOK:-90 4}" scene ${VISTA_TIME:-noon}; PACK=mcmetal-rt-pack run_phase ours-vista 180 metal true ;;  # open land and sky, away from the test stages (style shots)
+    ours-vista) GAME_TP="${VISTA_TP:-~ 88 ~ 90 10}" scene ${VISTA_TIME:-noon}; PACK=mcmetal-rt-pack run_phase ours-vista 180 metal true ;;  # open land and sky from y 88, away from the test stages (style shots)
     ours-vista-*-*) # ours-vista-<STYLE>-<noon|sunset|night>: one look at one time of day, for style comparisons
         v=${p#ours-vista-}; t=${v#*-}; case $t in sunset) t=12600 ;; night) t=18000 ;; esac
-        GAME_LOOK="${VISTA_LOOK:-90 4}" scene $t; PACK_OPTS="STYLE=${v%%-*} ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase $p 180 metal true ;;
+        GAME_TP="${VISTA_TP:-~ 88 ~ 90 10}" scene $t; PACK_OPTS="STYLE=${v%%-*} ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase $p 180 metal true ;;
     ours-gl) scene 1500; PACK=mcmetal-rt-pack run_phase ours-gl 180 metal true MCMETAL_DISABLE=1 ;; # shadow-map fallback on Apple GL
     nether) scene noon clear nether; run_phase nether 180 metal false ;;                       # Nether room, Sodium
     nether-shaders) scene noon clear nether; run_phase nether-shaders 240 metal true ;;      # Nether room, Complementary
