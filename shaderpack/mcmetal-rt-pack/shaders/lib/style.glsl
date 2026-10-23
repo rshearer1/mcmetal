@@ -18,8 +18,7 @@
     #define STYLE_FOLIAGE vec4(1.25, 1.10, 0.45, 0.50)   // rgb: colour (luma-normalised), a: how far towards it
     #define STYLE_WATER vec4(0.45, 0.95, 0.85, 0.40)
     #define STYLE_PAINT                                  // painted brush-stroke finish (final.fsh)
-    #define STYLE_CLOUD vec4(0.04, 0.80, 0.25, 1.0)      // clouds: x more cover, y size, z edge softness, w brightness
-    #define STYLE_CLOUD_SHADE vec3(1.00, 0.86, 0.78)     // the shaded underside: warm
+    // clouds: the default set. Own cloud values brought out an mcmetal memory bug at shader load on GitHub's Mac (being fixed)
 #elif STYLE == 2        // Witchy: violet dusks and nights, bright purple moonlight, aurora, ember torches, thick valley mist
     #define STYLE_SKY_PAINT 0.85
     #define STYLE_SUN_TINT vec3(0.98, 0.92, 0.95)
