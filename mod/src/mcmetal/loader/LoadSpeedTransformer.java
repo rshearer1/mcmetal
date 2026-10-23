@@ -154,8 +154,9 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
     }
 
     static void carryOnNames(ClassNode c) {
-        // addWithWildcards(): key.toString() twice in the loop over all ids; initConfigLists(): the end
-        java.util.List<MethodInsnNode> names = new java.util.ArrayList<>();
+        // addWithWildcards(): registry.keySet().toArray(...) once, key.toString() twice in the loop over it;
+        // initConfigLists(): the end
+        java.util.List<MethodInsnNode> names = new java.util.ArrayList<>(), arrays = new java.util.ArrayList<>();
         java.util.List<AbstractInsnNode> ends = new java.util.ArrayList<>();
         MethodNode init = null;
         for (MethodNode m : c.methods) {
@@ -170,21 +171,27 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
                 if (isAdd && n instanceof MethodInsnNode mi && mi.getOpcode() == Opcodes.INVOKEVIRTUAL
                         && mi.owner.equals("net/minecraft/resources/ResourceLocation") && mi.name.equals("toString"))
                     names.add(mi);
+                if (isAdd && n instanceof MethodInsnNode mi && mi.getOpcode() == Opcodes.INVOKEINTERFACE && mi.owner.equals("java/util/Set")
+                        && mi.name.equals("toArray") && mi.desc.equals("([Ljava/lang/Object;)[Ljava/lang/Object;")
+                        && prev(mi) instanceof TypeInsnNode t && t.getOpcode() == Opcodes.ANEWARRAY
+                        && t.desc.equals("net/minecraft/resources/ResourceLocation"))
+                    arrays.add(mi);
             }
         }
         ClassNode hooks = GpuCullTransformer.readHooks(NAME_HOOKS);
         if (hooks != null && hooks.methods.stream().anyMatch(m -> m.name.equals("<clinit>")))
             hooks = null;
-        if (init == null || names.size() != 2 || ends.isEmpty() || hooks == null) {
+        if (init == null || names.size() != 2 || arrays.size() != 1 || ends.isEmpty() || hooks == null) {
             MetalBootstrap.log("load fixes: Carry On's config lists are not the expected ones, left as they are");
             return;
         }
         GpuCullTransformer.merge(hooks, c);
+        redirect(arrays.get(0), c.name, "keys", "(Ljava/util/Set;[Ljava/lang/Object;)[Ljava/lang/Object;");
         for (MethodInsnNode mi : names)
             redirect(mi, c.name, "name", "(Ljava/lang/Object;)Ljava/lang/String;");
         for (AbstractInsnNode n : ends)
             init.instructions.insertBefore(n, new MethodInsnNode(Opcodes.INVOKESTATIC, c.name, PREFIX + "done", "()V", false));
-        MetalBootstrap.log("load fixes: Carry On's wildcard lists reuse each id's name (MCMETAL_LOAD_FIXES)");
+        MetalBootstrap.log("load fixes: Carry On's wildcard lists name each id once (MCMETAL_LOAD_FIXES)");
     }
 
     static void kubeMatches(ClassNode c) {
