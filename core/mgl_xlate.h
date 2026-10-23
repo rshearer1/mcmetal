@@ -98,6 +98,9 @@ void mgl_xlate_free(mgl_xlate_result *r);
 void mgl_xlate_set_deferred(int on);
 int mgl_xlate_emit(void *pending[MGL_NUM_STAGES], char *msl[MGL_NUM_STAGES], char **log);
 /* Programs with a geometry shader: src = {vertex, fragment, NULL} as for mgl_xlate_program. */
+/* function constant ids of the geometry compute's vertex format: MGL_GS_FC + 2 * location is the attribute's buffer,
+   + 1 its format word (see mgl_fetchf in core/mgl_gs.c) */
+#define MGL_GS_FC 200
 void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl_xlate_result *out);
 /* Internal buffers for geometry emulation: GLSL storage blocks named "mgl_i<N>_" map to MSL buffer
    MGL_BUF_INTERNAL_BASE + N (only in compute and the passthrough vertex stage, where no vertex buffers are bound). */

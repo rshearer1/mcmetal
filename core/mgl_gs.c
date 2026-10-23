@@ -681,13 +681,16 @@ static const char *compute_prelude =
     "  uint w = mgl_word(b, off >> 2u);\n  if (size == 4u) return w;\n"
     "  return (w >> ((off & 3u) * 8u)) & ((1u << (size * 8u)) - 1u);\n}\n"
     /* attribute descriptor: x buffer (-1 none), y byte offset, z stride, w type | size << 4 | normalized << 8 */
-    "vec4 mgl_fetchf(int loc, uint v) {\n"
-    "  ivec4 a = mgl_attr[loc];\n  vec4 r = vec4(0.0, 0.0, 0.0, 1.0);\n  if (a.x < 0) return r;\n"
-    "  int type = a.w & 15;\n  int n = (a.w >> 4) & 7;\n  bool norm = ((a.w >> 8) & 1) != 0;\n"
+    /* kb, kf: the attribute's buffer and format word as function constants (kb -1: not set, read the descriptor;
+       -2: no attribute), so a pipeline made for one vertex format drops the type switch and the buffer choice */
+    "vec4 mgl_fetchf(int loc, uint v, int kb, int kf) {\n"
+    "  ivec4 a = mgl_attr[loc];\n  vec4 r = vec4(0.0, 0.0, 0.0, 1.0);\n"
+    "  int ab = kb == -1 ? a.x : kb == -2 ? -1 : kb;\n  int aw = kb == -1 ? a.w : kf;\n  if (ab < 0) return r;\n"
+    "  int type = aw & 15;\n  int n = (aw >> 4) & 7;\n  bool norm = ((aw >> 8) & 1) != 0;\n"
     "  uint sz = (type == 0 || type >= 6) ? 4u : (type == 1 || type == 4 || type == 5) ? 2u : 1u;\n"
     "  uint base = uint(a.y) + v * uint(a.z);\n"
     "  for (int c = 0; c < 4; c++) {\n    if (c >= n) break;\n"
-    "    uint b = mgl_bits(a.x, base + uint(c) * sz, sz);\n    float f;\n"
+    "    uint b = mgl_bits(ab, base + uint(c) * sz, sz);\n    float f;\n"
     "    if (type == 0) f = uintBitsToFloat(b);\n"
     "    else if (type == 1) f = unpackHalf2x16(b).x;\n"
     "    else if (type == 2) f = norm ? float(b) / 255.0 : float(b);\n"
@@ -696,13 +699,14 @@ static const char *compute_prelude =
     "    else if (type == 5) { int s = int(b << 16u) >> 16; f = norm ? max(float(s) / 32767.0, -1.0) : float(s); }\n"
     "    else if (type == 6) f = float(b);\n    else f = float(int(b));\n"
     "    r[c] = f;\n  }\n  return r;\n}\n"
-    "ivec4 mgl_fetchi(int loc, uint v) {\n"
-    "  ivec4 a = mgl_attr[loc];\n  ivec4 r = ivec4(0, 0, 0, 1);\n  if (a.x < 0) return r;\n"
-    "  int type = a.w & 15;\n  int n = (a.w >> 4) & 7;\n"
+    "ivec4 mgl_fetchi(int loc, uint v, int kb, int kf) {\n"
+    "  ivec4 a = mgl_attr[loc];\n  ivec4 r = ivec4(0, 0, 0, 1);\n"
+    "  int ab = kb == -1 ? a.x : kb == -2 ? -1 : kb;\n  int aw = kb == -1 ? a.w : kf;\n  if (ab < 0) return r;\n"
+    "  int type = aw & 15;\n  int n = (aw >> 4) & 7;\n"
     "  uint sz = (type == 0 || type >= 6) ? 4u : (type == 1 || type == 4 || type == 5) ? 2u : 1u;\n"
     "  uint base = uint(a.y) + v * uint(a.z);\n"
     "  for (int c = 0; c < 4; c++) {\n    if (c >= n) break;\n"
-    "    uint b = mgl_bits(a.x, base + uint(c) * sz, sz);\n    int x;\n"
+    "    uint b = mgl_bits(ab, base + uint(c) * sz, sz);\n    int x;\n"
     "    if (type == 3) x = int(b << 24u) >> 24;\n    else if (type == 5) x = int(b << 16u) >> 16;\n"
     "    else if (type == 0) x = int(uintBitsToFloat(b));\n    else x = int(b);\n"
     "    r[c] = x;\n  }\n  return r;\n}\n"
@@ -934,6 +938,10 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
     sb_printf(&comp, "  mgl_ov[mgl_rec + %du] = uintBitsToFloat(mgl_strip);\n  mgl_emitted++;\n}\n"
                      "void mgl_end_primitive() { mgl_strip++; }\n", R - 1);
     /* one vertex-stage run: fetch the attributes of vtx, run the vertex shader, store the results as input c */
+    for (int i = 0; i < nattrs; i++) /* see mgl_fetchf; set by mglb_draw_gs once a draw's vertex format is known */
+        sb_printf(&comp, "layout(constant_id = %d) const int mgl_kb%d = -1;\nlayout(constant_id = %d) const int mgl_kf%d = 0;\n",
+                  MGL_GS_FC + 2 * attrs[i].location, attrs[i].location, MGL_GS_FC + 2 * attrs[i].location + 1,
+                  attrs[i].location);
     sb_puts(&comp, "void mgl_run_vs(uint vtx, int c) {\n    mgl_vertex_id = int(vtx);\n    mgl_instance_id = 0;\n");
     for (int i = 0; i < nattrs; i++) {
         vs_attr *a = &attrs[i];
@@ -942,12 +950,15 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
             sb_printf(&comp, "    %s = %s(%s(%s(1)));\n", a->renamed, a->type, a->is_int || a->is_uint ? "ivec4" : "vec4",
                       a->is_int || a->is_uint ? "" : "0.5 * float");
         else
-            sb_printf(&comp, "    %s = %s(%s(%d, vtx)%s);\n", a->renamed, a->type, fetch, a->location, swz[a->comps]);
+            sb_printf(&comp, "    %s = %s(%s(%d, vtx, mgl_kb%d, mgl_kf%d)%s);\n", a->renamed, a->type, fetch, a->location,
+                      a->location, a->location, swz[a->comps]);
     }
     if (probe == 5) { /* fetch only: keep the fetched attributes alive through the position, no vertex shader */
         sb_puts(&comp, "    vec4 mgl_probe_sum = vec4(0.0);\n");
         for (int i = 0; i < nattrs; i++)
-            sb_printf(&comp, "    mgl_probe_sum += vec4(%s(%d, vtx));\n", attrs[i].is_int || attrs[i].is_uint ? "mgl_fetchi" : "mgl_fetchf", attrs[i].location);
+            sb_printf(&comp, "    mgl_probe_sum += vec4(%s(%d, vtx, mgl_kb%d, mgl_kf%d));\n",
+                      attrs[i].is_int || attrs[i].is_uint ? "mgl_fetchi" : "mgl_fetchf", attrs[i].location,
+                      attrs[i].location, attrs[i].location);
     }
     sb_puts(&comp, probe == 5 ? "    mgl_v_Position = mgl_probe_sum * 1e-6 + vec4(0.0, 0.0, 0.0, 1.0);\n    mgl_v_PointSize = 1.0;\n" :
                    probe == 2 ? "    mgl_v_Position = vec4(0.0, 0.0, 0.0, 1.0);\n    mgl_v_PointSize = 1.0;\n" : "    mgl_v_Position = vec4(0.0, 0.0, 0.0, 1.0);\n    mgl_v_PointSize = 1.0;\n    mgl_v_init();\n    mgl_v_main();\n");
