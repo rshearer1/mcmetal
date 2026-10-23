@@ -934,14 +934,17 @@ static void mem_sweep(void)
             tr_cur = i;
     }
     for (int c = 0; c < POOL_CLASSES; c++)
-        for (struct mglb_buffer **pp = &pool[c]; *pp;) {
+        for (struct mglb_buffer **pp = &pool[c], *prev = NULL; *pp;) {
             struct mglb_buffer *b = *pp;
             if (b->last_use > done) { /* the GPU may still read it: leave it alone */
+                prev = b;
                 pp = &b->next_free;
                 continue;
             }
             if (t - b->pooled_ns >= TRIM_IDLE_NS) {
                 *pp = b->next_free;
+                if (pool_tail[c] == b) /* else the next release links onto freed memory */
+                    pool_tail[c] = prev;
                 pool_count[c]--;
                 buf_pooled_bytes -= b->cap;
                 if (b->purgeable)
@@ -956,6 +959,7 @@ static void mem_sweep(void)
                 b->purgeable = 1;
                 buf_purgeable_bytes += b->cap;
             }
+            prev = b;
             pp = &b->next_free;
         }
 }
