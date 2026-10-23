@@ -7,3 +7,4 @@ uniform float nightVision, blindness, darknessFactor;
 uniform int frameCounter, isEyeInWater, heldBlockLightValue, heldBlockLightValue2, renderStage, moonPhase, worldTime;
 uniform ivec2 eyeBrightnessSmooth;
 uniform vec4 entityColor;
+uniform bool hasSkylight;   // false in worlds without sky light (Nether, End)

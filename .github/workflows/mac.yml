@@ -204,6 +204,9 @@ jobs:
         run: |
           IFS='&' read -ra P <<< "$PHASE"  # "title&world": both phases, one after the other, on this Mac
           bash tests/game/ci_game.sh ~/mcgame game-out "${P[@]}"
+      - name: Biome cache matches Minecraft's getBiome (real 1.21.1 classes, 8 threads on Apple silicon)
+        if: ${{ !cancelled() && contains(matrix.phase, 'world') }}
+        run: bash tests/biome/check.sh ~/mcgame
       - uses: actions/upload-artifact@v4
         if: always()
         with:

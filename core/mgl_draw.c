@@ -475,6 +475,7 @@ static int build_draw(mgl_draw *d)
         mgl_program_jitter(p, mgl->current_program, &d->target, d->depth_test || d->depth_write);
     gather_uniforms(d, p);
     d->uses_scene = p->x.uses_scene;
+    d->copy_fs = p->copy_fs;
     gather_textures(d, p, 0);
     d->instances = 1;
     return 1;

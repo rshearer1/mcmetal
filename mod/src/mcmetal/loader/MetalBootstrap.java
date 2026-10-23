@@ -90,7 +90,17 @@ public final class MetalBootstrap implements GraphicsBootstrapper {
                     #
                     # Terrain chunks out of view are skipped on the GPU. Turn it off if terrain ever goes missing.
                     #MCMETAL_GPU_CULL=0
+                    #
+                    # Experimental, with a shader pack: mobs and block entities far away for their size cast no
+                    # shadow (a cow's shadow goes at ~45 blocks), to save time in busy farms. Bigger keeps more.
+                    #MCMETAL_SHADOW_ENTITY_LOD=32
                     """);
+        // the native side reads this file itself; the Java side (in-memory patches) sees it as mcmetal.opt.NAME
+        for (String line : Files.readAllLines(options)) {
+            int eq = line.indexOf('=');
+            if (!line.startsWith("#") && eq > 0)
+                System.setProperty("mcmetal.opt." + line.substring(0, eq).trim(), line.substring(eq + 1).trim());
+        }
         Path gl = unpack("libmcmetal.dylib", dir);
         Path glfw = unpack("libglfw.dylib", dir); // finds libmcmetal.dylib next to itself
         Files.writeString(marker, "mcmetal was starting at " + java.time.Instant.now() + "\n");
