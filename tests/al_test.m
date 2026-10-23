@@ -201,6 +201,16 @@ int main(void) {
             }
             printf("segment %d: %.2f-%.2f s, rms left %.4f right %.4f\n", s + 1, seg[s][0], seg[s][1], rms[s][0], rms[s][1]);
         }
+        { /* how the muffled segment's level runs over time, 50 ms steps (diagnostics) */
+            long a = (long)((seg[2][0] + shift - 0.1) * rate), b = (long)((seg[2][1] + shift + 0.1) * rate), n = (long)(0.05 * rate);
+            printf("segment 3 envelope:");
+            for (long i = MAX(a, 0); i + n <= MIN(b, (long)pcm.frameLength); i += n) {
+                double e = 0;
+                for (long k = i; k < i + n; k++) e += d[0][k] * d[0][k];
+                printf(" %.4f", sqrt(e / n));
+            }
+            printf("\n");
+        }
         check(rms[0][1] > 1.5 * rms[0][0], "a sound to the right is louder on the right");
         check(rms[1][0] > 1.5 * rms[1][1], "a sound to the left is louder on the left");
         check(rms[2][0] + rms[2][1] < 0.1 * (rms[0][0] + rms[0][1]), "a zero-gain low-pass filter silences it");

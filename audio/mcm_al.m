@@ -926,7 +926,8 @@ static void playNow(MCSource *s, BOOL keepProcessed) {
     apply(s);
     if (!d.running) startEngine(d);
     if (d.running) [s.node play];
-    if (verbose()) lg("source %u plays %s (%s)", s.name, s.queue.count ? "a stream" : "a buffer", s.toEnv ? "3D" : "flat");
+    if (verbose()) lg("source %u plays %s (%s), volume %.3f obstruction %.0f dB reverb %.2f", s.name, s.queue.count ? "a stream" : "a buffer",
+                      s.toEnv ? "3D" : "flat", s.node.volume, s.toEnv ? s.node.obstruction : 0, s.toEnv ? s.node.reverbBlend : 0);
 }
 
 /* after an engine restart (lock held): streams carry on from the buffer they were on */
