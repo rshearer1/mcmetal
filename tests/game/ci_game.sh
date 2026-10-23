@@ -1,7 +1,8 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
-#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-underwater ours-vista ours-vista-STYLE-TIME
+#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary sound sound-off water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-underwater ours-vista ours-vista-STYLE-TIME
 #   pack-NAME packnight-NAME packshadow-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
+#   herd-NAME (the pack over a busy farm: 240 mobs and 64 chests, for entity costs; ab-herd-NAME for A/B)
 #   glcount-pack-NAME (the pack on Apple's OpenGL, draws counted by tools/glcount.c)
 #   ab-pack-NAME ab-packnight-NAME (the pack three times in one job: new, old = with GAME_AB_OFF's env, new)
 #   archive-NAME (pipeline binary archive: cold, warm, warm without archive)
@@ -279,6 +280,7 @@ scene() { # time [weather [stage]]: copy the test datapack into the world; it bu
     [ "${3:-scene}" = room ] && echo 'tp @s ~ ~ ~ -90 12' > "$f/look.mcfunction"
     [ "${3:-scene}" = nether ] && echo 'tp @s 0.5 64 0.5 -90 7' > "$f/look.mcfunction" # held in the Nether room
     [ "${3:-scene}" = dh ] && echo 'tp @s 0.5 150 0.5 -45 12' > "$f/look.mcfunction" # high up, looking at the horizon
+    [ "${3:-scene}" = herd ] && echo 'tp @s ~ ~ ~ -90 20' > "$f/look.mcfunction" # above the farm, looking down at it
     [ -n "${GAME_LOOK:-}" ] && echo "tp @s ~ ~ ~ $GAME_LOOK" > "$f/look.mcfunction" # GAME_LOOK="yaw pitch"
     [ -n "${GAME_TP:-}" ] && echo "tp @s $GAME_TP" > "$f/look.mcfunction" # GAME_TP="~0.1 ~ ~ ~2 7": walk and turn each tick
     return 0
@@ -353,7 +355,7 @@ bsl|MULTICOLORED_BLOCKLIGHT=true
 unbound|COLORED_LIGHTING=128
 complementary|COLORED_LIGHTING=128"
 
-third_party() { # pack-NAME / packnight-NAME / packshadow-NAME [OUTNAME [VAR=value ...]]: one third-party pack in the pool scene, at
+third_party() { # pack-NAME / packnight-NAME / packshadow-NAME / herd-NAME [OUTNAME [VAR=value ...]]: one third-party pack in the pool scene, at
                 # noon (pack settings as shipped) or midnight (coloured block light on); packshadow: the shadows room
     local p=$1 out=${2:-$1} name=${1#*-} file url sha extra=
     shift; [ $# -gt 0 ] && shift
@@ -373,6 +375,7 @@ third_party() { # pack-NAME / packnight-NAME / packshadow-NAME [OUTNAME [VAR=val
     case $p in
     packnight-*|packshadow-*) scene midnight clear "$([ "${p%%-*}" = packshadow ] && echo shadows || echo scene)"
         grep "^${name%%+*}|" <<< "$PACK_LIGHT" | cut -d'|' -f2 > "$opts"; [ -s "$opts" ] || rm -f "$opts" ;;
+    herd-*) scene noon clear herd ;; # herd-NAME: the busy farm (240 mobs, 64 chests) for entity costs
     *) scene noon ;;
     esac
     [ -n "$extra" ] && tr ',' '\n' <<< "$extra" >> "$opts"
@@ -381,6 +384,35 @@ third_party() { # pack-NAME / packnight-NAME / packshadow-NAME [OUTNAME [VAR=val
     rm -f "$G/mods/euphoria-patcher.jar"
     [ "$url" != - ] && rm -rf "$G/shaderpacks/$file"
     rm -rf "$G/shaderpacks/$EUPHORIA_PACK"*
+}
+
+# Sound Physics Remastered (echoes and muffling, ray traced per sound), fetched at run time and removed after: checks
+# that mcmetal moves its rays off the sound engine thread (MCMETAL_SOUND_PHYSICS_ASYNC) without errors. A small
+# datapack plays ten note-block sounds around the player once a second. Correctness only; listen on a real Mac.
+SPR="https://cdn.modrinth.com/data/qyVF9oeo/versions/Dd2tmpsk/sound-physics-remastered-neoforge-1.21.1-1.5.1.jar|a5ac35ccb902231047709530a5708fb71dc3e3b5"
+sound_phase() { # name [VAR=value ...]
+    local url sha name=$1 d="$G/saves/metal/datapacks/mcm-sound"; shift
+    IFS='|' read -r url sha <<< "$SPR"
+    python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import bare_mc; bare_mc.fetch(*sys.argv[2:])' \
+        "$SRC/tools" "$url" "$G/mods/sound-physics-remastered.jar" "$sha" || { echo "could not download Sound Physics Remastered"; return; }
+    rm -rf "$d"; mkdir -p "$d/data/mcmsound/function" "$d/data/minecraft/tags/function"
+    echo '{"pack":{"pack_format":48,"description":"mcmetal sound test"}}' > "$d/pack.mcmeta"
+    echo '{"values":["mcmsound:tick"]}' > "$d/data/minecraft/tags/function/tick.json"
+    echo '{"values":["mcmsound:load"]}' > "$d/data/minecraft/tags/function/load.json"
+    echo 'scoreboard objectives add mcmsound dummy' > "$d/data/mcmsound/function/load.mcfunction"
+    printf '%s\n' 'scoreboard players add #t mcmsound 1' 'execute if score #t mcmsound matches 20.. run function mcmsound:burst' \
+        'execute if score #t mcmsound matches 20.. run scoreboard players set #t mcmsound 0' > "$d/data/mcmsound/function/tick.mcfunction"
+    local i; : > "$d/data/mcmsound/function/burst.mcfunction"
+    for i in 0 1 2 3 4 5 6 7 8 9; do
+        echo "execute as @a at @s run playsound minecraft:block.note_block.harp block @s ~$((i - 5)) ~1 ~$((i % 3 + 2)) 1 1" >> "$d/data/mcmsound/function/burst.mcfunction"
+    done
+    cp "$G/options.txt" "$G/options.txt.sound"
+    sed -i.bak 's/^soundCategory_master:.*/soundCategory_master:1.0/' "$G/options.txt" # at 0 Minecraft plays no sounds at all
+    run_phase "$name" 180 metal false "$@"
+    grep -hE "\[mcmetal\] (audio|sound physics)" "$OUT/$name/client.log" | sort | uniq -c
+    grep -hE "OpenAL|Sound engine started|sound_physics.*(ERROR|Exception)" "$OUT/$name/client.log" | head -5
+    rm -rf "$d" "$G/mods/sound-physics-remastered.jar"
+    mv "$G/options.txt.sound" "$G/options.txt"
 }
 
 for p in $PHASES; do
@@ -395,6 +427,8 @@ for p in $PHASES; do
             grep -E "use|FAIL|cutout|replayed|failed" "$OUT/world/replay-sodium-cutout.txt"
         fi ;;
     complementary) run_phase complementary 300 metal true ;;
+    sound) sound_phase sound ;;                       # Sound Physics Remastered, rays off the sound engine thread
+    sound-off) sound_phase sound-off MCMETAL_SOUND_PHYSICS_ASYNC=0 ;;  # the same with the fix off
     water) scene noon; run_phase water 150 metal false ;;                  # Sodium water, glass, waterfall
     water-shaders) scene noon; run_phase water-shaders 240 metal true ;;  # Complementary water + reflections
     night) scene midnight; run_phase night 240 metal true ;;             # Complementary at night, ACT off (as shipped)
@@ -466,7 +500,7 @@ for p in $PHASES; do
         third_party "$inner" "$p-new1"
         third_party "$inner" "$p-old" ${GAME_AB_OFF:-}
         third_party "$inner" "$p-new2" ;;
-    pack-*|packnight-*|packshadow-*) third_party "$p" ;; # compatibility sweep: pack-photon, packnight-bsl, pack-complementary+euphoria, ...
+    pack-*|packnight-*|packshadow-*|herd-*) third_party "$p" ;; # compatibility sweep: pack-photon, packnight-bsl, pack-complementary+euphoria, ...
         # packshadow-NAME: night in the shadows room (shadows.mcfunction)
     archive-*) # Metal pipeline binary archive: the pack from an empty shader cache (archive written), again with the
                # archive, and again with the shader cache but no archive. Run with bench=true settle=0 so the fps

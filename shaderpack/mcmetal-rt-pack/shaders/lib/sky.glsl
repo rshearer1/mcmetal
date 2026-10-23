@@ -1,5 +1,8 @@
 // Our sky: single-scattering atmosphere (Nishita et al. 1993) with Rayleigh and Mie scattering, written from the
 // paper's equations. Directions are in player space (y up). Needs common.glsl.
+// The full model runs once a frame, into a small table (prepare.fsh, colortex12); everything else looks it up.
+#ifndef SKY_LIB
+#define SKY_LIB
 #include "/lib/style.glsl"
 const float R_EARTH = 6360e3, R_ATMOS = 6420e3, H_RAY = 8000.0, H_MIE = 1200.0, MIE_G = 0.76;
 const vec3 BETA_RAY = vec3(5.8e-6, 13.5e-6, 33.1e-6);
@@ -64,8 +67,37 @@ vec3 lightTransmittance(vec3 lightDir) {
 
 // full sky (sun + moon lit air, a little airglow at night), no discs. Times pi: our surfaces skip Lambert's 1/pi,
 // so the sky is scaled the same way to keep sky and ground in the right balance.
-vec3 skyColor(vec3 dir, vec3 sunDir) {
+vec3 skyColorExact(vec3 dir, vec3 sunDir) {
     vec3 c = atmosphere(dir, sunDir, SUN_INTENSITY);
     c += atmosphere(dir, -sunDir, MOON_INTENSITY) + vec3(0.0006, 0.0009, 0.0018);
     return stylePaintSky(c * PI, dir, sunDir);   // the chosen look's sky colours (lib/style.glsl)
 }
+
+// The sky table (colortex12, 128x64, shaders.properties size.buffer): the sky only depends on how high a direction
+// looks and how far round from the sun it is (the air is the same all round), so one frame's sky fits in a small
+// table: columns 0..127 the angle from the sun (0..180 degrees), rows 0..62 the elevation (its square root: more
+// rows near the horizon, where the colour changes fastest; below the horizon the sky model keeps the horizon
+// colour). Against the full model: under 0.7% off anywhere, 0.02% typical (checked offline for six sun heights). Row 63
+// holds the frame's light colours (lighting.glsl). The full model above is hundreds of operations a call, and ran per
+// sky and fog pixel, per water, glass and particle vertex and per reflection; a lookup is one filtered read.
+const float SKY_LUT_W = 128.0, SKY_LUT_H = 64.0, SKY_LUT_ROWS = 63.0;
+vec2 skyLutAngles(vec3 dir, vec3 sunDir) {   // (angle from the sun round the horizon / pi, sqrt(elevation / 90)), 0..1
+    vec2 s = normalize(sunDir.xz + 1e-4), d = normalize(dir.xz + 1e-4);
+    return vec2(acos(clamp(dot(s, d), -1.0, 1.0)) / PI, sqrt(asin(clamp(dir.y, 0.0, 1.0)) / (PI * 0.5)));
+}
+vec3 skyLutDirection(vec2 a, vec3 sunDir) {   // the inverse, for the table's texels
+    vec2 s = normalize(sunDir.xz + 1e-4);
+    float el = a.y * a.y * (PI * 0.5), ang = a.x * PI;
+    vec2 xz = (s * cos(ang) + vec2(-s.y, s.x) * sin(ang)) * cos(el);
+    return vec3(xz.x, sin(el), xz.y);
+}
+#ifndef SKY_LUT_BUILD
+uniform sampler2D colortex12;
+vec3 skyColor(vec3 dir, vec3 sunDir) {
+    vec2 a = skyLutAngles(dir, sunDir);
+    return textureLod(colortex12, (a * vec2(SKY_LUT_W - 1.0, SKY_LUT_ROWS - 1.0) + 0.5) / vec2(SKY_LUT_W, SKY_LUT_H), 0.0).rgb;
+}
+// colour of the direct sun light at the ground, this frame (row 63, texel 2)
+vec3 sunTransmittance() { return texelFetch(colortex12, ivec2(2, 63), 0).rgb; }
+#endif
+#endif
