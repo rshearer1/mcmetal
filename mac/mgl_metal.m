@@ -3945,9 +3945,7 @@ static id<MTLComputePipelineState> gs_spec_pipeline(const mglb_program *p, int32
         [cv setConstantValue:&k[i][0] type:MTLDataTypeInt atIndex:MGL_GS_FC + 2 * i];
         [cv setConstantValue:&k[i][1] type:MTLDataTypeInt atIndex:MGL_GS_FC + 2 * i + 1];
     }
-    const char *label = p->label;
-    char name[112];
-    snprintf(name, sizeof name, "%s", label);
+    NSString *name = [NSString stringWithUTF8String:p->label]; /* the block can't capture a C array */
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
       NSError *e = nil;
       id<MTLFunction> fn = [lib newFunctionWithName:@"main0" constantValues:cv error:&e];
@@ -3955,7 +3953,7 @@ static id<MTLComputePipelineState> gs_spec_pipeline(const mglb_program *p, int32
       if (!ps) {
           static int warned;
           if (!warned++)
-              mgl_log("%s: geometry compute for its vertex format failed (the general one stays): %s", name,
+              mgl_log("%s: geometry compute for its vertex format failed (the general one stays): %s", name.UTF8String,
                       e.localizedDescription.UTF8String);
           return; /* the NSNull stays: never retried */
       }
