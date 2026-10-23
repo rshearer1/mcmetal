@@ -60,6 +60,7 @@ static int opt_profile = -1;
 static struct {
     unsigned long draws, passes, reopened, dontcare, blits, computes, cbs, finishes, skipped_presents;
     unsigned long gs_draws, gs_tris, gs_bytes; /* geometry-shader draws, their input triangles and record bytes */
+    unsigned long gs_spec; /* geometry-shader jobs that ran the compute made for their vertex format */
     unsigned long sh_draws, sh_tris; /* draws and triangles into square targets of 1024+ (shadow maps), as tools/glcount.c counts */
     unsigned long tex_views, pipe_lookups, big_uniforms; /* per-draw texture views made, pipeline dictionary lookups, >4 KB uniform copies */
     uint64_t wait_ns, start_ns, frames;
@@ -1321,6 +1322,8 @@ struct mglb_program {
     void *vlib;      /* MTLLibrary of the vertex stage when it has scaled-attribute constants (else NULL) */
     void *vscaled;   /* NSMutableDictionary: scale mask -> specialised vertex MTLFunction */
     void *compute;   /* MTLComputePipelineState */
+    void *clib;      /* MTLLibrary of a geometry shader's compute stage (its vertex format is a function constant) */
+    void *cspec;     /* NSMutableDictionary: vertex format -> compute pipeline made for it (NSNull while compiling) */
     uint32_t id;
     int discards;    /* the fragment stage can discard (so a full-screen draw may not cover every pixel) */
     char label[112]; /* "GL program N [app name]", for error reports and MGL_*_PROGRAMS */
@@ -1618,10 +1621,11 @@ static id<MTLFunction> compile_fn_lib(const char *msl, NSString *what, char **er
             *err = strdup([NSString stringWithFormat:@"%@: %@", what, e.localizedDescription].UTF8String);
         return nil;
     }
-    if (strstr(msl, "mgl_vscale_")) {
+    if (strstr(msl, "[[function_constant(")) {
         if (lib_out)
             *lib_out = lib;
-        /* no constants set: every scale is 1 (a function with constants must come from this call) */
+        /* no constants set: every scale is 1, every attribute read the general way (a function with constants
+           must come from this call) */
         return [lib newFunctionWithName:@"main0" constantValues:[[MTLFunctionConstantValues alloc] init] error:&e];
     }
     return [lib newFunctionWithName:@"main0"];
@@ -1734,7 +1738,8 @@ mglb_program *mglb_program_new(const char *msl_vertex, const char *msl_fragment,
     p->id = __atomic_add_fetch(&next_id, 1, __ATOMIC_RELAXED);
     @autoreleasepool {
         if (msl_compute) {
-            id<MTLFunction> f = compile_fn(msl_compute, @"compute", err);
+            id<MTLLibrary> clib = nil;
+            id<MTLFunction> f = compile_fn_lib(msl_compute, @"compute", err, &clib);
             NSError *e = nil;
             id<MTLComputePipelineState> ps = nil;
             if (f && get_archive()) {
@@ -1758,6 +1763,10 @@ mglb_program *mglb_program_new(const char *msl_vertex, const char *msl_fragment,
                 return NULL;
             }
             p->compute = retain_obj(ps);
+            if (clib) {
+                p->clib = retain_obj(clib);
+                p->cspec = retain_obj([NSMutableDictionary dictionary]);
+            }
             if (!msl_vertex) /* geometry-shader programs carry a compute stage plus the passthrough vertex stage */
                 return p;
         }
@@ -1791,6 +1800,8 @@ void mglb_program_release(mglb_program *p)
     release_obj(p->vlib);
     release_obj(p->vscaled);
     release_obj(p->compute);
+    release_obj(p->clib);
+    release_obj(p->cspec);
     free(p);
 }
 
@@ -3903,6 +3914,56 @@ static int gs_probe_no_pass(void)
     return on;
 }
 
+/* The geometry compute made for this draw's vertex format (buffer and format word of each attribute as function
+   constants, see mgl_fetchf in core/mgl_gs.c), or nil while it compiles in the background (the general one runs
+   meanwhile, so a new format never stalls a frame). MGL_GS_SPEC=0: always the general one. */
+static id<MTLComputePipelineState> gs_spec_pipeline(const mglb_program *p, int32_t desc[16][4])
+{
+    static int on = -1;
+    if (on < 0)
+        on = !getenv("MGL_GS_SPEC") || atoi(getenv("MGL_GS_SPEC")) != 0;
+    if (!on || !p->clib)
+        return nil;
+    int32_t k[16][2];
+    for (int i = 0; i < 16; i++) {
+        k[i][0] = desc[i][0] < 0 ? -2 : desc[i][0];
+        k[i][1] = desc[i][0] < 0 ? 0 : desc[i][3];
+    }
+    NSData *key = [NSData dataWithBytes:k length:sizeof k];
+    NSMutableDictionary *cache = OBJ(NSMutableDictionary *, p->cspec);
+    id got;
+    @synchronized(cache) {
+        got = cache[key];
+        if (!got)
+            cache[key] = [NSNull null];
+    }
+    if (got)
+        return got == [NSNull null] ? nil : got;
+    id<MTLLibrary> lib = OBJ(id<MTLLibrary>, p->clib);
+    MTLFunctionConstantValues *cv = [[MTLFunctionConstantValues alloc] init];
+    for (int i = 0; i < 16; i++) { /* constants the function doesn't declare are ignored */
+        [cv setConstantValue:&k[i][0] type:MTLDataTypeInt atIndex:MGL_GS_FC + 2 * i];
+        [cv setConstantValue:&k[i][1] type:MTLDataTypeInt atIndex:MGL_GS_FC + 2 * i + 1];
+    }
+    NSString *name = [NSString stringWithUTF8String:p->label]; /* the block can't capture a C array */
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+      NSError *e = nil;
+      id<MTLFunction> fn = [lib newFunctionWithName:@"main0" constantValues:cv error:&e];
+      id<MTLComputePipelineState> ps = fn ? [dev newComputePipelineStateWithFunction:fn error:&e] : nil;
+      if (!ps) {
+          static int warned;
+          if (!warned++)
+              mgl_log("%s: geometry compute for its vertex format failed (the general one stays): %s", name.UTF8String,
+                      e.localizedDescription.UTF8String);
+          return; /* the NSNull stays: never retried */
+      }
+      @synchronized(cache) {
+          cache[key] = ps;
+      }
+    });
+    return nil;
+}
+
 void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record_floats)
 {
     if (!d->program->compute || !d->program->vfn || max_vertices < 3 || triangles <= 0)
@@ -4014,7 +4075,10 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
         pt_label("geometry-shader compute"); /* MGL_PROFILE=2/3: name its pass (it holds every GS job until the strips) */
         keep_clears = 0;
         gs_recording = 0;
-        [c setComputePipelineState:OBJ(id<MTLComputePipelineState>, d->program->compute)];
+        id<MTLComputePipelineState> gps = gs_spec_pipeline(d->program, desc);
+        if (gps)
+            prof.gs_spec++;
+        [c setComputePipelineState:gps ?: OBJ(id<MTLComputePipelineState>, d->program->compute)];
         bind_stage_resources(nil, c, d, 2);
         if (d->uses_scene)
             bind_scene(nil, c);
@@ -6111,8 +6175,9 @@ static void profile_frame(unsigned long draws)
         mgl_log("profile: shadow-sized viewports (without geometry shaders) %.0f draws, %.0fk triangles per frame",
                 prof.sh_draws / f, prof.sh_tris / f * 1e-3);
     if (prof.gs_draws) {
-        mgl_log("profile: geometry shaders %.0f draws, %.0fk input triangles, %.1f MB of records per frame", prof.gs_draws / f,
-                prof.gs_tris / f * 1e-3, prof.gs_bytes / f / 1048576.0);
+        mgl_log("profile: geometry shaders %.0f draws (%.0f with the compute made for their vertex format), %.0fk input "
+                "triangles, %.1f MB of records per frame", prof.gs_draws / f, prof.gs_spec / f, prof.gs_tris / f * 1e-3,
+                prof.gs_bytes / f / 1048576.0);
         size_t held = 0;
         for (int i = 0; i < gsc_n; i++)
             held += gsc_e[i].slab >= 0 ? gsc_e[i].len : 0;
