@@ -118,6 +118,12 @@ GLFWbool _glfwInitNSGL(void)
             }
             fclose(f);
         }
+        // Translated shaders are kept in mcmetal/cache, so a launch after the first skips glslang and SPIRV-Cross
+        // for every program (the game's own, Sodium's and a shader pack's: Complementary 10 s cold, 36 ms warm).
+        // MGL_CACHE_DIR in options.txt or the environment points it elsewhere.
+        char cache[4096];
+        snprintf(cache, sizeof(cache), "%.*s/../cache", (int) (slash - info.dli_fname), info.dli_fname);
+        setenv("MGL_CACHE_DIR", cache, 0);
     }
 
     mgl_lib = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
