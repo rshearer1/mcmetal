@@ -577,6 +577,9 @@ AL_API void alcGetIntegerv(ALCdevice *dev, ALCenum p, ALCsizei n, ALCint *v) {
         memcpy(v, attrs, sizeof(ALCint) * MIN((size_t)n, sizeof attrs / sizeof attrs[0]));
         break;
     case ALC_CAPTURE_SAMPLES: v[0] = dev && dev->isCapture ? (ALCint)captureFrames(dev) : 0; break;
+    /* ALC_SOFT_HRTF queries. Minecraft asks how many HRTFs there are whether or not the extension is listed, and
+     * an error here made its next check ("Unable to create OpenAL context") fail. None: Apple's spatializer does it. */
+    case ALC_HRTF_SOFT: case ALC_HRTF_STATUS_SOFT: case ALC_NUM_HRTF_SPECIFIERS_SOFT: v[0] = 0; break;
     default: if (dev) dev->error = ALC_INVALID_ENUM; else globalAlcError = ALC_INVALID_ENUM;
     }
     UNLOCK();

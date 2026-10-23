@@ -73,6 +73,14 @@ int main(void) {
         check(major == 1 && minor == 1, "ALC 1.1");
         check(sends == 4, "4 auxiliary sends (Sound Physics uses 4)");
         check(connected == 1, "ALC_CONNECTED answers at once");
+        /* Minecraft's start-up, in order: capabilities, HRTF count, context, each followed by an alcGetError check */
+        alcGetError(dev);
+        ALCint hrtfs = -1;
+        alcGetIntegerv(dev, ALC_NUM_HRTF_SPECIFIERS_SOFT, 1, &hrtfs);
+        ALCint mcAttrs[] = {ALC_HRTF_SOFT, 0, 0};
+        ALCcontext *probe = alcCreateContext(dev, mcAttrs);
+        check(hrtfs == 0 && probe && alcGetError(dev) == ALC_NO_ERROR, "Minecraft's start-up (HRTF count, context with HRTF off) raises no error");
+        if (probe) alcDestroyContext(probe);
         check(alcIsExtensionPresent(dev, "ALC_EXT_EFX") && alcIsExtensionPresent(dev, "ALC_EXT_disconnect")
               && alcIsExtensionPresent(dev, "ALC_EXT_thread_local_context") && alcIsExtensionPresent(dev, "ALC_EXT_CAPTURE"),
               "ALC extensions Minecraft, Voice Chat and Sound Physics ask for");
