@@ -2,6 +2,7 @@
    pack reload, skips glslang + SPIRV-Cross entirely. Enabled when MGL_CACHE_DIR is set. Keyed by a 128-bit hash
    of every stage's source, the geometry shader, glBindFragDataLocation requests and this build, so any change to
    the pack or to mcmetal itself misses cleanly. Files are written to a temp name and renamed into place. */
+#include <dirent.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,6 +15,41 @@
 #define MAGIC 0x4D43534Du /* "MSCM" */
 static const char build_tag[] = "mcmetal-xlate-4 " __DATE__ " " __TIME__;
 
+/* Every key includes build_tag, so entries from an older mcmetal can never hit again. The mod turns the cache on for
+   players (glfw/mtl_context.m), so drop them when the build changes instead of letting each update leave a full set
+   behind. The build is noted in BUILD; pipelines.metallib and anything else that isn't ours stays. */
+static void prune(const char *dir)
+{
+    char path[1024], old[sizeof build_tag + 1] = "";
+    snprintf(path, sizeof path, "%s/BUILD", dir);
+    FILE *f = fopen(path, "r");
+    if (f) {
+        if (!fgets(old, sizeof old, f))
+            old[0] = 0;
+        fclose(f);
+    }
+    if (!strcmp(old, build_tag))
+        return;
+    DIR *d = opendir(dir);
+    int n = 0;
+    for (struct dirent *e; d && (e = readdir(d));) {
+        size_t len = strlen(e->d_name);
+        if (len > 5 && !strcmp(e->d_name + len - 5, ".mclx")) {
+            char victim[1400];
+            snprintf(victim, sizeof victim, "%s/%s", dir, e->d_name);
+            n += !unlink(victim);
+        }
+    }
+    if (d)
+        closedir(d);
+    if ((f = fopen(path, "w"))) {
+        fputs(build_tag, f);
+        fclose(f);
+    }
+    if (n)
+        mgl_log("shader cache: removed %d programs translated by an older mcmetal", n);
+}
+
 static const char *cache_dir(void)
 {
     static int init;
@@ -21,9 +57,10 @@ static const char *cache_dir(void)
     if (!init) {
         init = 1;
         dir = getenv("MGL_CACHE_DIR");
-        if (dir && *dir)
+        if (dir && *dir) {
             mkdir(dir, 0755);
-        else
+            prune(dir);
+        } else
             dir = NULL;
     }
     return dir;
