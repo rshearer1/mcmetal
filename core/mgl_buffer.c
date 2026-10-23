@@ -5,6 +5,9 @@
 #include <time.h>
 #include "mgl_state.h"
 
+static void drop_lazy(mgl_buffer *b);
+static void drop_imax(mgl_buffer *b);
+
 mgl_buf_stats mgl_bstats; /* MGL_PROFILE counts these; the backend logs and resets them each second */
 
 /* before the CPU reads or writes a buffer's memory: a GPU copy into it may still be on its way */
@@ -85,6 +88,8 @@ void glDeleteBuffers(GLsizei n, const GLuint *names)
             continue;
         if (b->mem)
             mglb_buffer_release(b->mem);
+        drop_lazy(b);
+        drop_imax(b);
         free(b);
         mgl_table_remove(&mgl->buffers, names[i]);
         if (mgl->array_buffer == names[i])
@@ -162,8 +167,128 @@ static void rename_mem(mgl_buffer *b, int copy)
     mgl_bstats.rename_ns += buf_now() - t0;
 }
 
+static void drop_imax(mgl_buffer *b)
+{
+    free(b->imax);
+    b->imax = NULL;
+    b->imax_n = 0;
+}
+
+void mgl_buffer_gpu_written(mgl_buffer *b)
+{
+    if (b) {
+        drop_imax(b);
+        b->imax_never = 1;
+    }
+}
+
+/* Contents changed: index maxima are out of date */
+static void changed(mgl_buffer *b) { drop_imax(b); }
+
+static int opt_lazy = -1;
+
+void mgl_buffer_settle(mgl_buffer *b)
+{
+    if (!b || !b->lazy)
+        return;
+    uint64_t t0 = buf_now();
+    cpu_touch(b->lazy);
+    cpu_touch(b->mem);
+    char *dst = mglb_buffer_ptr(b->mem);
+    const char *src = mglb_buffer_ptr(b->lazy);
+    if (b->valid_lo)
+        memcpy(dst, src, b->valid_lo);
+    if (b->valid_hi < b->size)
+        memcpy(dst + b->valid_hi, src + b->valid_hi, b->size - b->valid_hi);
+    mgl_bstats.settles++;
+    mgl_bstats.rename_copy_bytes += b->size - (b->valid_hi - b->valid_lo);
+    mglb_buffer_release(b->lazy);
+    b->lazy = NULL;
+    note_write(b->mem, 0, (size_t)-1);
+    mgl_bstats.rename_ns += buf_now() - t0;
+}
+
+/* glBufferSubData into a buffer the GPU still reads: fresh memory that holds only [offset, offset + size) (plus
+   what an earlier lazy write left valid), the rest left behind in b->lazy (MCMETAL_LAZY_RENAME=0: copy it all now).
+   Returns 0 when the old way (copy everything) is used. */
+static int rename_lazy(mgl_buffer *b, size_t offset, size_t size)
+{
+    if (opt_lazy < 0) {
+        const char *e = getenv("MCMETAL_LAZY_RENAME");
+        opt_lazy = !(e && *e == '0');
+    }
+    if (!opt_lazy || b->size < 4096 || size > b->size / 2)
+        return 0; /* small buffers, or most of it rewritten: copying is cheap */
+    if (b->lazy && (offset > b->valid_hi || offset + size < b->valid_lo))
+        mgl_buffer_settle(b); /* a second valid range: keep one */
+    uint64_t t0 = buf_now();
+    mglb_buffer *fresh = new_mem(b->size);
+    if (!fresh)
+        return 0;
+    size_t lo = offset, hi = offset + size;
+    if (b->lazy) {
+        /* the old memory's valid bytes the new write doesn't cover come along (at most the last upload's size) */
+        cpu_touch(b->mem);
+        const char *old = mglb_buffer_ptr(b->mem);
+        if (b->valid_lo < lo)
+            memcpy((char *)mglb_buffer_ptr(fresh) + b->valid_lo, old + b->valid_lo, lo - b->valid_lo);
+        if (b->valid_hi > hi)
+            memcpy((char *)mglb_buffer_ptr(fresh) + hi, old + hi, b->valid_hi - hi);
+        mgl_bstats.rename_copy_bytes += (b->valid_lo < lo ? lo - b->valid_lo : 0) + (b->valid_hi > hi ? b->valid_hi - hi : 0);
+        lo = lo < b->valid_lo ? lo : b->valid_lo;
+        hi = hi > b->valid_hi ? hi : b->valid_hi;
+        mglb_buffer_release(b->mem);
+    } else {
+        b->lazy = b->mem; /* kept: the bytes outside the valid range still live here */
+    }
+    b->mem = fresh;
+    b->valid_lo = lo;
+    b->valid_hi = hi;
+    mgl_bstats.renames++;
+    mgl_bstats.lazy_renames++;
+    mgl_bstats.rename_ns += buf_now() - t0;
+    return 1;
+}
+
+static void drop_lazy(mgl_buffer *b)
+{
+    if (b->lazy)
+        mglb_buffer_release(b->lazy);
+    b->lazy = NULL;
+}
+
+long mgl_buffer_index_bound(mgl_buffer *ib, GLenum type, size_t first_index, size_t count)
+{
+    size_t es = type == GL_UNSIGNED_SHORT ? 2 : type == GL_UNSIGNED_INT ? 4 : 0;
+    if (!ib || !ib->mem || !es || ib->imax_never || ib->lazy || first_index + count > ib->size / es || !count)
+        return -1;
+    size_t end = first_index + count; /* the bound covers indices [0, end): an upper bound for any sub-range */
+    if (!ib->imax || ib->imax_type != (int)type || ib->imax_n < end) {
+        if (mglb_buffer_gpu_writing(ib->mem))
+            return -1;
+        size_t n = ib->size / es;
+        uint32_t *m = realloc(ib->imax, n * sizeof *m);
+        if (!m)
+            return -1;
+        const unsigned char *p = mglb_buffer_ptr(ib->mem);
+        uint32_t best = 0;
+        for (size_t i = 0; i < n; i++) {
+            uint32_t v = es == 2 ? ((const uint16_t *)p)[i] : ((const uint32_t *)p)[i];
+            best = v > best ? v : best;
+            m[i] = best;
+        }
+        ib->imax = m;
+        ib->imax_n = n;
+        ib->imax_type = (int)type;
+        mgl_bstats.index_scans++;
+    }
+    return (long)ib->imax[end - 1];
+}
+
 static void buffer_data(mgl_buffer *b, GLsizeiptr size, const void *data)
 {
+    drop_lazy(b);
+    changed(b);
     if (b->immutable) {
         mgl_set_error(GL_INVALID_OPERATION);
         return;
@@ -199,6 +324,10 @@ void glNamedBufferData(GLuint name, GLsizeiptr size, const void *data, GLenum us
 
 static void buffer_storage(mgl_buffer *b, GLsizeiptr size, const void *data, GLbitfield flags)
 {
+    drop_lazy(b);
+    changed(b);
+    if (flags & GL_MAP_PERSISTENT_BIT)
+        b->imax_never = 1;
     if (b->mem)
         mglb_buffer_release(b->mem);
     b->size = (size_t)size;
@@ -229,10 +358,20 @@ static void buffer_sub_data(mgl_buffer *b, GLintptr offset, GLsizeiptr size, con
         mgl_set_error(GL_INVALID_VALUE);
         return;
     }
+    changed(b);
+    if (b->lazy && ((size_t)offset > b->valid_hi || (size_t)(offset + size) < b->valid_lo))
+        mgl_buffer_settle(b); /* two separate valid ranges: keep one */
     cpu_touch(b->mem);
-    if (!(b->storage_flags & GL_MAP_PERSISTENT_BIT) && mglb_buffer_in_use(b->mem))
+    if (!(b->storage_flags & GL_MAP_PERSISTENT_BIT) && mglb_buffer_in_use(b->mem) &&
+        !rename_lazy(b, (size_t)offset, (size_t)size)) {
+        mgl_buffer_settle(b);
         rename_mem(b, (size_t)size != b->size);
+    }
     memcpy((char *)mglb_buffer_ptr(b->mem) + offset, data, (size_t)size);
+    if (b->lazy) { /* idle, written in place: the valid range grows */
+        b->valid_lo = (size_t)offset < b->valid_lo ? (size_t)offset : b->valid_lo;
+        b->valid_hi = (size_t)(offset + size) > b->valid_hi ? (size_t)(offset + size) : b->valid_hi;
+    }
     note_write(b->mem, (size_t)offset, (size_t)size);
 }
 
@@ -256,6 +395,11 @@ static void *map_range(mgl_buffer *b, GLintptr offset, GLsizeiptr length, GLbitf
         mgl_set_error(GL_INVALID_VALUE);
         return NULL;
     }
+    mgl_buffer_settle(b);
+    if (access & GL_MAP_WRITE_BIT)
+        changed(b);
+    if ((access | b->storage_flags) & GL_MAP_PERSISTENT_BIT)
+        b->imax_never = 1;
     cpu_touch(b->mem);
     if (!(access & (GL_MAP_PERSISTENT_BIT | GL_MAP_UNSYNCHRONIZED_BIT)) && !(b->storage_flags & GL_MAP_PERSISTENT_BIT) &&
         mglb_buffer_in_use(b->mem)) {
@@ -322,6 +466,9 @@ static void copy_sub_data(mgl_buffer *src, mgl_buffer *dst, GLintptr ro, GLintpt
         mgl_set_error(GL_INVALID_VALUE);
         return;
     }
+    mgl_buffer_settle(src);
+    mgl_buffer_settle(dst);
+    changed(dst);
     /* The destination still read by the GPU (Sodium's region buffers, drawn every frame): copy on the GPU, in
        order with the draws, instead of giving it fresh memory and copying all of it on the CPU (MGL_GPU_COPY=0). */
     static int gpu_copy = -1;
@@ -388,6 +535,7 @@ void glGetBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, void *d
     mgl_buffer *b = bound(target);
     if (!b || !b->mem)
         return;
+    mgl_buffer_settle(b);
     cpu_touch(b->mem);
     if (mglb_buffer_in_use(b->mem))
         mglb_finish();
@@ -414,6 +562,8 @@ static void clear_sub_data(mgl_buffer *b, GLenum internalformat, size_t offset, 
         mgl_set_error(GL_INVALID_VALUE);
         return;
     }
+    mgl_buffer_settle(b);
+    changed(b);
     cpu_touch(b->mem);
     if (!(b->storage_flags & GL_MAP_PERSISTENT_BIT) && mglb_buffer_in_use(b->mem))
         rename_mem(b, size != b->size);

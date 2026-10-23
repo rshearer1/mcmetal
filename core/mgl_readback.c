@@ -41,6 +41,8 @@ static void *pack_dest(void *pixels)
     if (!mgl->pixel_pack_buffer)
         return pixels;
     mgl_buffer *b = mgl_table_get(&mgl->buffers, mgl->pixel_pack_buffer);
+    mgl_buffer_settle(b);
+    mgl_buffer_gpu_written(b); /* filled behind the buffer code's back */
     if (b && b->mem)
         mglb_buffer_written(b->mem); /* about to be filled: caches keyed on its contents start over */
     if (!b || !b->mem)

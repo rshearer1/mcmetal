@@ -41,6 +41,17 @@ typedef struct mgl_buffer {
     int mapped;
     size_t map_offset, map_length;
     GLbitfield map_access;
+    /* glBufferSubData into a buffer the GPU still reads (ImmediatelyFast streams every GUI, text and particle draw
+       this way) gets fresh memory holding only the bytes written so far, [valid_lo, valid_hi); the rest still lives
+       in lazy and is copied over only when something needs it (mgl_buffer_settle). Draws that read only the valid
+       range never need it. */
+    mglb_buffer *lazy;
+    size_t valid_lo, valid_hi;
+    /* index buffers: imax[i] = largest of the first i + 1 indices of type imax_type (built on demand, dropped on
+       every write), so a draw knows the highest vertex it can fetch */
+    uint32_t *imax;
+    size_t imax_n;
+    int imax_type, imax_never; /* never: persistently mapped or written by the GPU */
 } mgl_buffer;
 
 typedef struct mgl_texture {
@@ -204,6 +215,12 @@ void mgl_state_init(mgl_state *s);
 
 /* helpers shared between files */
 mgl_buffer *mgl_buffer_obj(GLuint name);
+/* the buffer's whole contents in b->mem again (before anything but a range-checked vertex fetch reads it) */
+void mgl_buffer_settle(mgl_buffer *b);
+/* an upper bound on the indices among the first first_index + count of an index buffer, or -1 if unknown */
+long mgl_buffer_index_bound(mgl_buffer *ib, GLenum type, size_t first_index, size_t count);
+/* the GPU may write it (storage block, image of a buffer, pack buffer): no cached index maxima from now on */
+void mgl_buffer_gpu_written(mgl_buffer *b);
 mgl_texture *mgl_texture_obj(GLuint name);
 GLuint *mgl_bound_texture_slot(GLenum target);
 int mgl_tex_target_index(GLenum target);

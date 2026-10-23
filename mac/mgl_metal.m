@@ -592,8 +592,13 @@ struct mglb_buffer {
 };
 
 #define POOL_CLASSES 32
-static struct mglb_buffer *pool[POOL_CLASSES];
+/* Freed buffers wait per size class, oldest first: buffers come back roughly in the order the GPU finishes with
+   them, so only the first few need looking at (a long LIFO scan of buffers still in flight cost ~13 us per
+   glBufferData when every GUI draw streamed its vertices that way, and new Metal buffers for the rest ran
+   Apple's paravirtual GPU out of memory). */
+static struct mglb_buffer *pool[POOL_CLASSES], *pool_tail[POOL_CLASSES];
 static int pool_count[POOL_CLASSES];
+#define POOL_LOOK 8
 
 static int size_class(size_t size)
 {
@@ -620,10 +625,14 @@ mglb_buffer *mglb_buffer_new(size_t size)
     if (cap < size)
         cap = size;
     uint64_t done = atomic_load(&completed_serial);
-    for (struct mglb_buffer **pp = &pool[c]; *pp; pp = &(*pp)->next_free) {
+    struct mglb_buffer *prev = NULL;
+    int looked = 0;
+    for (struct mglb_buffer **pp = &pool[c]; *pp && looked < POOL_LOOK; prev = *pp, pp = &(*pp)->next_free, looked++) {
         struct mglb_buffer *b = *pp;
-        if (b->last_use <= done && b->cap >= size) {
+        if (b->last_use <= done && b->gpu_write <= done && b->cap >= size) {
             *pp = b->next_free;
+            if (pool_tail[c] == b)
+                pool_tail[c] = prev;
             pool_count[c]--;
             buf_pooled_bytes -= b->cap;
             b->next_free = NULL;
@@ -658,9 +667,14 @@ void mglb_buffer_release(mglb_buffer *b)
         return;
     priv_forget(b);
     int c = size_class(b->cap);
-    if (pool_count[c] < (b->cap > ((size_t)16 << 20) ? 2 : 64)) { /* don't hoard big buffers */
-        b->next_free = pool[c];
-        pool[c] = b;
+    int keep = b->cap > ((size_t)16 << 20) ? 2 : b->cap <= ((size_t)64 << 10) ? 1024 : 64; /* don't hoard big buffers */
+    if (pool_count[c] < keep) {
+        b->next_free = NULL;
+        if (pool_tail[c])
+            pool_tail[c]->next_free = b;
+        else
+            pool[c] = b;
+        pool_tail[c] = b;
         pool_count[c]++;
         buf_pooled_bytes += b->cap;
         return;
@@ -6349,6 +6363,8 @@ static void profile_frame(unsigned long draws)
             "buffers and %.1f waits for a chunk per frame", buf_live_bytes / 1048576.0, buf_pooled_bytes / 1048576.0, tr_n,
             TR_MAX, tr_oneoff / f, tr_waits / f);
     tr_oneoff = tr_waits = 0;
+    double lazy_renames = (double)mgl_bstats.lazy_renames, lazy_settles = (double)mgl_bstats.settles,
+           lazy_scans = (double)mgl_bstats.index_scans;
     mgl_log("profile: cpu buffer traffic per frame: %.1f renames (%.2f MB copied, %.2f ms), %.1f glCopyBufferSubData "
             "(%.2f MB, %.2f ms), %.1f GPU copies (%.2f MB, %.1f CPU waits for one), %.0f glBufferData (%.2f MB); %.1f texture views made, %.1f pipeline lookups, %.1f big "
             "uniform blocks; %lu textures remade for image/view use", mgl_bstats.renames / f,
@@ -6357,6 +6373,8 @@ static void profile_frame(unsigned long draws)
             mgl_bstats.gpu_copy_bytes / f / 1048576.0, mgl_bstats.gpu_waits / f, mgl_bstats.datas / f,
             mgl_bstats.data_bytes / f / 1048576.0, prof.tex_views / f, prof.pipe_lookups / f, prof.big_uniforms / f,
             tex_upgrades);
+    mgl_log("profile: buffer renames per frame: %.1f left the old bytes behind (%.1f of those copied over later), "
+            "%.2f index buffers scanned for their highest vertex", lazy_renames / f, lazy_settles / f, lazy_scans / f);
     if (prof.rs_sets + prof.rs_skips)
         mgl_log("profile: render-encoder state per frame: %.0f calls sent, %.0f repeats left out (%.0f%%)",
                 prof.rs_sets / f, prof.rs_skips / f, 100.0 * prof.rs_skips / (double)(prof.rs_sets + prof.rs_skips));
