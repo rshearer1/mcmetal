@@ -13,6 +13,7 @@ if [ "$2" = --prebuilt ]; then # class jar without natives, committed for machin
     CP0=$CP0:$(find "$LIB" -path "*/org/ow2/asm/asm-tree/*" -name '*.jar' | sort -V | tail -1):$(find "$LIB" -path "*/org/ow2/asm/asm/*" -name '*.jar' | sort -V | tail -1)
     CP0=$CP0:$(find "$LIB" -path "*/org/lwjgl/lwjgl/*" -name 'lwjgl-3*.jar' ! -name '*natives*' ! -name '*sources*' | sort -V | tail -1)
     CP0=$CP0:$(find "$LIB" -path "*/org/lwjgl/lwjgl-opengl/*" -name '*.jar' ! -name '*natives*' ! -name '*sources*' | sort -V | tail -1)
+    CP0=$CP0:$(find "$LIB" -path "*/org/lwjgl/lwjgl-openal/*" -name '*.jar' ! -name '*natives*' ! -name '*sources*' | sort -V | tail -1)
     CP0=$CP0:$(find "$LIB" -path "*/org/joml/joml/*" -name '*.jar' ! -name '*sources*' | sort -V | tail -1)
     W=$(mktemp -d)
     javac --release 21 -nowarn -d "$W/stubs" $(find "$HERE/stubs" -name '*.java') -cp "$CP0"
@@ -28,10 +29,11 @@ fi
 OUT=$(cd "$(dirname "$2")" && pwd)/$(basename "$2"); NAT=${3:-$HERE/../build}
 cp_of() { find "$LIB" -path "*/$1/*" -name '*.jar' ! -name '*sources*' | sort -V | tail -1; }
 CP=$(cp_of net/neoforged/fancymodloader/loader):$(cp_of cpw/mods/modlauncher):$(cp_of org/ow2/asm/asm-tree):$(cp_of org/ow2/asm/asm)
-# the GPU culling hooks (src/mcmetal/loader/sodium) also see LWJGL, JOML and stand-ins for Sodium/Iris (stubs/,
+# the GPU culling and audio hooks (src/mcmetal/loader/sodium, audio) also see LWJGL (GL, OpenAL), JOML and stand-ins for Sodium/Iris (stubs/,
 # signatures only, compiled separately and left out of the jar)
 CP=$CP:$(find "$LIB" -path "*/org/lwjgl/lwjgl/*" -name 'lwjgl-3*.jar' ! -name '*natives*' ! -name '*sources*' | sort -V | tail -1)
 CP=$CP:$(find "$LIB" -path "*/org/lwjgl/lwjgl-opengl/*" -name '*.jar' ! -name '*natives*' ! -name '*sources*' | sort -V | tail -1)
+CP=$CP:$(find "$LIB" -path "*/org/lwjgl/lwjgl-openal/*" -name '*.jar' ! -name '*natives*' ! -name '*sources*' | sort -V | tail -1)
 CP=$CP:$(cp_of org/joml/joml)
 W=$(mktemp -d)
 mkdir -p "$W/classes"
