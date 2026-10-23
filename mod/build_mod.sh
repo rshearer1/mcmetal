@@ -44,6 +44,7 @@ if javac -version >/dev/null 2>&1 && jar --version >/dev/null 2>&1; then # macOS
     printf 'Automatic-Module-Name: mcmetal.loader\nImplementation-Title: mcmetal\n' > "$W/manifest"
     mkdir -p "$W/classes/natives"
     cp "$NAT/libmcmetal.dylib" "$NAT/libglfw.dylib" "$W/classes/natives/"
+    [ ! -f "$NAT/libmcmetal-al.dylib" ] || cp "$NAT/libmcmetal-al.dylib" "$W/classes/natives/"
     jar --create --file "$OUT" --manifest "$W/manifest" -C "$W/classes" .
 else
     # only a Java runtime here (e.g. a launcher's JRE on a Mac): start from the committed class jar
@@ -52,6 +53,7 @@ else
     cp "$HERE/prebuilt/mcmetal-classes.jar" "$OUT"
     mkdir -p "$W/natives"
     cp "$NAT/libmcmetal.dylib" "$NAT/libglfw.dylib" "$W/natives/"
+    [ ! -f "$NAT/libmcmetal-al.dylib" ] || cp "$NAT/libmcmetal-al.dylib" "$W/natives/"
     (cd "$W" && zip -q -r "$OUT" natives)
 fi
 rm -rf "$W"

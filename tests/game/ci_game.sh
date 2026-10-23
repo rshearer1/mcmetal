@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
-#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary sound sound-off water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-underwater ours-vista ours-vista-STYLE-TIME
+#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary sound sound-off sound-apple water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-underwater ours-vista ours-vista-STYLE-TIME
 #   menu menu-noif menu-shaders particles ab-menu ab-menu-noif ab-particles (JEI, ImmediatelyFast, Particle Rain)
 #   pack-NAME packnight-NAME packshadow-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
 #   herd-NAME (the pack over a busy farm: 240 mobs and 64 chests, for entity costs; ab-herd-NAME for A/B)
@@ -10,6 +10,7 @@
 #   (default: the first three)
 # WORK holds the game install (cacheable), OUT gets screenshots and logs. Needs Java 21 as `java` or $JAVA.
 set -uo pipefail
+CRASHED= # phases where the JVM crashed or Minecraft wrote a crash report: the job fails at the end
 SRC=$(cd "$(dirname "$0")/../.." && pwd)
 mkdir -p "$1" "$2"
 WORK=$(cd "$1" && pwd); OUT=$(cd "$2" && pwd); shift 2  # absolute: the game runs in WORK/game
@@ -251,8 +252,18 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     bench_from=
     echo "phase $name took $((SECONDS - started)) s"
     cp "$G/logs/latest.log" "$OUT/$name/latest.log" 2>/dev/null
-    ls "$G"/hs_err_pid*.log >/dev/null 2>&1 && mv "$G"/hs_err_pid*.log "$OUT/$name/"
-    ls -d "$G"/crash-reports/* >/dev/null 2>&1 && cp -r "$G/crash-reports" "$OUT/$name/"
+    # a JVM crash (hs_err) or a Minecraft crash report fails the job at the end (the phase's fps and shots still
+    # get collected): a crash a few seconds into the world used to pass green
+    if ls "$G"/hs_err_pid*.log >/dev/null 2>&1; then
+        mv "$G"/hs_err_pid*.log "$OUT/$name/"
+        CRASHED="$CRASHED $name"
+        echo "::error::phase $name: the JVM crashed ($(grep -m1 -hE 'SIGSEGV|SIGBUS|fatal error|Internal Error' "$OUT/$name"/hs_err_pid*.log | head -1 | cut -c1-160))"
+    fi
+    if ls "$G"/crash-reports/*.txt >/dev/null 2>&1; then
+        mkdir -p "$OUT/$name/crash-reports" && mv "$G"/crash-reports/*.txt "$OUT/$name/crash-reports/"
+        CRASHED="$CRASHED $name"
+        echo "::error::phase $name: Minecraft crash report ($(grep -m1 -h '^Description:' "$OUT/$name"/crash-reports/*.txt | cut -c1-160))"
+    fi
     echo "screenshots: $(ls "$OUT/$name"/shot-*.png 2>/dev/null | wc -l)"
     # our own pack: keep the source of programs that failed to link (pack code + Iris's wrapper; skip anything with
     # Sodium's terrain code) outside glsl/, so it lands in the uploaded artifact
@@ -445,7 +456,8 @@ sound_phase() { # name [VAR=value ...]
     cp "$G/options.txt" "$G/options.txt.sound"
     sed -i.bak 's/^soundCategory_master:.*/soundCategory_master:1.0/' "$G/options.txt" # at 0 Minecraft plays no sounds at all
     run_phase "$name" 180 metal false "$@"
-    grep -hE "\[mcmetal\] (audio|sound physics)" "$OUT/$name/client.log" | sort | uniq -c
+    grep -hE "\[mcmetal\] (audio|sound)|\[mcmetal-al\]" "$OUT/$name/client.log" | sort | uniq -c | head -20
+    [ -f "$OUT/$name/played.caf" ] && echo "recorded output: $(du -h "$OUT/$name/played.caf" | cut -f1)"
     grep -hE "OpenAL|Sound engine started|sound_physics.*(ERROR|Exception)" "$OUT/$name/client.log" | head -5
     rm -rf "$d" "$G/mods/sound-physics-remastered.jar"
     mv "$G/options.txt.sound" "$G/options.txt"
@@ -465,6 +477,7 @@ for p in $PHASES; do
     complementary) run_phase complementary 300 metal true ;;
     sound) sound_phase sound ;;                       # Sound Physics Remastered, rays off the sound engine thread
     sound-off) sound_phase sound-off MCMETAL_SOUND_PHYSICS_ASYNC=0 ;;  # the same with the fix off
+    sound-apple) sound_phase sound-apple MCMETAL_AUDIO_ENGINE=apple MCMETAL_AL_TAP="$OUT/sound-apple/played.caf" ;;  # on Apple's audio engine (libmcmetal-al)
     water) scene noon; run_phase water 150 metal false ;;                  # Sodium water, glass, waterfall
     water-shaders) scene noon; run_phase water-shaders 240 metal true ;;  # Complementary water + reflections
     night) scene midnight; run_phase night 240 metal true ;;             # Complementary at night, ACT off (as shipped)
@@ -554,3 +567,4 @@ for p in $PHASES; do
         ls -la "$WORK/cache" | tail -3 ;;
     esac
 done
+[ -z "${CRASHED:-}" ] || { echo "crashed:$CRASHED"; exit 1; }
