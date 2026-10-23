@@ -13,6 +13,7 @@
 #include "/lib/settings.glsl"
 #include "/lib/common.glsl"
 #include "/lib/uniforms.glsl"
+#include "/lib/style.glsl"
 #if defined FORWARD && !defined UNLIT
     #include "/lib/sky.glsl"
     #include "/lib/lighting.glsl"
@@ -140,6 +141,9 @@ void main() {
     if (renderStage != MC_RENDER_STAGE_STARS) discard;
 #endif
     if (c.a < 0.1) discard;
+#if defined TERRAIN && STYLE > 0
+    c.rgb = styleFoliage(c.rgb, tint.rgb, mat == MAT_WATER);   // the look's own greens and water
+#endif
     c.rgb = mix(c.rgb, entityColor.rgb, entityColor.a);   // red hurt flash on mobs
 
     vec3 n = normalize(normalW);

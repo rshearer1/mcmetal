@@ -15,6 +15,9 @@
     #define STYLE_GROUND_MIST 0.5
     #define STYLE_SHAFTS 1.8
     #define STYLE_GLOW 0.16
+    #define STYLE_FOLIAGE vec4(1.25, 1.10, 0.45, 0.50)   // rgb: colour (luma-normalised), a: how far towards it
+    #define STYLE_WATER vec4(0.45, 0.95, 0.85, 0.40)
+    #define STYLE_PAINT                                  // painted brush-stroke finish (final.fsh)
 #elif STYLE == 2        // Witchy: violet dusks and nights, bright purple moonlight, aurora, ember torches, thick valley mist
     #define STYLE_SKY_PAINT 0.85
     #define STYLE_SUN_TINT vec3(0.98, 0.92, 0.95)
@@ -26,6 +29,10 @@
     #define STYLE_SHAFTS 1.4
     #define STYLE_GLOW 0.22
     #define STYLE_AURORA
+    #define STYLE_FOLIAGE vec4(0.40, 1.05, 1.05, 0.60)   // deep teal
+    #define STYLE_WATER vec4(0.45, 0.30, 1.10, 0.65)     // inky violet
+    #define STYLE_FOLIAGE_GAIN 0.80
+    #define STYLE_FIREFLIES
 #elif STYLE == 3        // Storybook: bright cartoon sky, banded toon light, ink outlines
     #define STYLE_SKY_PAINT 0.9
     #define STYLE_SUN_TINT vec3(1.06, 1.00, 0.90)
@@ -38,6 +45,9 @@
     #define STYLE_GLOW 0.10
     #define STYLE_TOON
     #define STYLE_OUTLINE
+    #define STYLE_FOLIAGE_SAT 1.6                        // cartoon green: more saturated, not a different hue
+    #define STYLE_WATER vec4(0.25, 0.75, 1.60, 0.50)
+    #define STYLE_POSTER                                 // flat poster bands (final.fsh)
 #elif STYLE == 4        // Fairytale: pink-and-turquoise sky, rose shade, sparkling glow, pearly haze
     #define STYLE_SKY_PAINT 0.85
     #define STYLE_SUN_TINT vec3(1.06, 0.94, 1.00)
@@ -48,6 +58,10 @@
     #define STYLE_GROUND_MIST 0.4
     #define STYLE_SHAFTS 2.0
     #define STYLE_GLOW 0.30
+    #define STYLE_FOLIAGE vec4(0.70, 1.25, 0.95, 0.55)   // pastel mint
+    #define STYLE_WATER vec4(0.25, 1.15, 1.15, 0.60)     // turquoise
+    #define STYLE_FOLIAGE_GAIN 1.10
+    #define STYLE_SPARKLE                                // twinkles on bright surfaces (final.fsh)
 #else
     #define STYLE_SKY_PAINT 0.0
     #define STYLE_SUN_TINT vec3(1.0)
@@ -59,6 +73,64 @@
     #define STYLE_SHAFTS 1.0
     #define STYLE_GLOW 0.0
 #endif
+
+#ifndef STYLE_FOLIAGE_GAIN
+    #define STYLE_FOLIAGE_GAIN 1.0
+#endif
+
+// Plants and water carry the biome colour in the vertex tint (green for grass and leaves, blue for water): the look
+// recolours exactly those, which covers most of an outdoor screen. c: textured colour, tint: the vertex colour.
+vec3 styleFoliage(vec3 c, vec3 tint, bool water) {
+#if STYLE > 0
+    if (water) {
+  #ifdef STYLE_WATER
+        return mix(c, luma(c) * STYLE_WATER.rgb, STYLE_WATER.a);
+  #endif
+    } else {
+        float tinted = clamp((tint.g - min(tint.r, tint.b)) * 5.0, 0.0, 1.0);   // 0 for untinted (white) blocks
+        if (tinted > 0.0) {
+  #ifdef STYLE_FOLIAGE
+            vec3 f = mix(c, luma(c) * STYLE_FOLIAGE.rgb, STYLE_FOLIAGE.a) * STYLE_FOLIAGE_GAIN;
+  #elif defined STYLE_FOLIAGE_SAT
+            vec3 f = max(mix(vec3(luma(c)), c, STYLE_FOLIAGE_SAT), 0.0);
+  #else
+            vec3 f = c;
+  #endif
+            return mix(c, f, tinted);
+        }
+    }
+#endif
+    return c;
+}
+
+// Witchy fireflies: small warm-green lights drifting in the air at dusk and night, one per 3x3x3 block cell that
+// the hash picks, sampled on a few shells along the view ray in front of the scene. Returns light to add.
+vec3 styleFireflies(vec3 dir, float sceneDist, vec3 camPos, float night) {
+#ifdef STYLE_FIREFLIES
+    if (night < 0.01) return vec3(0.0);
+    vec3 acc = vec3(0.0);
+    for (int i = 0; i < 6; i++) {
+        float t = 2.5 + float(i) * 2.6;
+        if (t > sceneDist) break;
+        vec3 w = camPos + dir * t;
+        vec3 cell = floor(w / 3.0);
+        float h = fract(sin(dot(cell, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+        if (h > 0.35) continue;                                        // about a third of the cells have one
+        float tm = frameTimeCounter * 0.4 + h * 40.0;
+        vec3 fp = (cell + 0.5 + 0.35 * vec3(sin(tm * 1.3), sin(tm * 0.9 + 1.7), cos(tm * 1.1))) * 3.0;
+        // distance from the firefly to the view ray, in blocks
+        vec3 rel = fp - camPos;
+        float along = dot(rel, dir);
+        if (along < 0.5 || along > sceneDist) continue;
+        float d = length(rel - dir * along);
+        float pulse = 0.55 + 0.45 * sin(tm * 3.0);
+        acc += vec3(0.75, 1.0, 0.35) * pulse * exp(-d * d * 220.0 / (1.0 + along * 0.15)) ;
+    }
+    return acc * night * 0.6;
+#else
+    return vec3(0.0);
+#endif
+}
 
 // The painted sky: zenith and horizon colours for day, golden hour and night (sRGB-ish, squared to linear).
 // Only the colour is taken: the brightness stays the physical sky's, so exposure and the day/night cycle hold.
