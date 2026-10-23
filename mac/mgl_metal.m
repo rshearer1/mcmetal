@@ -64,6 +64,7 @@ static struct {
     unsigned long gs_spec; /* geometry-shader jobs that ran the compute made for their vertex format */
     unsigned long sh_draws, sh_tris; /* draws and triangles into square targets of 1024+ (shadow maps), as tools/glcount.c counts */
     unsigned long tex_views, pipe_lookups, big_uniforms; /* per-draw texture views made, pipeline dictionary lookups, >4 KB uniform copies */
+    unsigned long rs_sets, rs_skips; /* render-encoder state calls made, and left out as repeats (MCMETAL_STATE_FILTER) */
     uint64_t wait_ns, start_ns, frames;
 } prof;
 static _Atomic uint64_t prof_gpu_ns;
@@ -366,6 +367,7 @@ static int npclear, keep_clears;
 static id<MTLRenderCommandEncoder> begin_pass_at(int line, const mgl_target *t, unsigned clear_colors, const float *rgba,
                                                  int clear_depth, float depth);
 
+static void rs_reset(void); /* the render encoder's remembered state is unknown (MCMETAL_STATE_FILTER) */
 static void mark_clean(const pending_clear *r);
 static void target_dirty(const mgl_target *t);
 
@@ -595,8 +597,13 @@ struct mglb_buffer {
 };
 
 #define POOL_CLASSES 32
-static struct mglb_buffer *pool[POOL_CLASSES];
+/* Freed buffers wait per size class, oldest first: buffers come back roughly in the order the GPU finishes with
+   them, so only the first few need looking at (a long LIFO scan of buffers still in flight cost ~13 us per
+   glBufferData when every GUI draw streamed its vertices that way, and new Metal buffers for the rest ran
+   Apple's paravirtual GPU out of memory). */
+static struct mglb_buffer *pool[POOL_CLASSES], *pool_tail[POOL_CLASSES];
 static int pool_count[POOL_CLASSES];
+#define POOL_LOOK 8
 
 static int size_class(size_t size)
 {
@@ -647,10 +654,14 @@ mglb_buffer *mglb_buffer_new(size_t size)
     if (cap < size)
         cap = size;
     uint64_t done = atomic_load(&completed_serial);
-    for (struct mglb_buffer **pp = &pool[c]; *pp; pp = &(*pp)->next_free) {
+    struct mglb_buffer *prev = NULL;
+    int looked = 0;
+    for (struct mglb_buffer **pp = &pool[c]; *pp && looked < POOL_LOOK; prev = *pp, pp = &(*pp)->next_free, looked++) {
         struct mglb_buffer *b = *pp;
-        if (b->last_use <= done && b->cap >= size) {
+        if (b->last_use <= done && b->gpu_write <= done && b->cap >= size) {
             *pp = b->next_free;
+            if (pool_tail[c] == b)
+                pool_tail[c] = prev;
             pool_count[c]--;
             buf_pooled_bytes -= b->cap;
             b->next_free = NULL;
@@ -703,9 +714,14 @@ void mglb_buffer_release(mglb_buffer *b)
         return;
     priv_forget(b);
     int c = size_class(b->cap);
-    if (pool_count[c] < (b->cap > ((size_t)16 << 20) ? 2 : 64)) { /* don't hoard big buffers */
-        b->next_free = pool[c];
-        pool[c] = b;
+    int keep = b->cap > ((size_t)16 << 20) ? 2 : b->cap <= ((size_t)64 << 10) ? 1024 : 64; /* don't hoard big buffers */
+    if (pool_count[c] < keep) {
+        b->next_free = NULL;
+        if (pool_tail[c])
+            pool_tail[c]->next_free = b;
+        else
+            pool[c] = b;
+        pool_tail[c] = b;
         pool_count[c]++;
         buf_pooled_bytes += b->cap;
         b->pooled_ns = now_ns();
@@ -2982,6 +2998,7 @@ static id<MTLRenderCommandEncoder> begin_pass_at(int line, const mgl_target *t, 
         }
         renc = [c renderCommandEncoderWithDescriptor:rp];
     }
+    rs_reset();
     prof.passes++;
     if (same_target(t, &prof_last_target) && !clear_colors && !clear_depth && !take_colors && !take_depth)
         prof.reopened++;
@@ -3440,6 +3457,7 @@ void mglb_clear(const mgl_target *t, unsigned mask_color, const float rgba[4], i
     [e setScissorRect:(MTLScissorRect){(NSUInteger)x, (NSUInteger)y, (NSUInteger)w, (NSUInteger)h}];
     float dv[4] = {depth, 0, 0, 0};
     float col[4] = {rgba ? rgba[0] : 0, rgba ? rgba[1] : 0, rgba ? rgba[2] : 0, rgba ? rgba[3] : 0};
+    rs_reset(); /* the open pass's state is now the clear's */
     [e setVertexBytes:dv length:sizeof dv atIndex:0];
     [e setFragmentBytes:col length:sizeof col atIndex:0];
     [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
@@ -3457,6 +3475,87 @@ static MTLPrimitiveType prim(int mode, int *ok)
     }
     *ok = 0;
     return MTLPrimitiveTypeTriangle;
+}
+
+/* MCMETAL_STATE_FILTER (on; =0 off): what the open render encoder was last given, so a draw only sends the state
+   that differs from the draw before. Menus, item icons, text and particles are hundreds of small draws that differ
+   in a vertex buffer and a few uniforms; each used to re-send ~25 encoder calls. The objects are held strongly, so
+   an address can't be reused by a new object while it is remembered. Any code that sets encoder state behind
+   mglb_draw's back (partial clears, geometry-shader replays) calls rs_reset. */
+static int rs_on = -1, rs_valid;
+static __strong id rs_ps, rs_ds;
+static MTLViewport rs_vp;
+static MTLScissorRect rs_sr;
+static int rs_cull, rs_wind;
+static float rs_bias[2];
+static __strong id rs_vbuf[31];
+static NSUInteger rs_voff[31];
+static __strong id rs_buf[2][31], rs_tex[2][31], rs_smp[2][31];
+static NSUInteger rs_boff[2][31];
+static int rs_ulen[2];
+static _Alignas(16) unsigned char rs_ubytes[2][4096];
+
+static void rs_reset(void)
+{
+    if (!rs_valid)
+        return;
+    rs_valid = 0;
+    rs_ps = rs_ds = nil;
+    for (int i = 0; i < 31; i++) {
+        rs_vbuf[i] = nil;
+        for (int s = 0; s < 2; s++)
+            rs_buf[s][i] = rs_tex[s][i] = rs_smp[s][i] = nil;
+    }
+    rs_ulen[0] = rs_ulen[1] = 0;
+}
+
+/* a fresh encoder knows nothing: everything is sent again */
+static int rs_begin(void)
+{
+    if (rs_on < 0)
+        rs_on = !getenv("MCMETAL_STATE_FILTER") || opt("MCMETAL_STATE_FILTER");
+    if (!rs_on)
+        return 0;
+    if (!rs_valid) {
+        rs_valid = 1;
+        rs_vp.width = -1; /* no real viewport matches */
+        rs_sr.width = (NSUInteger)-1;
+        rs_cull = rs_wind = -1;
+        rs_bias[0] = rs_bias[1] = NAN;
+    }
+    return 1;
+}
+
+static inline int rs_same(int filter, __strong id *slot, id v)
+{
+    if (filter && *slot == v) {
+        prof.rs_skips++;
+        return 1;
+    }
+    prof.rs_sets++;
+    if (filter)
+        *slot = v;
+    return 0;
+}
+
+static void rs_vertex_buffer(id<MTLRenderCommandEncoder> e, int filter, id<MTLBuffer> b, NSUInteger off, NSUInteger at)
+{
+    if (filter && at < 31 && rs_vbuf[at] == b) {
+        if (rs_voff[at] == off) {
+            prof.rs_skips++;
+            return;
+        }
+        [e setVertexBufferOffset:off atIndex:at]; /* same buffer: just move it */
+        rs_voff[at] = off;
+        prof.rs_sets++;
+        return;
+    }
+    [e setVertexBuffer:b offset:off atIndex:at];
+    prof.rs_sets++;
+    if (filter && at < 31) {
+        rs_vbuf[at] = b;
+        rs_voff[at] = off;
+    }
 }
 
 static MTLTextureSwizzle swizzle_of(int gl)
@@ -3482,11 +3581,19 @@ static id<MTLTexture> swizzled_view(id<MTLTexture> t, const int sw[4])
 
 static void bind_scene(id<MTLRenderCommandEncoder> e, id<MTLComputeCommandEncoder> c);
 
-static void bind_stage_resources(id<MTLRenderCommandEncoder> e, id<MTLComputeCommandEncoder> c, const mgl_draw *d, int s)
+static void bind_stage_resources_f(id<MTLRenderCommandEncoder> e, id<MTLComputeCommandEncoder> c, const mgl_draw *d,
+                                   int s, int filter)
 {
+    filter = filter && !c && s < 2;
     if (d->uniforms[s] && d->uniform_size[s]) {
         NSUInteger n = (NSUInteger)d->uniform_size[s];
-        if (n <= 4096) {
+        if (filter && n <= 4096 && rs_ulen[s] == (int)n && !memcmp(rs_ubytes[s], d->uniforms[s], n)) {
+            prof.rs_skips++; /* the same uniform values as the draw before */
+        } else if (n <= 4096) {
+            if (filter) {
+                memcpy(rs_ubytes[s], d->uniforms[s], n);
+                rs_ulen[s] = (int)n;
+            }
             /* MSL may pad the struct to 16 bytes; hand over a padded copy so the GPU never reads past the end */
             _Alignas(16) unsigned char pad[4096];
             const void *src = d->uniforms[s];
@@ -3501,6 +3608,8 @@ static void bind_stage_resources(id<MTLRenderCommandEncoder> e, id<MTLComputeCom
             else [e setFragmentBytes:src length:n atIndex:MGL_BUF_DEFAULT_UNIFORMS];
         } else {
             prof.big_uniforms++;
+            if (filter)
+                rs_ulen[s] = 0;
             mglb_buffer *tmp = mglb_buffer_new(n + 16);
             memcpy(tmp->ptr, d->uniforms[s], n);
             id<MTLBuffer> b = OBJ(id<MTLBuffer>, tmp->mtl);
@@ -3515,10 +3624,19 @@ static void bind_stage_resources(id<MTLRenderCommandEncoder> e, id<MTLComputeCom
         if (!d->ubo[i])
             continue;
         id<MTLBuffer> b = OBJ(id<MTLBuffer>, d->ubo[i]->mtl);
+        int at = MGL_BUF_UBO_BASE + i;
+        use_buffer(d->ubo[i]);
+        if (filter && rs_buf[s][at] == b && rs_boff[s][at] == d->ubo_offset[i]) {
+            prof.rs_skips++;
+            continue;
+        }
+        if (filter) {
+            rs_buf[s][at] = b;
+            rs_boff[s][at] = d->ubo_offset[i];
+        }
         if (c) [c setBuffer:b offset:d->ubo_offset[i] atIndex:(NSUInteger)(MGL_BUF_UBO_BASE + i)];
         else if (s == 0) [e setVertexBuffer:b offset:d->ubo_offset[i] atIndex:(NSUInteger)(MGL_BUF_UBO_BASE + i)];
         else [e setFragmentBuffer:b offset:d->ubo_offset[i] atIndex:(NSUInteger)(MGL_BUF_UBO_BASE + i)];
-        use_buffer(d->ubo[i]);
     }
     for (int i = 0; i < MGL_MAX_SSBOS; i++) {
         if (!d->ssbo[i])
@@ -3527,10 +3645,18 @@ static void bind_stage_resources(id<MTLRenderCommandEncoder> e, id<MTLComputeCom
         mglb_buffer_written(d->ssbo[i]); /* the GPU may write it: nothing cached from its old contents */
         d->ssbo[i]->no_private = 1;
         NSUInteger at = (NSUInteger)(MGL_BUF_SSBO_BASE + i);
+        use_buffer(d->ssbo[i]);
+        if (filter && rs_buf[s][at] == b && rs_boff[s][at] == d->ssbo_offset[i]) {
+            prof.rs_skips++;
+            continue;
+        }
+        if (filter) {
+            rs_buf[s][at] = b;
+            rs_boff[s][at] = d->ssbo_offset[i];
+        }
         if (c) [c setBuffer:b offset:d->ssbo_offset[i] atIndex:at];
         else if (s == 0) [e setVertexBuffer:b offset:d->ssbo_offset[i] atIndex:at];
         else [e setFragmentBuffer:b offset:d->ssbo_offset[i] atIndex:at];
-        use_buffer(d->ssbo[i]);
     }
     for (int i = 0; i < d->num_textures[s] && i < MGL_MAX_TEXTURES; i++) {
         const mgl_bound_texture *bt = &d->textures[s][i];
@@ -3570,7 +3696,16 @@ static void bind_stage_resources(id<MTLRenderCommandEncoder> e, id<MTLComputeCom
             }
         }
         id<MTLSamplerState> smp = bt->is_image || i >= 16 ? nil : get_sampler(&bt->sampler, bt->is_shadow);
-        if (c) {
+        if (filter) {
+            if (!rs_same(1, &rs_tex[s][i], tex)) {
+                if (s == 0) [e setVertexTexture:tex atIndex:(NSUInteger)i];
+                else [e setFragmentTexture:tex atIndex:(NSUInteger)i];
+            }
+            if (smp && !rs_same(1, &rs_smp[s][i], smp)) {
+                if (s == 0) [e setVertexSamplerState:smp atIndex:(NSUInteger)i];
+                else [e setFragmentSamplerState:smp atIndex:(NSUInteger)i];
+            }
+        } else if (c) {
             [c setTexture:tex atIndex:(NSUInteger)i];
             if (smp) [c setSamplerState:smp atIndex:(NSUInteger)i];
         } else if (s == 0) {
@@ -3581,6 +3716,11 @@ static void bind_stage_resources(id<MTLRenderCommandEncoder> e, id<MTLComputeCom
             if (smp) [e setFragmentSamplerState:smp atIndex:(NSUInteger)i];
         }
     }
+}
+
+static void bind_stage_resources(id<MTLRenderCommandEncoder> e, id<MTLComputeCommandEncoder> c, const mgl_draw *d, int s)
+{
+    bind_stage_resources_f(e, c, d, s, 0);
 }
 
 /* GL's base vertex, applied as a vertex-buffer offset instead of Metal's baseVertex: with Sodium's large base
@@ -3604,7 +3744,10 @@ static int apply_base_vertex(id<MTLRenderCommandEncoder> e, const mgl_draw *d, l
         const mgl_vertex_buf *vb = &d->vbufs[i];
         if (vb->divisor || vb->stride <= 0)
             continue; /* per-instance and constant data ignore the base vertex in GL too */
-        [e setVertexBufferOffset:(NSUInteger)((long)vb->offset + base * vb->stride) atIndex:(NSUInteger)(MGL_BUF_VERTEX_BASE + i)];
+        NSUInteger off = (NSUInteger)((long)vb->offset + base * vb->stride), at = (NSUInteger)(MGL_BUF_VERTEX_BASE + i);
+        [e setVertexBufferOffset:off atIndex:at];
+        if (rs_valid)
+            rs_voff[at] = off;
     }
     return 0;
 }
@@ -3630,11 +3773,22 @@ void mglb_draw(const mgl_draw *d)
         return;
     id<MTLRenderCommandEncoder> e = pass_for_draw(d);
     pt_label(d->program->label);
-    [e setRenderPipelineState:ps];
+    int f = rs_begin();
+    if (!rs_same(f, &rs_ps, ps))
+        [e setRenderPipelineState:ps];
     int probe = probe_program(d);
-    [e setDepthStencilState:get_depth_state(d->depth_test && d->target.depth && !probe, /* GL: no depth writes with the test off */
-                                       d->depth_test && d->depth_write && d->target.depth && !probe, d->depth_func)];
-    [e setViewport:(MTLViewport){d->viewport[0], d->viewport[1], d->viewport[2], d->viewport[3], 0, 1}];
+    id<MTLDepthStencilState> ds = get_depth_state(d->depth_test && d->target.depth && !probe, /* GL: no depth writes with the test off */
+                                                  d->depth_test && d->depth_write && d->target.depth && !probe, d->depth_func);
+    if (!rs_same(f, &rs_ds, ds))
+        [e setDepthStencilState:ds];
+    MTLViewport vp = {d->viewport[0], d->viewport[1], d->viewport[2], d->viewport[3], 0, 1};
+    if (f && !memcmp(&vp, &rs_vp, sizeof vp))
+        prof.rs_skips++;
+    else {
+        [e setViewport:vp];
+        rs_vp = vp;
+        prof.rs_sets++;
+    }
     MTLScissorRect sr = {0, 0, (NSUInteger)d->target.width, (NSUInteger)d->target.height};
     if (d->scissor_enabled) {
         int x0 = d->scissor[0] < 0 ? 0 : d->scissor[0], y0 = d->scissor[1] < 0 ? 0 : d->scissor[1];
@@ -3645,21 +3799,35 @@ void mglb_draw(const mgl_draw *d)
             return;
         sr = (MTLScissorRect){(NSUInteger)x0, (NSUInteger)y0, (NSUInteger)(x1 - x0), (NSUInteger)(y1 - y0)};
     }
-    [e setScissorRect:sr];
-    [e setCullMode:!d->cull || probe ? MTLCullModeNone : d->cull_face == GL_FRONT ? MTLCullModeFront : MTLCullModeBack];
+    if (f && !memcmp(&sr, &rs_sr, sizeof sr))
+        prof.rs_skips++;
+    else {
+        [e setScissorRect:sr];
+        rs_sr = sr;
+        prof.rs_sets++;
+    }
+    MTLCullMode cm = !d->cull || probe ? MTLCullModeNone : d->cull_face == GL_FRONT ? MTLCullModeFront : MTLCullModeBack;
     /* translated vertex shaders flip Y, which flips winding */
-    [e setFrontFacingWinding:d->front_face == GL_CW ? MTLWindingCounterClockwise : MTLWindingClockwise];
-    if (d->polygon_offset_enabled)
-        [e setDepthBias:d->polygon_offset_units slopeScale:d->polygon_offset_factor clamp:0];
-    else
-        [e setDepthBias:0 slopeScale:0 clamp:0];
+    MTLWinding wind = d->front_face == GL_CW ? MTLWindingCounterClockwise : MTLWindingClockwise;
+    if (!f || rs_cull != (int)cm) {
+        [e setCullMode:cm];
+        rs_cull = (int)cm;
+    }
+    if (!f || rs_wind != (int)wind) {
+        [e setFrontFacingWinding:wind];
+        rs_wind = (int)wind;
+    }
+    float bias[2] = {d->polygon_offset_enabled ? d->polygon_offset_units : 0, d->polygon_offset_enabled ? d->polygon_offset_factor : 0};
+    if (!f || memcmp(bias, rs_bias, sizeof bias)) {
+        [e setDepthBias:bias[0] slopeScale:bias[1] clamp:0];
+        memcpy(rs_bias, bias, sizeof bias);
+    }
     for (int i = 0; i < d->num_vbufs; i++) {
-        [e setVertexBuffer:draw_buf(d->vbufs[i].buf) offset:d->vbufs[i].offset
-                   atIndex:(NSUInteger)(MGL_BUF_VERTEX_BASE + i)];
+        rs_vertex_buffer(e, f, draw_buf(d->vbufs[i].buf), d->vbufs[i].offset, (NSUInteger)(MGL_BUF_VERTEX_BASE + i));
         use_buffer(d->vbufs[i].buf);
     }
-    bind_stage_resources(e, nil, d, 0);
-    bind_stage_resources(e, nil, d, 1);
+    bind_stage_resources_f(e, nil, d, 0, f);
+    bind_stage_resources_f(e, nil, d, 1, f);
     if (d->uses_scene)
         bind_scene(e, nil);
     if (debug_draws()) {
@@ -4316,6 +4484,7 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
                                                   p->depth_test && p->depth_write && p->target.depth, p->depth_func);
     NSUInteger vertices = (NSUInteger)triangles * (NSUInteger)(max_vertices - 2) * 3;
     gs_play play = ^(id<MTLRenderCommandEncoder> e) {
+        rs_reset(); /* replayed into the open pass behind mglb_draw's back */
         [e setRenderPipelineState:ps];
         [e setDepthStencilState:ds];
         [e setViewport:(MTLViewport){p->viewport[0], p->viewport[1], p->viewport[2], p->viewport[3], 0, 1}];
@@ -6366,6 +6535,8 @@ static void profile_frame(unsigned long draws)
             "buffers and %.1f waits for a chunk per frame", buf_live_bytes / 1048576.0, buf_pooled_bytes / 1048576.0, tr_n,
             TR_MAX, tr_oneoff / f, tr_waits / f);
     tr_oneoff = tr_waits = 0;
+    double lazy_renames = (double)mgl_bstats.lazy_renames, lazy_settles = (double)mgl_bstats.settles,
+           lazy_scans = (double)mgl_bstats.index_scans;
     mgl_log("profile: cpu buffer traffic per frame: %.1f renames (%.2f MB copied, %.2f ms), %.1f glCopyBufferSubData "
             "(%.2f MB, %.2f ms), %.1f GPU copies (%.2f MB, %.1f CPU waits for one), %.0f glBufferData (%.2f MB); %.1f texture views made, %.1f pipeline lookups, %.1f big "
             "uniform blocks; %lu textures remade for image/view use", mgl_bstats.renames / f,
@@ -6374,6 +6545,11 @@ static void profile_frame(unsigned long draws)
             mgl_bstats.gpu_copy_bytes / f / 1048576.0, mgl_bstats.gpu_waits / f, mgl_bstats.datas / f,
             mgl_bstats.data_bytes / f / 1048576.0, prof.tex_views / f, prof.pipe_lookups / f, prof.big_uniforms / f,
             tex_upgrades);
+    mgl_log("profile: buffer renames per frame: %.1f left the old bytes behind (%.1f of those copied over later), "
+            "%.2f index buffers scanned for their highest vertex", lazy_renames / f, lazy_settles / f, lazy_scans / f);
+    if (prof.rs_sets + prof.rs_skips)
+        mgl_log("profile: render-encoder state per frame: %.0f calls sent, %.0f repeats left out (%.0f%%)",
+                prof.rs_sets / f, prof.rs_skips / f, 100.0 * prof.rs_skips / (double)(prof.rs_sets + prof.rs_skips));
     memset(&mgl_bstats, 0, sizeof mgl_bstats);
     if (pt_ok > 0 || (pt_ok == 0 && opt_profile >= 3))
         pt_report(f);

@@ -62,6 +62,7 @@ typedef struct {
     uint64_t copies, copy_bytes, copy_ns;           /* glCopyBufferSubData on the CPU (memmove only) */
     uint64_t gpu_copies, gpu_copy_bytes, gpu_waits; /* ... as GPU copies; CPU accesses that had to wait for one */
     uint64_t datas, data_bytes;                     /* glBufferData */
+    uint64_t lazy_renames, settles, index_scans;    /* renames that left the old bytes behind; times they were needed */
 } mgl_buf_stats;
 extern mgl_buf_stats mgl_bstats;
 /* reads w x h texels at (x, y) of a colour texture into out, tightly packed, GL row order; waits for the GPU */

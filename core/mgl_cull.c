@@ -155,6 +155,7 @@ GLAPI int64_t mcmGpuCull(const void *cmd)
     for (int r = 0; r < h->nregions; r++) {
         const cull_region_rec *g = &rec[r];
         mgl_buffer *ib = mgl_buffer_obj((GLuint)g->index_buffer);
+        mgl_buffer_settle(ib);
         if (g->n <= 0 || !ib || !ib->mem)
             continue;
         const int32_t *count = (const int32_t *)(intptr_t)g->count, *base = (const int32_t *)(intptr_t)g->base;
