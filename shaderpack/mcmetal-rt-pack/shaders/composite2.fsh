@@ -20,7 +20,7 @@ flat in float keyExposure;
 layout(location = 0) out vec4 outExposure;
 
 void main() {
-    // only the corner pixel is read back (final.fsh); the rest of the screen skips the work
+    // only the corner pixel is read back (final.fsh); colortex6 is 1x1 (shaders.properties), this guards bigger ones
     if (gl_FragCoord.x > 1.0 || gl_FragCoord.y > 1.0) { outExposure = vec4(0.0); return; }
     float logSum = 0.0, wSum = 0.0, peak = 0.0;
     for (int y = 0; y < 8; y++)

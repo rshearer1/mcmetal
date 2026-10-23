@@ -70,6 +70,10 @@ void main() {
 #if defined FORWARD && !defined UNLIT
     lightColors(sunCol, skyAmb);
 #endif
+#ifdef STARS_ONLY
+    // only the stars are kept: vanilla's sky dome and sunset fan are clipped here, before any of their pixels run
+    if (renderStage != MC_RENDER_STAGE_STARS) gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+#endif
 }
 #endif
 

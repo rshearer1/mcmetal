@@ -160,6 +160,7 @@ typedef struct mgl_draw {
     int count, first, base_vertex, instances;
     int local_size[3];     /* compute threadgroup size */
     int uses_scene;        /* bind the ray-tracing scene (MGL_BUF_SCENE) */
+    int copy_fs;           /* fragment stage = texture(its one sampler, uv), nothing else (Minecraft's blit_screen) */
     /* multi-draw (Sodium terrain): when multi_n > 0, draw multi_n indexed ranges with the same state instead of
        count/index_offset/base_vertex. Bind once, then one draw call each. */
     int multi_n;

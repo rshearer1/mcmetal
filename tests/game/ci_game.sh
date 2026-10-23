@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
-#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-underwater ours-vista ours-vista-STYLE-TIME
+#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary sound sound-off water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-underwater ours-vista ours-vista-STYLE-TIME
 #   pack-NAME packnight-NAME packshadow-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
 #   herd-NAME (the pack over a busy farm: 240 mobs and 64 chests, for entity costs; ab-herd-NAME for A/B)
 #   glcount-pack-NAME (the pack on Apple's OpenGL, draws counted by tools/glcount.c)
@@ -386,6 +386,35 @@ third_party() { # pack-NAME / packnight-NAME / packshadow-NAME / herd-NAME [OUTN
     rm -rf "$G/shaderpacks/$EUPHORIA_PACK"*
 }
 
+# Sound Physics Remastered (echoes and muffling, ray traced per sound), fetched at run time and removed after: checks
+# that mcmetal moves its rays off the sound engine thread (MCMETAL_SOUND_PHYSICS_ASYNC) without errors. A small
+# datapack plays ten note-block sounds around the player once a second. Correctness only; listen on a real Mac.
+SPR="https://cdn.modrinth.com/data/qyVF9oeo/versions/Dd2tmpsk/sound-physics-remastered-neoforge-1.21.1-1.5.1.jar|a5ac35ccb902231047709530a5708fb71dc3e3b5"
+sound_phase() { # name [VAR=value ...]
+    local url sha name=$1 d="$G/saves/metal/datapacks/mcm-sound"; shift
+    IFS='|' read -r url sha <<< "$SPR"
+    python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import bare_mc; bare_mc.fetch(*sys.argv[2:])' \
+        "$SRC/tools" "$url" "$G/mods/sound-physics-remastered.jar" "$sha" || { echo "could not download Sound Physics Remastered"; return; }
+    rm -rf "$d"; mkdir -p "$d/data/mcmsound/function" "$d/data/minecraft/tags/function"
+    echo '{"pack":{"pack_format":48,"description":"mcmetal sound test"}}' > "$d/pack.mcmeta"
+    echo '{"values":["mcmsound:tick"]}' > "$d/data/minecraft/tags/function/tick.json"
+    echo '{"values":["mcmsound:load"]}' > "$d/data/minecraft/tags/function/load.json"
+    echo 'scoreboard objectives add mcmsound dummy' > "$d/data/mcmsound/function/load.mcfunction"
+    printf '%s\n' 'scoreboard players add #t mcmsound 1' 'execute if score #t mcmsound matches 20.. run function mcmsound:burst' \
+        'execute if score #t mcmsound matches 20.. run scoreboard players set #t mcmsound 0' > "$d/data/mcmsound/function/tick.mcfunction"
+    local i; : > "$d/data/mcmsound/function/burst.mcfunction"
+    for i in 0 1 2 3 4 5 6 7 8 9; do
+        echo "execute as @a at @s run playsound minecraft:block.note_block.harp block @s ~$((i - 5)) ~1 ~$((i % 3 + 2)) 1 1" >> "$d/data/mcmsound/function/burst.mcfunction"
+    done
+    cp "$G/options.txt" "$G/options.txt.sound"
+    sed -i.bak 's/^soundCategory_master:.*/soundCategory_master:1.0/' "$G/options.txt" # at 0 Minecraft plays no sounds at all
+    run_phase "$name" 180 metal false "$@"
+    grep -hE "\[mcmetal\] (audio|sound physics)" "$OUT/$name/client.log" | sort | uniq -c
+    grep -hE "OpenAL|Sound engine started|sound_physics.*(ERROR|Exception)" "$OUT/$name/client.log" | head -5
+    rm -rf "$d" "$G/mods/sound-physics-remastered.jar"
+    mv "$G/options.txt.sound" "$G/options.txt"
+}
+
 for p in $PHASES; do
     act off
     case $p in
@@ -398,6 +427,8 @@ for p in $PHASES; do
             grep -E "use|FAIL|cutout|replayed|failed" "$OUT/world/replay-sodium-cutout.txt"
         fi ;;
     complementary) run_phase complementary 300 metal true ;;
+    sound) sound_phase sound ;;                       # Sound Physics Remastered, rays off the sound engine thread
+    sound-off) sound_phase sound-off MCMETAL_SOUND_PHYSICS_ASYNC=0 ;;  # the same with the fix off
     water) scene noon; run_phase water 150 metal false ;;                  # Sodium water, glass, waterfall
     water-shaders) scene noon; run_phase water-shaders 240 metal true ;;  # Complementary water + reflections
     night) scene midnight; run_phase night 240 metal true ;;             # Complementary at night, ACT off (as shipped)
