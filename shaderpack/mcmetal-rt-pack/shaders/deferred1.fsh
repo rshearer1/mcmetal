@@ -39,8 +39,8 @@ void main() {
               && abs(h.a - length(prevPlayer)) < 0.05 * dist + 0.1;
     vec3 sh = vec3(1.0);
 #if defined USE_RT && defined SHADOW_CHECKERBOARD
-    // half the pixels each frame: the other half keep their averaged shadow (where it's still valid)
-    if (valid && ((int(gl_FragCoord.x) + int(gl_FragCoord.y) + frameCounter) & 1) == 1) {
+    // 1 in SHADOW_RATE pixels each frame: the others keep their averaged shadow (where it's still valid)
+    if (valid && rayRest(gl_FragCoord.xy, SHADOW_RATE, frameCounter)) {
         outShadow = vec4(h.rgb, dist);
         return;
     }
@@ -63,6 +63,6 @@ void main() {
     }
 #endif
 
-    // a short memory (8 frames): shadows move with the sun and with mobs
-    outShadow = vec4(valid ? mix(h.rgb, sh, 1.0 / 8.0) : sh, dist);
+    // a short memory (8 frames at half rate): shadows move with the sun and with mobs
+    outShadow = vec4(valid ? mix(h.rgb, sh, SHADOW_BLEND) : sh, dist);
 }

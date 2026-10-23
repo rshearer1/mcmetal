@@ -35,6 +35,12 @@ vec3 octDecode(vec2 e) {
     return normalize(n);
 }
 
+// rays for only 1 in `rate` pixels this frame (a checkerboard for 2, one pixel of each 2x2 for 4); true = skip
+bool rayRest(vec2 fragCoord, int rate, int frame) {
+    ivec2 q = ivec2(fragCoord);
+    return rate == 4 ? ((q.x & 1) + 2 * (q.y & 1)) != (frame & 3) : ((q.x + q.y + frame) & 1) == 1;
+}
+
 // per-pixel noise that moves every frame (Jimenez 2014, interleaved gradient noise)
 float ign(vec2 pixel, int frame) {
     pixel += 5.588238 * float(frame & 63);
