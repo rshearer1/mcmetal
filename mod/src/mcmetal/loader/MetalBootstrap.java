@@ -90,8 +90,8 @@ public final class MetalBootstrap implements GraphicsBootstrapper {
                     # Terrain chunks out of view are skipped on the GPU. Turn it off if terrain ever goes missing.
                     #MCMETAL_GPU_CULL=0
                     #
-                    # With a shader pack, mobs and block entities far away for their size cast no shadow (a cow's
-                    # shadow goes at ~45 blocks). Bigger keeps more shadows; 0 keeps every one.
+                    # Experimental, with a shader pack: mobs and block entities far away for their size cast no
+                    # shadow (a cow's shadow goes at ~45 blocks), to save time in busy farms. Bigger keeps more.
                     #MCMETAL_SHADOW_ENTITY_LOD=32
                     """);
         // the native side reads this file itself; the Java side (in-memory patches) sees it as mcmetal.opt.NAME

@@ -12,11 +12,11 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.AABB;
 
 /**
- * Small, far entities left out of Iris's shadow pass (on by default, MCMETAL_SHADOW_ENTITY_LOD=0 turns it off).
+ * Small, far entities left out of Iris's shadow pass (off by default; MCMETAL_SHADOW_ENTITY_LOD=32 turns it on).
  *
  * Iris draws every entity and block entity the main view would draw a second time into the shadow map, posing each
  * model again in Java. Minecraft already stops drawing an entity once it is farther than ~64x its size; in the
- * shadow pass this keeps only those within MCMETAL_SHADOW_ENTITY_LOD (default 32) times their largest side: a
+ * shadow pass this keeps only those within MCMETAL_SHADOW_ENTITY_LOD (e.g. 32) times their largest side: a
  * chicken's shadow goes at ~22 blocks, a cow's at ~45, a villager's at ~62, a chest's at 32. Past that the shadow
  * would be a few pixels across. Players are always kept. Halving the distance leaves out about 3/4 of the shadow
  * entities in a busy farm.
@@ -89,7 +89,7 @@ public final class ShadowEntityHooks {
         String v = System.getenv("MCMETAL_SHADOW_ENTITY_LOD");
         if (v == null)
             v = System.getProperty("mcmetal.opt.MCMETAL_SHADOW_ENTITY_LOD"); // mcmetal/options.txt
-        double n = 32;
+        double n = 0;
         try {
             if (v != null)
                 n = Double.parseDouble(v.trim());

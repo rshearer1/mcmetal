@@ -15,7 +15,7 @@ import org.objectweb.asm.tree.MethodNode;
 import org.objectweb.asm.tree.VarInsnNode;
 
 /**
- * Leaves small, far entities out of Iris's shadow pass (on by default, MCMETAL_SHADOW_ENTITY_LOD=0 turns it off;
+ * Leaves small, far entities out of Iris's shadow pass (off by default, MCMETAL_SHADOW_ENTITY_LOD=32 turns it on;
  * see mcmetal.loader.iris.ShadowEntityHooks for the rule). Copies the hooks into Iris's ShadowRenderer and swaps two
  * calls: EntityRenderDispatcher.shouldRender in renderEntities() (the player-only path is left alone) and
  * BlockEntityRenderDispatcher.render in renderBlockEntities(), which also gets the camera position. Iris's jar is
@@ -38,7 +38,8 @@ final class ShadowEntityTransformer implements ITransformer<ClassNode> {
         String v = System.getenv("MCMETAL_SHADOW_ENTITY_LOD");
         if (v == null)
             v = System.getProperty("mcmetal.opt.MCMETAL_SHADOW_ENTITY_LOD");
-        return Boolean.getBoolean(MetalBootstrap.ACTIVE) && !"0".equals(v == null ? null : v.trim());
+        // off unless set: the GitHub Mac A/B (run 39958449866) showed no fps change, M3 run EN1 decides
+        return Boolean.getBoolean(MetalBootstrap.ACTIVE) && v != null && !v.trim().isEmpty() && !"0".equals(v.trim());
     }
 
     @Override
