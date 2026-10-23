@@ -1450,6 +1450,56 @@ static int skip_program(const mgl_draw *d)
     return 0;
 }
 
+/* What level 0 of a plain 2D texture is known to hold: the colour of a clear still pending for it, or of the clear
+   it still holds (clean). NULL: unknown. */
+static const float *known_colour(const mglb_texture *x)
+{
+    for (int i = npclear - 1; i >= 0; i--)
+        for (int a = 0; a < MGL_MAX_ATTACHMENTS; a++)
+            if (pclear[i].t.tex[a] == x && (pclear[i].colors & (1u << a)))
+                return pclear[i].t.level[a] == 0 ? pclear[i].rgba : NULL;
+    return x->clean ? x->cval : NULL;
+}
+
+/* A draw that cannot change its target: its fragment stage passes its one texture's sample straight through
+   (d->copy_fs), the texture holds only alpha 0, and every written attachment blends so that a source with alpha 0
+   leaves it as it is. Minecraft blends its glowing-outline layer over the screen every frame, empty or not (a
+   full-screen pass, plus a clear pass replayed for the layer, for nothing). MGL_SKIP_EMPTY_BLIT=0: draw anyway. */
+static int draws_nothing(const mgl_draw *d)
+{
+    static int on = -1;
+    if (on < 0)
+        on = !getenv("MGL_SKIP_EMPTY_BLIT") || atoi(getenv("MGL_SKIP_EMPTY_BLIT")) != 0;
+    if (!on || !d->copy_fs || d->num_textures[MGL_FRAGMENT] != 1 || (d->depth_test && d->depth_write && d->target.depth))
+        return 0;
+    const mgl_bound_texture *b = &d->textures[MGL_FRAGMENT][0];
+    enum mgl_format f = b->tex ? b->tex->d.format : MGLF_NONE; /* (an alpha the image really holds) */
+    if (!b->tex || b->tex->d.type != MGLT_2D || b->tex->d.levels != 1 || b->swizzle[3] || b->is_image ||
+        !(f == MGLF_RGBA8 || f == MGLF_SRGB8_A8 || f == MGLF_RGBA16F || f == MGLF_RGBA32F || f == MGLF_RGBA16))
+        return 0;
+    const float *c = known_colour(b->tex);
+    if (!c || c[3] != 0.0f)
+        return 0;
+    int black = c[0] == 0.0f && c[1] == 0.0f && c[2] == 0.0f && !b->swizzle[0] && !b->swizzle[1] && !b->swizzle[2];
+    for (int a = 0; a < MGL_MAX_ATTACHMENTS; a++) {
+        const mgl_blend *bl = &d->blend[a];
+        if (!d->target.tex[a] || !(bl->color_mask & 0xF))
+            continue;
+        if (!bl->enabled)
+            return 0;
+        /* (the source side adds factor x source: 0 when either is 0; the target side must keep the target) */
+        int src0 = bl->src_rgb == GL_SRC_ALPHA || bl->src_rgb == GL_ZERO || black;
+        if ((bl->color_mask & 0x7) && (bl->eq_rgb != GL_FUNC_ADD || !src0 ||
+                                       !(bl->dst_rgb == GL_ONE_MINUS_SRC_ALPHA || bl->dst_rgb == GL_ONE)))
+            return 0;
+        if ((bl->color_mask & 0x8) && (bl->eq_a != GL_FUNC_ADD || !(bl->dst_a == GL_ONE_MINUS_SRC_ALPHA || bl->dst_a == GL_ONE)))
+            return 0;
+    }
+    if (dump_this_frame())
+        mgl_log("frame dump: draw skipped: %s only blends transparent black", d->program->label);
+    return 1;
+}
+
 /* MGL_DEBUG_DRAWS=1: finish the GPU after every draw and dispatch, and name the first one that faults.
    Very slow; for finding which program hangs or crashes the GPU. */
 static void debug_sync(const char *what, const mgl_draw *d, long a, long b)
@@ -3449,7 +3499,7 @@ void mglb_draw(const mgl_draw *d)
     }
     if (d->cull && d->cull_face == GL_FRONT_AND_BACK && d->primitive >= GL_TRIANGLES)
         return;
-    if (skip_program(d))
+    if (skip_program(d) || draws_nothing(d))
         return;
     if (dump_this_frame() && getenv("MGL_FRAME_DUMP_TEXELS") && d->multi_n == 0 && d->count <= 6)
         dump_texels(d);

@@ -873,6 +873,23 @@ static void assign_attribs(mgl_program *p)
         p->attrib_gl_index[a] = gl_index[a];
 }
 
+/* Minecraft's blit_screen fragment shader, whitespace aside: the output is the texture's sample, unchanged. The
+   backend skips such a draw when the texture is known to hold only transparent black and the blend keeps the
+   target as it is (vanilla blends the empty glowing-outline layer over the screen every frame). */
+static int plain_copy_fs(const char *src)
+{
+    static const char want[] = "#version150uniformsampler2DDiffuseSampler;invec2texCoord;outvec4fragColor;"
+                               "voidmain(){fragColor=texture(DiffuseSampler,texCoord);}";
+    size_t i = 0;
+    for (const char *c = src; c && *c; c++) {
+        if (isspace((unsigned char)*c))
+            continue;
+        if (i >= sizeof want - 1 || *c != want[i++])
+            return 0;
+    }
+    return src && i == sizeof want - 1;
+}
+
 void glLinkProgram(GLuint prog)
 {
     mgl_program *p = program_obj(prog);
@@ -901,6 +918,7 @@ void glLinkProgram(GLuint prog)
             }
         }
     }
+    p->copy_fs = plain_copy_fs(src[MGL_FRAGMENT]);
     double t0 = now_ms();
     static int links, hits;
     static double ms;
