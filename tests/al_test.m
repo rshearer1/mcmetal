@@ -13,6 +13,7 @@ ALCcontext *alcCreateContext(ALCdevice *, const ALCint *);
 ALCboolean alcMakeContextCurrent(ALCcontext *);
 void alcDestroyContext(ALCcontext *);
 ALCboolean alcCloseDevice(ALCdevice *);
+ALCenum alcGetError(ALCdevice *);
 ALCboolean alcIsExtensionPresent(ALCdevice *, const ALCchar *);
 void *alcGetProcAddress(ALCdevice *, const ALCchar *);
 void alcGetIntegerv(ALCdevice *, ALCenum, ALCsizei, ALCint *);
