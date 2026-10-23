@@ -42,6 +42,10 @@ on:
       jvm:
         description: 'JVM options for the game, e.g. "-XX:+UseZGC -XX:+ZGenerational" (bench: JVM pauses in gc-report.txt)'
         default: ''
+      heapcheck:
+        description: 'guarded allocations in libmcmetal (MCMETAL_HEAPCHECK): aborts naming the block when our code writes past it or after freeing it; not for speed'
+        type: boolean
+        default: false
 # A newer push to the same branch cancels the older push's run (it tests the same work plus more). Manual runs
 # (bench, profile, ab-*) each get their own group and are never cancelled.
 concurrency:
@@ -67,6 +71,8 @@ jobs:
           path: build/deps
           key: deps-${{ hashFiles('build_deps.sh') }}
       - name: Build
+        env:
+          MCMETAL_HEAPCHECK: ${{ github.event.inputs.heapcheck == 'true' && '1' || '' }}
         run: bash build_mac.sh 2>&1 | tee build.log
       - name: Smoke test
         run: |
