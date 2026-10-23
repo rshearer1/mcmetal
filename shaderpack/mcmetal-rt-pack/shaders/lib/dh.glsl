@@ -4,6 +4,7 @@
 #include "/lib/settings.glsl"
 #include "/lib/common.glsl"
 #include "/lib/uniforms.glsl"
+#include "/lib/style.glsl"
 #ifdef DH_WATER
     #include "/lib/sky.glsl"
     #include "/lib/lighting.glsl"
@@ -63,7 +64,7 @@ void main() {
     if (d < far * 0.85 + 8.0 * ign(gl_FragCoord.xy, frameCounter) - 4.0) discard;
     vec3 n = normalize(normalW);
 #ifdef DH_WATER
-    vec3 a = toLinear(tint.rgb) * 1.6;   // the real water nearby is lighter: it shows the lit bottom through it
+    vec3 a = styleFoliage(toLinear(tint.rgb) * 1.6, tint.rgb, true);   // the real water nearby is lighter: it shows the lit bottom through it
     vec3 L = lightDirection();
     vec3 col = a * surfaceLight(playerPos, n, lmcoord, 1.0, MAT_NONE, L, sunCol, skyAmb,
                                 vec3(smoothstep(0.85, 0.97, lmcoord.y)));
@@ -73,7 +74,7 @@ void main() {
     vec3 refl = skyColor(reflect(v, n), sunDirection()) * smoothstep(0.3, 0.9, lmcoord.y);
     outColor = vec4(mix(col, refl, f), mix(0.6, 1.0, f));
 #else
-    outAlbedo = vec4(tint.rgb, 1.0);
+    outAlbedo = vec4(styleFoliage(tint.rgb, tint.rgb, false), 1.0);   // far greens match the look too
     outNormalLight = vec4(octEncode(n), lmcoord);
     // glowing LODs (lava, light blocks) use the emission channel LabPBR uses
     outMaterial = vec4(float(MAT_DH) / 255.0, 1.0, 0.0, dhMat == DH_BLOCK_ILLUMINATED ? 0.5 : 0.0);
