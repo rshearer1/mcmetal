@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
-#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-underwater
+#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-underwater ours-vista
 #   pack-NAME packnight-NAME packshadow-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
 #   glcount-pack-NAME (the pack on Apple's OpenGL, draws counted by tools/glcount.c)
 #   ab-pack-NAME ab-packnight-NAME (the pack three times in one job: new, old = with GAME_AB_OFF's env, new)
@@ -435,6 +435,7 @@ for p in $PHASES; do
     ours-caustics-mask) GAME_LOOK="-90 45" scene 6000 clear pool; PACK_OPTS="DEBUG_VIEW=7 ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-caustics-mask 180 metal true ;;
     ours-underwater) GAME_LOOK="-90 -10" scene 6000 clear pool_under; PACK=mcmetal-rt-pack run_phase ours-underwater 180 metal true ;;
     ours-sky) GAME_LOOK="-60 -25" scene 2000; PACK=mcmetal-rt-pack run_phase ours-sky 180 metal true ;;  # clouds
+    ours-vista) GAME_LOOK="${VISTA_LOOK:-90 4}" scene ${VISTA_TIME:-noon}; PACK=mcmetal-rt-pack run_phase ours-vista 180 metal true ;;  # open land and sky, away from the test stages (style shots)
     ours-gl) scene 1500; PACK=mcmetal-rt-pack run_phase ours-gl 180 metal true MCMETAL_DISABLE=1 ;; # shadow-map fallback on Apple GL
     nether) scene noon clear nether; run_phase nether 180 metal false ;;                       # Nether room, Sodium
     nether-shaders) scene noon clear nether; run_phase nether-shaders 240 metal true ;;      # Nether room, Complementary
