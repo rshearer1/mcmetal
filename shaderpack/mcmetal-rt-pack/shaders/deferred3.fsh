@@ -52,8 +52,8 @@ void main() {
     if (any(isnan(h.rgb))) valid = false;   // never let a bad value live on in the history
     vec3 scatter = vec3(0.0);
 #if defined USE_RT && defined LIGHT_SHAFTS && defined SHADOW_CHECKERBOARD
-    // half the pixels each frame (like deferred1.fsh): the others keep their average
-    if (valid && ((int(gl_FragCoord.x) + int(gl_FragCoord.y) + frameCounter) & 1) == 1) {
+    // 1 in SHADOW_RATE pixels each frame (like deferred1.fsh): the others keep their average
+    if (valid && rayRest(gl_FragCoord.xy, SHADOW_RATE, frameCounter)) {
         outScatter = vec4(h.rgb, depth < 1.0 ? length(p) : 48.0);
         return;
     }
@@ -98,5 +98,5 @@ void main() {
         if (any(isnan(scatter)) || any(isinf(scatter))) scatter = vec3(0.0);
     }
 #endif
-    outScatter = vec4(valid ? mix(h.rgb, scatter, 1.0 / 8.0) : scatter, depth < 1.0 ? length(p) : 48.0);
+    outScatter = vec4(valid ? mix(h.rgb, scatter, SHADOW_BLEND) : scatter, depth < 1.0 ? length(p) : 48.0);
 }
