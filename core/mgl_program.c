@@ -8,6 +8,7 @@
 #include "mgl_state.h"
 #include "mgl_cache.h"
 #include <pthread.h>
+#include <stdatomic.h>
 #include <unistd.h>
 
 /* ---- background link work ----
@@ -90,6 +91,15 @@ static void *worker(void *arg)
         jobs_running++;
         pthread_mutex_unlock(&job_lock);
         run_job(j);
+        /* exit() runs atexit handlers and C++ static destructors newest first. SPIRV-Cross builds function-local
+           statics (its keyword sets) during the first compiles, after async_link registered the drain, so they
+           were destroyed before the drain waited for the workers still using them (gl_smoke crashed at exit in
+           replace_illegal_names). Registering the drain again after the 1st, 2nd, 4th, 8th... job puts it after
+           them; draining twice is harmless. */
+        static _Atomic unsigned long jobs_finished;
+        unsigned long nf = atomic_fetch_add(&jobs_finished, 1) + 1;
+        if (!(nf & (nf - 1)))
+            atexit(mgl_program_drain);
         pthread_mutex_lock(&job_lock);
         jobs_running--;
         j->done = 1;
