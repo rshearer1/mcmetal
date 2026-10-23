@@ -18,6 +18,7 @@
 #import <AudioToolbox/AudioToolbox.h>
 #import <CoreAudio/CoreAudio.h>
 #include <dlfcn.h>
+#include <mach/mach_time.h>
 #include <math.h>
 #include <pthread.h>
 #include "mcm_al.h"
@@ -854,10 +855,11 @@ AL_API void alGetBuffer3f(ALuint b, ALenum p, ALfloat *x, ALfloat *y, ALfloat *z
 
 /* Make sure the source has a node connected for `fmt`, into the environment (mono, positional) or the plain
  * mixer. The node must be stopped. */
-static void wire(MCSource *s, AVAudioFormat *fmt) {
+/* Returns YES when it (re)connected the node. */
+static BOOL wire(MCSource *s, AVAudioFormat *fmt) {
     MCDevice *d = s.dev;
     BOOL env = fmt.channelCount == 1 && !(s.relative && s.px == 0 && s.py == 0 && s.pz == 0);
-    if (s.node && s.toEnv == env && [s.nodeFormat isEqual:fmt]) return;
+    if (s.node && s.toEnv == env && [s.nodeFormat isEqual:fmt]) return NO;
     if (!s.node) {
         s.node = [AVAudioPlayerNode new];
         [d.engine attachNode:s.node];
@@ -872,6 +874,7 @@ static void wire(MCSource *s, AVAudioFormat *fmt) {
     }
     apply(s);
     [d.engine connect:s.node to:(env ? (AVAudioNode *)d.env : (AVAudioNode *)d.flat) format:fmt];
+    return YES;
 }
 
 static void finished(MCSource *s, unsigned gen, BOOL streamed) {
@@ -906,18 +909,19 @@ static void playNow(MCSource *s, BOOL keepProcessed) {
     if (s.node) [s.node stop];
     s.gen++;
     unsigned gen = s.gen;
+    BOOL fresh = NO;
     MCBuffer *b = s.buffer ? buffers[@(s.buffer)] : nil;
     if (!keepProcessed) s.processed = 0; /* playing a stopped source starts its whole queue again, as in OpenAL */
     if (s.queue.count && s.processed >= (ALint)s.queue.count) { s.state = AL_STOPPED; return; }
     if (s.queue.count) {
         MCBuffer *first = buffers[s.queue[MIN((NSUInteger)s.processed, s.queue.count - 1)]];
         if (!first.pcm) { s.state = AL_STOPPED; return; }
-        wire(s, first.pcm.format);
+        fresh = wire(s, first.pcm.format);
         s.scheduled = s.processed;
         s.state = AL_PLAYING;
         feed(s);
     } else if (b.pcm) {
-        wire(s, b.pcm.format);
+        fresh = wire(s, b.pcm.format);
         s.state = AL_PLAYING;
         [s.node scheduleBuffer:b.pcm atTime:nil options:(s.looping ? AVAudioPlayerNodeBufferLoops : 0)
               completionCallbackType:AVAudioPlayerNodeCompletionDataPlayedBack
@@ -928,7 +932,11 @@ static void playNow(MCSource *s, BOOL keepProcessed) {
     }
     apply(s);
     if (!d.running) startEngine(d);
-    if (d.running) [s.node play];
+    /* A node just connected to the running engine plays its first ~50 ms at full volume whatever its volume says
+     * (al_test, GitHub Mac): start it 50 ms later so its volume is in place. Only a source's first sound, or the
+     * first after its format changed, waits; Minecraft reuses its sources. */
+    if (d.running && fresh) [s.node playAtTime:[AVAudioTime timeWithHostTime:mach_absolute_time() + [AVAudioTime hostTimeForSeconds:0.05]]];
+    else if (d.running) [s.node play];
     if (verbose()) lg("source %u plays %s (%s), volume %.3f obstruction %.0f dB reverb %.2f", s.name, s.queue.count ? "a stream" : "a buffer",
                       s.toEnv ? "3D" : "flat", s.node.volume, s.toEnv ? s.node.obstruction : 0, s.toEnv ? s.node.reverbBlend : 0);
 }
