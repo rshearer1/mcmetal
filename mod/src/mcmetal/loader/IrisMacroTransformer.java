@@ -47,7 +47,7 @@ public final class IrisMacroTransformer implements ITransformationService {
     @Override
     public List<? extends ITransformer<?>> transformers() {
         return List.of(new OsString(), new RtDefine(), new GpuCullTransformer(), new DhMacTransformer(),
-                new AudioTransformer(), new BiomeTransformer());
+                new AudioTransformer(), new BiomeTransformer(), new SoundPhysicsTransformer());
     }
 
     static final class OsString implements ITransformer<MethodNode> {
