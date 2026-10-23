@@ -419,7 +419,7 @@ AL_API ALCdevice *alcOpenDevice(const ALCchar *name) {
     d.env.reverbParameters.enable = YES;
     d.env.reverbParameters.level = 0;
     [d.env.reverbParameters loadFactoryReverbPreset:AVAudioUnitReverbPresetMediumRoom];
-    if (@available(macOS 14.0, *)) {
+    if (@available(macOS 15.0, *)) {
         const char *ht = getenv("MCMETAL_AUDIO_HEADTRACK");
         d.env.listenerHeadTrackingEnabled = !(ht && !strcmp(ht, "0"));
     }
@@ -1112,6 +1112,8 @@ static double offsetFrames(MCSource *s) {
     AVAudioTime *pt = [s.node playerTimeForNodeTime:t];
     return pt ? (double)pt.sampleTime : 0;
 }
+
+AL_API void alGetSourcef(ALuint name, ALenum p, ALfloat *v);
 
 AL_API void alGetSourcei(ALuint name, ALenum p, ALint *v) {
     if (!v) return;
