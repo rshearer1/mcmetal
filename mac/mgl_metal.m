@@ -688,6 +688,10 @@ static void priv_forget(mglb_buffer *b);
 static void buf_destroy(mglb_buffer *b)
 {
     buf_live_bytes -= b->cap;
+    if (b->last_use <= atomic_load(&completed_serial) && b->cap >= ((size_t)1 << 20))
+        /* the GPU is done with it: drop its pages now. On GitHub's Mac, Metal's allocated size did not go down when
+           idle 32 MB chunks were released (each one stayed counted), so don't rely on the release alone. */
+        [OBJ(id<MTLBuffer>, b->mtl) setPurgeableState:MTLPurgeableStateEmpty];
     release_obj(b->mtl); /* Metal keeps it alive for command buffers still using it */
     if (b->priv)
         release_obj(b->priv);
@@ -791,30 +795,32 @@ static void priv_promote(void)
 {
     if (!priv_nq)
         return;
-    id<MTLCommandBuffer> side = [queue commandBuffer];
-    id<MTLBlitCommandEncoder> e = [side blitCommandEncoder];
-    for (int i = 0; i < priv_nq; i++) {
-        mglb_buffer *b = priv_queue[i];
-        b->priv_queued = 0;
-        if (b->written != b->priv_seen || b->written == UINT64_MAX || b->no_private)
-            continue; /* written since it was queued */
-        if (!b->priv) {
-            id<MTLBuffer> m = [dev newBufferWithLength:b->cap options:MTLResourceStorageModePrivate];
-            if (!m)
-                continue;
-            b->priv = retain_obj(m);
-            priv_made++;
-            priv_bytes += b->cap;
-        } else {
-            priv_refreshed++;
+    @autoreleasepool { /* the render thread has no pool: the command buffer and encoder were never freed */
+        id<MTLCommandBuffer> side = [queue commandBuffer];
+        id<MTLBlitCommandEncoder> e = [side blitCommandEncoder];
+        for (int i = 0; i < priv_nq; i++) {
+            mglb_buffer *b = priv_queue[i];
+            b->priv_queued = 0;
+            if (b->written != b->priv_seen || b->written == UINT64_MAX || b->no_private)
+                continue; /* written since it was queued */
+            if (!b->priv) {
+                id<MTLBuffer> m = [dev newBufferWithLength:b->cap options:MTLResourceStorageModePrivate];
+                if (!m)
+                    continue;
+                b->priv = retain_obj(m);
+                priv_made++;
+                priv_bytes += b->cap;
+            } else {
+                priv_refreshed++;
+            }
+            [e copyFromBuffer:OBJ(id<MTLBuffer>, b->mtl) sourceOffset:0 toBuffer:OBJ(id<MTLBuffer>, b->priv)
+                  destinationOffset:0 size:b->cap];
+            b->priv_ok = 1;
         }
-        [e copyFromBuffer:OBJ(id<MTLBuffer>, b->mtl) sourceOffset:0 toBuffer:OBJ(id<MTLBuffer>, b->priv)
-              destinationOffset:0 size:b->cap];
-        b->priv_ok = 1;
+        priv_nq = 0;
+        [e endEncoding];
+        [side commit];
     }
-    priv_nq = 0;
-    [e endEncoding];
-    [side commit];
     static unsigned long next_log = 1; /* at 1, 2, 4, 8, ... copies */
     if (priv_made + priv_refreshed >= next_log) {
         while (next_log <= priv_made + priv_refreshed)
@@ -2226,19 +2232,22 @@ int mglb_cull_run(const mgl_cull_pass *p, const mgl_cull_draw *draws, int n, mgl
         }
     }
     /* its own command buffer, committed now: it runs before the frame's draws (committed later), so it never
-       splits the render pass the terrain is drawn into */
-    id<MTLCommandBuffer> side = [queue commandBuffer];
-    id<MTLComputeCommandEncoder> enc = [side computeCommandEncoder];
-    [enc setComputePipelineState:cull_pso];
-    [enc setBuffer:c->draws offset:0 atIndex:0];
-    [enc setBytes:&params length:sizeof params atIndex:1];
-    [enc setBuffer:c->args offset:0 atIndex:2];
-    [enc setBuffer:c->stats offset:0 atIndex:3];
-    [enc setTexture:(params.t.flags & CULL_OCCLUDE) ? hiz.tex : hiz.dummy atIndex:0];
-    NSUInteger tg = cull_pso.threadExecutionWidth;
-    [enc dispatchThreads:MTLSizeMake((NSUInteger)n, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg, 1, 1)];
-    [enc endEncoding];
-    [side commit];
+       splits the render pass the terrain is drawn into. In a pool: the render thread has none of its own, so the
+       autoreleased command buffer and encoder (one per terrain pass) were never freed. */
+    @autoreleasepool {
+        id<MTLCommandBuffer> side = [queue commandBuffer];
+        id<MTLComputeCommandEncoder> enc = [side computeCommandEncoder];
+        [enc setComputePipelineState:cull_pso];
+        [enc setBuffer:c->draws offset:0 atIndex:0];
+        [enc setBytes:&params length:sizeof params atIndex:1];
+        [enc setBuffer:c->args offset:0 atIndex:2];
+        [enc setBuffer:c->stats offset:0 atIndex:3];
+        [enc setTexture:(params.t.flags & CULL_OCCLUDE) ? hiz.tex : hiz.dummy atIndex:0];
+        NSUInteger tg = cull_pso.threadExecutionWidth;
+        [enc dispatchThreads:MTLSizeMake((NSUInteger)n, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg, 1, 1)];
+        [enc endEncoding];
+        [side commit];
+    }
     int first = c->used | (cull_cur << CULL_SLOT_SHIFT);
     c->used += n;
     return first;
