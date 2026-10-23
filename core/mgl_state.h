@@ -135,6 +135,7 @@ typedef struct mgl_program {
     char debug_name[64];        /* glObjectLabel (Iris names its programs, e.g. "gbuffers_water") */
     int *name_hash;             /* glGetUniformLocation: open-addressed table of x.uniforms/x.textures indices + 1, built on first use */
     unsigned name_hash_mask;
+    int copy_fs;                /* the fragment stage outputs its one texture's sample unchanged (vanilla blit) */
     int jitter_loc;             /* mcm_jitter's location + 1 (MCMETAL_UPSCALE=2), 0 = not looked up yet, -1 = none */
 } mgl_program;
 

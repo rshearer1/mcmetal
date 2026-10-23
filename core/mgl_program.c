@@ -367,20 +367,26 @@ static void add_ray_tracing(mgl_shader *s)
         "  blockId = int(t.w[b + 11u]) - 1;\n"
         "  return rayQueryGetIntersectionTEXT(mcm_q, true);\n"
         "}\n"
+        /* one walk through solid, cutout and translucent terrain together (it was two: a solid test, then the
+           translucent faces): translucent candidates filter the light and are never committed, a solid or
+           passing cutout hit ends the walk (the colour gathered on the way no longer matters then) */
         "float mcm_trace_tinted(vec3 origin, vec3 dir, float tmax, out vec3 transmit) {\n"
-        "  float hit = mcm_trace(origin, dir, tmax);\n"
-        "  transmit = vec3(hit >= 0.0 ? 0.0 : 1.0);\n"
-        "  if (hit >= 0.0) return hit;\n"
-        "  rayQueryEXT mcm_q; /* nothing solid on the way: filter through every translucent face (glass, water, ice) */\n"
-        "  rayQueryInitializeEXT(mcm_q, mcm_scene, gl_RayFlagsNoneEXT, 0x02, origin, 0.001, dir, tmax);\n"
+        "  rayQueryEXT mcm_q;\n"
+        "  transmit = vec3(1.0);\n"
+        "  rayQueryInitializeEXT(mcm_q, mcm_scene, gl_RayFlagsTerminateOnFirstHitEXT, 0x03, origin, 0.001, dir, tmax);\n"
         "  while (rayQueryProceedEXT(mcm_q)) {\n"
         "    McmTris t = mcm_tris[rayQueryGetIntersectionInstanceIdEXT(mcm_q, false)];\n"
         "    uint b = uint(rayQueryGetIntersectionPrimitiveIndexEXT(mcm_q, false)) * 12u;\n"
         "    vec2 w = rayQueryGetIntersectionBarycentricsEXT(mcm_q, false);\n"
-        "    vec4 tex = textureLod(mcm_atlas, mcm_uv(t, b, w), 0.0);\n"
-        "    transmit *= mix(vec3(1.0), tex.rgb * mcm_colour(t, b, w).rgb, tex.a);\n"
+        "    if ((t.w[b + 3u] & 0x100u) != 0u) {\n"
+        "      vec4 tex = textureLod(mcm_atlas, mcm_uv(t, b, w), 0.0);\n"
+        "      transmit *= mix(vec3(1.0), tex.rgb * mcm_colour(t, b, w).rgb, tex.a);\n"
+        "    } else if (mcm_opaque_at(t, b, w))\n"
+        "      rayQueryConfirmIntersectionEXT(mcm_q);\n"
         "  }\n"
-        "  return -1.0;\n"
+        "  if (MCM_MISSED(mcm_q)) return -1.0;\n"
+        "  transmit = vec3(0.0);\n"
+        "  return rayQueryGetIntersectionTEXT(mcm_q, true);\n"
         "}\n"
         /* the slot-th nearest light block (id in the pack's MCMETAL_LIGHT_IDS range) within 16 blocks of p:
            returns its index and sets pos (block centre, player space) and blockId, or -1 */
@@ -867,6 +873,23 @@ static void assign_attribs(mgl_program *p)
         p->attrib_gl_index[a] = gl_index[a];
 }
 
+/* Minecraft's blit_screen fragment shader, whitespace aside: the output is the texture's sample, unchanged. The
+   backend skips such a draw when the texture is known to hold only transparent black and the blend keeps the
+   target as it is (vanilla blends the empty glowing-outline layer over the screen every frame). */
+static int plain_copy_fs(const char *src)
+{
+    static const char want[] = "#version150uniformsampler2DDiffuseSampler;invec2texCoord;outvec4fragColor;"
+                               "voidmain(){fragColor=texture(DiffuseSampler,texCoord);}";
+    size_t i = 0;
+    for (const char *c = src; c && *c; c++) {
+        if (isspace((unsigned char)*c))
+            continue;
+        if (i >= sizeof want - 1 || *c != want[i++])
+            return 0;
+    }
+    return src && i == sizeof want - 1;
+}
+
 void glLinkProgram(GLuint prog)
 {
     mgl_program *p = program_obj(prog);
@@ -895,6 +918,7 @@ void glLinkProgram(GLuint prog)
             }
         }
     }
+    p->copy_fs = plain_copy_fs(src[MGL_FRAGMENT]);
     double t0 = now_ms();
     static int links, hits;
     static double ms;
