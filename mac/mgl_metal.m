@@ -14,6 +14,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <dlfcn.h>
+#include <mach/mach.h>
 #include <mach/mach_time.h>
 #include <pthread.h>
 #include <pthread/qos.h>
@@ -573,6 +574,8 @@ static id<MTLComputeCommandEncoder> compute_encoder(void) { return compute_encod
 
 /* ================================================================ buffers (pooled by size class) */
 
+static uint64_t now_ns(void);
+
 struct mglb_buffer {
     void *mtl;
     void *ptr;
@@ -587,6 +590,8 @@ struct mglb_buffer {
     int priv_ok, priv_queued, priv_keep, no_private;
     uint64_t priv_seen;              /* written when last looked at */
     unsigned long long priv_since;   /* frames_presented since when it was unchanged */
+    uint64_t pooled_ns;              /* mem_trim: when it went into the pool */
+    int purgeable;                   /* mem_trim: marked volatile while pooled (the system may take its pages) */
 };
 
 #define POOL_CLASSES 32
@@ -608,13 +613,37 @@ static int size_class(size_t size)
    the same address */
 static uint64_t write_seq;
 static size_t buf_live_bytes, buf_pooled_bytes; /* MGL_PROFILE: Metal buffer memory we hold, and of it in the pool */
+static size_t buf_purgeable_bytes;              /* of the pooled: marked purgeable (mem_trim) */
 static unsigned long tr_oneoff, tr_waits;       /* transient allocations that fell back to their own buffer; waits for a chunk */
 int mglb_fence_wait(uint64_t id, uint64_t timeout_ns);
+
+/* MGL_MEM_TRIM=0 turns off what keeps mcmetal's own memory down (on by default; for A/B runs):
+   - buffers over 1 MB get their size rounded up to 1 MB instead of to the next power of two (a 33 MB Sodium region
+     buffer held 64 MB);
+   - pooled buffers go back to the system after 5 s unused, and big ones are marked purgeable while they wait, so
+     under memory pressure macOS can take their pages without asking (unified memory: one pool for CPU and GPU);
+   - transient chunks (texture upload staging, geometry-shader records) beyond two are freed after 5 s unused: the
+     resource reload at start or a SEUS turn used to leave up to 128 x 32 MB allocated for the rest of the game;
+   - texture uploads bigger than a chunk are staged in bands of rows, not in one buffer of their own (the block
+     atlas: one 100-300 MB staging buffer per mip level, then kept in the pool). */
+static int mem_trim(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("MGL_MEM_TRIM");
+        on = !(e && *e == '0');
+    }
+    return on;
+}
+#define BIG_ROUND ((size_t)1 << 20)
+
 mglb_buffer *mglb_buffer_new(size_t size)
 {
     init_device();
     int c = size_class(size);
     size_t cap = (size_t)256 << c;
+    if (size > BIG_ROUND && mem_trim())
+        cap = (size + BIG_ROUND - 1) & ~(BIG_ROUND - 1);
     if (cap < size)
         cap = size;
     uint64_t done = atomic_load(&completed_serial);
@@ -628,6 +657,12 @@ mglb_buffer *mglb_buffer_new(size_t size)
             b->size = size;
             b->written = ++write_seq;
             b->priv_ok = b->no_private = 0;
+            if (b->purgeable) {
+                /* emptied by the system or not: a reused buffer's old contents don't matter */
+                b->purgeable = 0;
+                buf_purgeable_bytes -= b->cap;
+                [OBJ(id<MTLBuffer>, b->mtl) setPurgeableState:MTLPurgeableStateNonVolatile];
+            }
             return b;
         }
     }
@@ -650,6 +685,18 @@ void *mglb_buffer_ptr(mglb_buffer *b) { return b ? b->ptr : NULL; }
 size_t mglb_buffer_size(mglb_buffer *b) { return b ? b->size : 0; }
 
 static void priv_forget(mglb_buffer *b);
+static void buf_destroy(mglb_buffer *b)
+{
+    buf_live_bytes -= b->cap;
+    if (b->last_use <= atomic_load(&completed_serial) && b->cap >= ((size_t)1 << 20))
+        /* the GPU is done with it: drop its pages now. On GitHub's Mac, Metal's allocated size did not go down when
+           idle 32 MB chunks were released (each one stayed counted), so don't rely on the release alone. */
+        [OBJ(id<MTLBuffer>, b->mtl) setPurgeableState:MTLPurgeableStateEmpty];
+    release_obj(b->mtl); /* Metal keeps it alive for command buffers still using it */
+    if (b->priv)
+        release_obj(b->priv);
+    free(b);
+}
 void mglb_buffer_release(mglb_buffer *b)
 {
     if (!b)
@@ -661,13 +708,10 @@ void mglb_buffer_release(mglb_buffer *b)
         pool[c] = b;
         pool_count[c]++;
         buf_pooled_bytes += b->cap;
+        b->pooled_ns = now_ns();
         return;
     }
-    buf_live_bytes -= b->cap;
-    release_obj(b->mtl); /* Metal keeps it alive for command buffers still using it */
-    if (b->priv)
-        release_obj(b->priv);
-    free(b);
+    buf_destroy(b);
 }
 
 int mglb_buffer_in_use(mglb_buffer *b)
@@ -751,30 +795,32 @@ static void priv_promote(void)
 {
     if (!priv_nq)
         return;
-    id<MTLCommandBuffer> side = [queue commandBuffer];
-    id<MTLBlitCommandEncoder> e = [side blitCommandEncoder];
-    for (int i = 0; i < priv_nq; i++) {
-        mglb_buffer *b = priv_queue[i];
-        b->priv_queued = 0;
-        if (b->written != b->priv_seen || b->written == UINT64_MAX || b->no_private)
-            continue; /* written since it was queued */
-        if (!b->priv) {
-            id<MTLBuffer> m = [dev newBufferWithLength:b->cap options:MTLResourceStorageModePrivate];
-            if (!m)
-                continue;
-            b->priv = retain_obj(m);
-            priv_made++;
-            priv_bytes += b->cap;
-        } else {
-            priv_refreshed++;
+    @autoreleasepool { /* the render thread has no pool: the command buffer and encoder were never freed */
+        id<MTLCommandBuffer> side = [queue commandBuffer];
+        id<MTLBlitCommandEncoder> e = [side blitCommandEncoder];
+        for (int i = 0; i < priv_nq; i++) {
+            mglb_buffer *b = priv_queue[i];
+            b->priv_queued = 0;
+            if (b->written != b->priv_seen || b->written == UINT64_MAX || b->no_private)
+                continue; /* written since it was queued */
+            if (!b->priv) {
+                id<MTLBuffer> m = [dev newBufferWithLength:b->cap options:MTLResourceStorageModePrivate];
+                if (!m)
+                    continue;
+                b->priv = retain_obj(m);
+                priv_made++;
+                priv_bytes += b->cap;
+            } else {
+                priv_refreshed++;
+            }
+            [e copyFromBuffer:OBJ(id<MTLBuffer>, b->mtl) sourceOffset:0 toBuffer:OBJ(id<MTLBuffer>, b->priv)
+                  destinationOffset:0 size:b->cap];
+            b->priv_ok = 1;
         }
-        [e copyFromBuffer:OBJ(id<MTLBuffer>, b->mtl) sourceOffset:0 toBuffer:OBJ(id<MTLBuffer>, b->priv)
-              destinationOffset:0 size:b->cap];
-        b->priv_ok = 1;
+        priv_nq = 0;
+        [e endEncoding];
+        [side commit];
     }
-    priv_nq = 0;
-    [e endEncoding];
-    [side commit];
     static unsigned long next_log = 1; /* at 1, 2, 4, 8, ... copies */
     if (priv_made + priv_refreshed >= next_log) {
         while (next_log <= priv_made + priv_refreshed)
@@ -825,7 +871,7 @@ void mglb_buffer_wait_writes(mglb_buffer *b)
    call behind each new buffer grew to 88% of the render thread (SEUS at 1x slid from 49 to 15 fps in 90 s). */
 #define TR_CHUNK ((size_t)32 << 20)
 #define TR_MAX 128 /* SEUS while turning: ~800 MB of records per frame, 2-3 frames in flight */
-static struct { mglb_buffer *b; size_t used; } tr_chunk[TR_MAX];
+static struct { mglb_buffer *b; size_t used; uint64_t picked_ns; } tr_chunk[TR_MAX];
 static int tr_n, tr_cur = -1;
 
 typedef struct { id<MTLBuffer> buf; NSUInteger off; void *ptr; } transient_t;
@@ -844,6 +890,58 @@ static mglb_buffer *tr_chunk_untracked(void)
     b->size = b->cap = TR_CHUNK;
     buf_live_bytes += TR_CHUNK;
     return b;
+}
+
+#define TRIM_IDLE_NS 5000000000ull
+#define TR_KEEP 2
+/* mem_trim, about twice a second: free transient chunks and pooled buffers left unused for 5 s; mark big pooled
+   buffers purgeable once the GPU is done with them */
+static unsigned long trim_freed_chunks, trim_freed_bufs;
+static size_t trim_freed_bytes;
+static void mem_sweep(void)
+{
+    static uint64_t last;
+    uint64_t t = now_ns();
+    if (!mem_trim() || t - last < 500000000ull)
+        return;
+    last = t;
+    uint64_t done = atomic_load(&completed_serial);
+    for (int i = tr_n - 1; i >= 0 && tr_n > TR_KEEP; i--) {
+        if (i == tr_cur || tr_chunk[i].b->last_use > done || t - tr_chunk[i].picked_ns < TRIM_IDLE_NS)
+            continue;
+        trim_freed_chunks++;
+        trim_freed_bytes += tr_chunk[i].b->cap;
+        buf_destroy(tr_chunk[i].b);
+        tr_chunk[i] = tr_chunk[--tr_n]; /* the last one fills the hole */
+        tr_chunk[tr_n].b = NULL;
+        if (tr_cur == tr_n)
+            tr_cur = i;
+    }
+    for (int c = 0; c < POOL_CLASSES; c++)
+        for (struct mglb_buffer **pp = &pool[c]; *pp;) {
+            struct mglb_buffer *b = *pp;
+            if (b->last_use > done) { /* the GPU may still read it: leave it alone */
+                pp = &b->next_free;
+                continue;
+            }
+            if (t - b->pooled_ns >= TRIM_IDLE_NS) {
+                *pp = b->next_free;
+                pool_count[c]--;
+                buf_pooled_bytes -= b->cap;
+                if (b->purgeable)
+                    buf_purgeable_bytes -= b->cap;
+                trim_freed_bufs++;
+                trim_freed_bytes += b->cap;
+                buf_destroy(b);
+                continue;
+            }
+            if (!b->purgeable && b->cap >= BIG_ROUND) {
+                [OBJ(id<MTLBuffer>, b->mtl) setPurgeableState:MTLPurgeableStateVolatile];
+                b->purgeable = 1;
+                buf_purgeable_bytes += b->cap;
+            }
+            pp = &b->next_free;
+        }
 }
 
 static transient_t transient(size_t size)
@@ -903,6 +1001,7 @@ static transient_t transient(size_t size)
             return t;
         }
         tr_chunk[k].used = 0;
+        tr_chunk[k].picked_ns = now_ns();
         tr_cur = k;
     }
     mglb_buffer *b = tr_chunk[k].b;
@@ -927,7 +1026,10 @@ struct mglb_texture {
     void *swz_view;
     int swz[4];
     void *level_view[4]; /* image views of levels 1-4 */
+    size_t bytes;        /* allocatedSize, for the memory report */
 };
+static size_t tex_bytes;
+static long tex_count;
 static void tex_drop_views(mglb_texture *t)
 {
     release_obj(t->swz_view);
@@ -1079,6 +1181,9 @@ mglb_texture *mglb_texture_new(const mglb_texture_desc *d)
     mt->d = *d;
     mt->pf = pf;
     mt->usage = td.usage;
+    mt->bytes = t.allocatedSize;
+    tex_bytes += mt->bytes;
+    tex_count++;
     return mt;
 }
 
@@ -1120,6 +1225,8 @@ static void tex_need_usage(mglb_texture *t, MTLTextureUsage need)
     release_obj(t->mtl); /* the copy (and earlier work) keep the old one alive until the GPU is done */
     t->mtl = retain_obj(fresh);
     t->usage = td.usage;
+    tex_bytes += fresh.allocatedSize - t->bytes;
+    t->bytes = fresh.allocatedSize;
     tex_upgrades++;
     if (opt_profile > 0)
         mgl_log("texture %lux%lux%lu format %lu remade with usage 0x%lx (compression off for it)", (unsigned long)old.width,
@@ -1142,6 +1249,8 @@ void mglb_texture_release(mglb_texture *t)
     }
     tex_drop_views(t);
     release_obj(t->mtl);
+    tex_bytes -= t->bytes;
+    tex_count--;
     free(t);
 }
 
@@ -1151,6 +1260,16 @@ void mglb_texture_upload(mglb_texture *t, int level, int x, int y, int z, int w,
     if (!t || t->pf == MTLPixelFormatDepth32Float_Stencil8)
         return;
     size_t bpt = (size_t)bytes_per_texel(t->pf), row = bpt * (size_t)w, img = row * (size_t)h;
+    if (img * (size_t)d > TR_CHUNK && row <= TR_CHUNK && mem_trim()) {
+        /* bigger than a transient chunk: one slice at a time, in bands of rows that fit one */
+        int band = (int)(TR_CHUNK / row);
+        for (int s = 0; s < d; s++)
+            for (int y0 = 0; y0 < h; y0 += band)
+                mglb_texture_upload(t, level, x, y + y0, z + s, w, h - y0 < band ? h - y0 : band, 1,
+                                    (const char *)data + (size_t)s * bytes_per_image + (size_t)y0 * bytes_per_row,
+                                    bytes_per_row, bytes_per_image);
+        return;
+    }
     transient_t stage = transient(img * (size_t)d);
     if (!stage.buf)
         return;
@@ -2163,19 +2282,22 @@ int mglb_cull_run(const mgl_cull_pass *p, const mgl_cull_draw *draws, int n, mgl
         }
     }
     /* its own command buffer, committed now: it runs before the frame's draws (committed later), so it never
-       splits the render pass the terrain is drawn into */
-    id<MTLCommandBuffer> side = [queue commandBuffer];
-    id<MTLComputeCommandEncoder> enc = [side computeCommandEncoder];
-    [enc setComputePipelineState:cull_pso];
-    [enc setBuffer:c->draws offset:0 atIndex:0];
-    [enc setBytes:&params length:sizeof params atIndex:1];
-    [enc setBuffer:c->args offset:0 atIndex:2];
-    [enc setBuffer:c->stats offset:0 atIndex:3];
-    [enc setTexture:(params.t.flags & CULL_OCCLUDE) ? hiz.tex : hiz.dummy atIndex:0];
-    NSUInteger tg = cull_pso.threadExecutionWidth;
-    [enc dispatchThreads:MTLSizeMake((NSUInteger)n, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg, 1, 1)];
-    [enc endEncoding];
-    [side commit];
+       splits the render pass the terrain is drawn into. In a pool: the render thread has none of its own, so the
+       autoreleased command buffer and encoder (one per terrain pass) were never freed. */
+    @autoreleasepool {
+        id<MTLCommandBuffer> side = [queue commandBuffer];
+        id<MTLComputeCommandEncoder> enc = [side computeCommandEncoder];
+        [enc setComputePipelineState:cull_pso];
+        [enc setBuffer:c->draws offset:0 atIndex:0];
+        [enc setBytes:&params length:sizeof params atIndex:1];
+        [enc setBuffer:c->args offset:0 atIndex:2];
+        [enc setBuffer:c->stats offset:0 atIndex:3];
+        [enc setTexture:(params.t.flags & CULL_OCCLUDE) ? hiz.tex : hiz.dummy atIndex:0];
+        NSUInteger tg = cull_pso.threadExecutionWidth;
+        [enc dispatchThreads:MTLSizeMake((NSUInteger)n, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg, 1, 1)];
+        [enc endEncoding];
+        [side commit];
+    }
     int first = c->used | (cull_cur << CULL_SLOT_SHIFT);
     c->used += n;
     return first;
@@ -6508,6 +6630,38 @@ static void sw_report(uint64_t start)
     memset(sw_t, 0, sizeof sw_t);
 }
 
+/* Memory report, every MGL_MEM_REPORT seconds (default 60, 0 = off): the whole process (phys_footprint, what
+   Activity Monitor shows as Memory; it includes the Java heap) and what of it is mcmetal's Metal memory. */
+static void mem_report(void)
+{
+    static double every = -1;
+    static uint64_t last;
+    if (every < 0) {
+        const char *e = getenv("MGL_MEM_REPORT");
+        every = e && *e ? atof(e) : 60;
+    }
+    uint64_t t = now_ns();
+    if (every <= 0 || (last && (double)(t - last) < every * 1e9))
+        return;
+    last = t;
+    task_vm_info_data_t vm;
+    mach_msg_type_number_t n = TASK_VM_INFO_COUNT;
+    double proc = task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vm, &n) == KERN_SUCCESS ? vm.phys_footprint : 0;
+    static double proc_peak;
+    if (proc > proc_peak)
+        proc_peak = proc;
+    const double MB = 1048576.0;
+    double metal = (double)dev.currentAllocatedSize, tr = (double)tr_n * TR_CHUNK, gsc = (double)gsc_nslabs * GSC_SLAB;
+    double bufs = (double)buf_live_bytes - tr, clr = clear_src ? (double)clear_src.length : 0;
+    double other = metal - tex_bytes - bufs - tr - gsc - priv_bytes - clr;
+    mgl_log("memory: process %.0f MB (most so far %.0f), Metal %.0f MB: textures %.0f MB (%ld), buffers %.0f MB (%.0f "
+            "pooled, %.0f of it purgeable), transient chunks %.0f MB (%d), geometry-shader cache %.0f MB, private "
+            "copies %.0f MB, other %.0f MB (ray tracing, pipelines, window); freed after 5 s unused so far: %lu chunks "
+            "and %lu pooled buffers, %.0f MB%s", proc / MB, proc_peak / MB, metal / MB, tex_bytes / MB, tex_count, bufs / MB,
+            buf_pooled_bytes / MB, buf_purgeable_bytes / MB, tr / MB, tr_n, gsc / MB, priv_bytes / MB, other / MB,
+            trim_freed_chunks, trim_freed_bufs, trim_freed_bytes / MB, mem_trim() ? "" : " (MGL_MEM_TRIM=0)");
+}
+
 MGL_EXPORT void mgl_glfw_swap(void *ctx)
 {
     frame_times_tick();
@@ -6517,6 +6671,8 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
     mgl_rt_end_frame(); /* ray tracing: rebuild the scene from this frame's terrain sections */
     sw_mark(SW_RT);
     gsc_end_frame();
+    mem_sweep();
+    mem_report();
     sw_mark(SW_GSC);
     if (!mgl->window_color) {
         commit();
