@@ -48,8 +48,12 @@ void main() {
 #ifdef USE_RT
     // soft sun shadow: aim each frame's ray at a different point of the sun's disc; the average gives the penumbra
     {
-        vec3 ns = octDecode(texture(colortex1, texcoord).xy);
-        if (dot(ns, lightDir) > 0.0 || mat == MAT_FOLIAGE) {
+        vec4 nl = texture(colortex1, texcoord);
+        vec3 ns = octDecode(nl.xy);
+        // no sky light at all (caves, deep indoors): no path to the sun either, so no ray (the lightmap's sky
+        // level is 0 there; worlds without sky light, like the End, always trace)
+        bool skyReach = nl.w > 0.5 / 15.0 || !hasSkylight;
+        if (skyReach && (dot(ns, lightDir) > 0.0 || mat == MAT_FOLIAGE)) {
             float a1 = ign(gl_FragCoord.xy + vec2(13.0, 71.0), frameCounter * 3 + 1) * 6.2832;
             float a2 = sqrt(ign(gl_FragCoord.xy + vec2(91.0, 29.0), frameCounter * 5 + 2)) * radians(SUN_SOFTNESS);
             vec3 st = normalize(abs(lightDir.y) < 0.99 ? cross(lightDir, vec3(0.0, 1.0, 0.0)) : cross(lightDir, vec3(1.0, 0.0, 0.0)));

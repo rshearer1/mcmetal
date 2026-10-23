@@ -4,21 +4,27 @@ vec3 sunDirection() { return normalize(mat3(gbufferModelViewInverse) * sunPositi
 vec3 lightDirection() { return normalize(mat3(gbufferModelViewInverse) * shadowLightPosition); }  // sun by day, moon by night
 
 // Direct light colour (from the sun or moon, whichever is up) and sky light from the whole sky.
-// Cheap enough for a vertex shader; full-screen passes compute it there and pass it on flat.
-void lightColors(out vec3 sunCol, out vec3 skyAmb) {
+// Worked out once a frame in prepare.fsh (lightColorsExact) and read back from the sky table everywhere else.
+void lightColorsExact(out vec3 sunCol, out vec3 skyAmb) {
     vec3 sunDir = sunDirection();
     float moonLight = 0.25 + 0.75 * abs(float(moonPhase) - 4.0) / 4.0;   // full moon brightest
     vec3 sun = lightTransmittance(sunDir) * (SUN_INTENSITY * 0.2) * STYLE_SUN_TINT;
     vec3 moon = lightTransmittance(-sunDir) * (MOON_INTENSITY * 0.2 * moonLight * STYLE_MOON) * vec3(0.8, 0.9, 1.15) * STYLE_MOON_TINT;
     sunCol = (sun + moon) * SUN_STRENGTH;
     vec3 h = normalize(vec3(sunDir.x, 0.0, sunDir.z) + vec3(0.0001));
-    skyAmb = (0.5 * skyColor(vec3(0.0, 1.0, 0.0), sunDir)
-                   + 0.25 * skyColor(normalize(h + vec3(0.0, 0.2, 0.0)), sunDir)
-                   + 0.25 * skyColor(normalize(-h + vec3(0.0, 0.2, 0.0)), sunDir)) * SKY_LIGHT_STRENGTH;
+    skyAmb = (0.5 * skyColorExact(vec3(0.0, 1.0, 0.0), sunDir)
+                   + 0.25 * skyColorExact(normalize(h + vec3(0.0, 0.2, 0.0)), sunDir)
+                   + 0.25 * skyColorExact(normalize(-h + vec3(0.0, 0.2, 0.0)), sunDir)) * SKY_LIGHT_STRENGTH;
     // rain: clouds block the sun and grey the sky
     sunCol *= 1.0 - 0.85 * rainStrength;
     skyAmb = mix(skyAmb, vec3(luma(skyAmb)) * 0.6, rainStrength);
 }
+#ifndef SKY_LUT_BUILD
+void lightColors(out vec3 sunCol, out vec3 skyAmb) {
+    sunCol = texelFetch(colortex12, ivec2(0, 63), 0).rgb;
+    skyAmb = texelFetch(colortex12, ivec2(1, 63), 0).rgb;
+}
+#endif
 
 
 vec3 blockLightColor() { return vec3(BLOCK_LIGHT_R, BLOCK_LIGHT_G, BLOCK_LIGHT_B) * STYLE_BLOCK_TINT; }
