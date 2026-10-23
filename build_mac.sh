@@ -7,6 +7,8 @@ cd "$(dirname "$0")"
 SRC=$(pwd)
 mkdir -p build/gen build/obj
 CFLAGS=(-arch arm64 -O2 -g -Wall -Wno-unused-parameter -fvisibility=hidden -mmacosx-version-min=14.0) # Metal 3.1 (texture atomics)
+# MCMETAL_HEAPCHECK=1: guarded allocations in libmcmetal (core/mgl_heapcheck.h): finds our writes past a block or after free
+HC=(); [ "${MCMETAL_HEAPCHECK:-}" = 1 ] && HC=(-include "$SRC/core/mgl_heapcheck.h")
 
 # 1. Generated GL entry points
 [ -f build/gl.xml ] || curl -fsSL -o build/gl.xml https://raw.githubusercontent.com/KhronosGroup/OpenGL-Registry/main/xml/gl.xml
@@ -18,9 +20,9 @@ bash build_deps.sh build/deps
 D=build/deps
 
 # 3. libmcmetal.dylib
-clang "${CFLAGS[@]}" -std=gnu11 -Icore -I$D/include -c core/*.c
+clang "${CFLAGS[@]}" ${HC[@]+"${HC[@]}"} -std=gnu11 -Icore -I$D/include -c core/*.c
 mv ./*.o build/obj/
-clang "${CFLAGS[@]}" -fobjc-arc -Icore -c mac/*.m
+clang "${CFLAGS[@]}" ${HC[@]+"${HC[@]}"} -fobjc-arc -Icore -c mac/*.m
 mv ./*.o build/obj/
 clang -arch arm64 -dynamiclib -o build/libmcmetal.dylib build/obj/*.o $D/libspirvcross_all.a $D/libglslang_all.a -lc++ \
     -install_name @rpath/libmcmetal.dylib -framework Metal -framework MetalFX -framework QuartzCore -framework Foundation -framework AppKit
