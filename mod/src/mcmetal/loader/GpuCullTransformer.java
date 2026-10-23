@@ -23,10 +23,10 @@ import org.objectweb.asm.tree.MethodNode;
 import org.objectweb.asm.tree.VarInsnNode;
 
 /**
- * GPU chunk culling (MCMETAL_GPU_CULL=1): copies mcmetal.loader.sodium.CullHooks into Sodium's DefaultChunkRenderer
+ * GPU chunk culling (on by default, MCMETAL_GPU_CULL=0 turns it off): copies mcmetal.loader.sodium.CullHooks into Sodium's DefaultChunkRenderer
  * and calls its prepare() at the top of render() and finish() before render() returns. Sodium's jar is never
- * changed; this happens in memory as the class loads, like the Iris patches next door. With the switch off (the
- * default) the class is left exactly as it is.
+ * changed; this happens in memory as the class loads, like the Iris patches next door. With the switch off the class
+ * is left exactly as it is.
  */
 final class GpuCullTransformer implements ITransformer<ClassNode> {
     static final String TARGET = "net.caffeinemc.mods.sodium.client.render.chunk.DefaultChunkRenderer";
@@ -40,7 +40,7 @@ final class GpuCullTransformer implements ITransformer<ClassNode> {
 
     static boolean wanted() {
         String on = System.getenv("MCMETAL_GPU_CULL");
-        return Boolean.getBoolean(MetalBootstrap.ACTIVE) && on != null && !on.isEmpty() && !on.equals("0");
+        return Boolean.getBoolean(MetalBootstrap.ACTIVE) && !"0".equals(on);
     }
 
     @Override

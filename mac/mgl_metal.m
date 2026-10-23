@@ -112,16 +112,36 @@ static void pt_begin_cb(id<MTLCommandBuffer> c)
                         pt_ok = pt_pool[i] != nil;
                     }
                 }
-        mgl_log("profile: GPU pass timing %s", pt_ok ? "on" : "not supported on this GPU");
+        mgl_log("profile: GPU pass timing %s", pt_ok ? "on"
+                : opt_profile >= 3 ? "from command buffer GPU times (no timestamp counters on this GPU)"
+                                   : "not supported on this GPU (MGL_PROFILE=3 times command buffers instead)");
         [dev sampleTimestamps:&pt_cal_cpu gpuTimestamp:&pt_cal_gpu];
     }
-    if (!pt_ok)
+    if (!pt_ok && opt_profile < 3)
         return;
     pt_frame *f = calloc(1, sizeof *f);
-    f->sb = pt_pool[pt_next++ % 6];
+    f->sb = pt_ok ? pt_pool[pt_next++ % 6] : nil;
     pt_cur = f;
     [c addCompletedHandler:^(id<MTLCommandBuffer> done) {
-      (void)done;
+      if (!f->sb) { /* level 3 without counters: each pass ran in its own command buffer; its GPU time is the pass's */
+          double ns = (done.GPUEndTime - done.GPUStartTime) * 1e9;
+          if (f->n && ns > 0) {
+              pthread_mutex_lock(&pt_lock);
+              pt_total_ns += ns;
+              int k = 0;
+              while (k < PT_SLOTS && pt_sum[k].n && strcmp(pt_sum[k].label, f->label[0]))
+                  k++;
+              if (k == PT_SLOTS)
+                  k = PT_SLOTS - 1;
+              if (!pt_sum[k].n)
+                  snprintf(pt_sum[k].label, sizeof pt_sum[k].label, "%s", f->label[0]);
+              pt_sum[k].ns += ns;
+              pt_sum[k].n++;
+              pthread_mutex_unlock(&pt_lock);
+          }
+          free(f);
+          return;
+      }
       if (f->n) {
           NSData *data = [f->sb resolveCounterRange:NSMakeRange(0, (NSUInteger)f->n * 2)];
           const MTLCounterResultTimestamp *ts = data.bytes;
@@ -154,6 +174,10 @@ static int pt_pass(const char *label)
     if (!pt_cur || pt_cur->n >= PT_MAX)
         return -1;
     snprintf(pt_cur->label[pt_cur->n], sizeof pt_cur->label[0], "%s", label);
+    if (!pt_cur->sb) { /* command buffer timing: labels only, no sample buffer to attach */
+        pt_cur->n++;
+        return -1;
+    }
     return pt_cur->n++;
 }
 
@@ -3517,6 +3541,7 @@ void mglb_dispatch(const mgl_draw *d, int gx, int gy, int gz)
     if (!d->program->compute)
         return;
     id<MTLComputeCommandEncoder> c = compute_encoder();
+    pt_label(d->program->label); /* MGL_PROFILE=2/3: name the pass after its first compute program */
     [c setComputePipelineState:OBJ(id<MTLComputePipelineState>, d->program->compute)];
     bind_stage_resources(nil, c, d, 2);
     if (d->uses_scene)
@@ -3986,6 +4011,7 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
         if (gs_concurrent < 0)
             gs_concurrent = !getenv("MGL_GS_CONCURRENT") || atoi(getenv("MGL_GS_CONCURRENT")) != 0;
         id<MTLComputeCommandEncoder> c = compute_encoder_kind(gs_concurrent);
+        pt_label("geometry-shader compute"); /* MGL_PROFILE=2/3: name its pass (it holds every GS job until the strips) */
         keep_clears = 0;
         gs_recording = 0;
         [c setComputePipelineState:OBJ(id<MTLComputePipelineState>, d->program->compute)];
@@ -6112,7 +6138,7 @@ static void profile_frame(unsigned long draws)
             mgl_bstats.data_bytes / f / 1048576.0, prof.tex_views / f, prof.pipe_lookups / f, prof.big_uniforms / f,
             tex_upgrades);
     memset(&mgl_bstats, 0, sizeof mgl_bstats);
-    if (pt_ok > 0)
+    if (pt_ok > 0 || (pt_ok == 0 && opt_profile >= 3))
         pt_report(f);
     memset(&prof, 0, sizeof prof);
     prof.start_ns = t;
@@ -6336,19 +6362,55 @@ static void frame_times_tick(void)
     start = t;
 }
 
+/* A swap of 50 ms or more logs where its time went (at most 40 times), to tell a stall waiting for the screen
+   (drawable) from one waiting for the GPU (fence) or in our own end-of-frame work. */
+enum { SW_RT, SW_GSC, SW_SHOT, SW_ENCODERS, SW_DRAWABLE, SW_PRESENT, SW_COMMIT, SW_AFTER, SW_FENCE, SW_N };
+static uint64_t sw_t[SW_N], sw_last;
+static void sw_mark(int stage)
+{
+    uint64_t t = now_ns();
+    sw_t[stage] += t - sw_last;
+    sw_last = t;
+}
+
+static void sw_report(uint64_t start)
+{
+    static const char *const names[SW_N] = {"ray-tracing scene", "geometry cache", "screenshots", "ending passes",
+                                            "waiting for a drawable", "presenting", "commit", "after commit", "waiting for the GPU"};
+    static int logged;
+    uint64_t total = now_ns() - start;
+    if (total >= 50000000ull && logged < 40) {
+        char buf[512];
+        int n = 0;
+        for (int i = 0; i < SW_N; i++)
+            if (sw_t[i] >= 1000000ull)
+                n += snprintf(buf + n, sizeof buf - (size_t)n, ", %s %.1f", names[i], (double)sw_t[i] * 1e-6);
+        mgl_log("slow swap: %.1f ms%s (ms; %d presents waiting)", (double)total * 1e-6, n ? buf : ", no single step over 1 ms",
+                atomic_load(&presents_waiting));
+        if (++logged == 40)
+            mgl_log("slow swap: no more of these logged");
+    }
+    memset(sw_t, 0, sizeof sw_t);
+}
+
 MGL_EXPORT void mgl_glfw_swap(void *ctx)
 {
     frame_times_tick();
+    uint64_t sw_start = sw_last = now_ns();
     mgl_ctx *c = ctx;
     update_size(c);
     mgl_rt_end_frame(); /* ray tracing: rebuild the scene from this frame's terrain sections */
+    sw_mark(SW_RT);
     gsc_end_frame();
+    sw_mark(SW_GSC);
     if (!mgl->window_color) {
         commit();
         return;
     }
     mgl_shot_tick(); /* MGL_SHOT_DIR test screenshots */
+    sw_mark(SW_SHOT);
     end_encoders();
+    sw_mark(SW_ENCODERS);
     /* Vsync off: like OpenGL, don't wait for the screen. When two finished frames are already waiting to be shown,
        this frame is drawn but not presented, instead of blocking in nextDrawable (which held the game at twice the
        refresh rate, 240 fps on a 120 Hz screen). Frames the GPU is still drawing don't count: when the GPU is
@@ -6362,6 +6424,7 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
     prof.wait_ns += now_ns() - t_draw;
     pace_wait_ns += now_ns() - t_draw;
     prof.skipped_presents += skip;
+    sw_mark(SW_DRAWABLE);
     if (drawable) {
         watch_drawable(drawable);
         /* Frame interpolation: the made-up frame, then the real one half a frame after it. deltaTime is the paced
@@ -6449,7 +6512,9 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
         if (!mid && fg_enabled())
             fg_time_stage(FG_SHOW_REAL);
     }
+    sw_mark(SW_PRESENT);
     commit();
+    sw_mark(SW_COMMIT);
     priv_promote();
     archive_maybe_save();
     frames_presented = c->frames + 1;
@@ -6469,6 +6534,9 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
     static uint64_t frame_end_serial[2];
     uint64_t before_last = frame_end_serial[c->frames & 1];
     frame_end_serial[c->frames & 1] = submitted_serial;
+    sw_mark(SW_AFTER);
     if (before_last)
         mglb_fence_wait(before_last, 100000000ull);
+    sw_mark(SW_FENCE);
+    sw_report(sw_start);
 }

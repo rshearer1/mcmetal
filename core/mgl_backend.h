@@ -216,7 +216,7 @@ typedef struct mgl_camera {
 } mgl_camera;
 extern mgl_camera mgl_cam;
 
-/* ---- GPU chunk culling (mgl_cull.c, MCMETAL_GPU_CULL) ---- */
+/* ---- GPU chunk culling (mgl_cull.c, on unless MCMETAL_GPU_CULL=0) ---- */
 typedef struct mgl_cull_draw {
     uint32_t count, first_index, base_vertex, region; /* one Sodium section range (multi-draw sub-draw) */
     float min[3], pad;     /* the section's 16x16x16 box corner, camera-relative */
