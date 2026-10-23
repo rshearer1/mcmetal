@@ -129,7 +129,7 @@ vec3 styleAurora(vec3 dir, float night) {
         c += band * rays * mix(vec3(0.10, 1.00, 0.55), vec3(0.65, 0.25, 1.00), clamp(dir.y * 2.0 + fi * 0.2, 0.0, 1.0));
     }
     float fade = smoothstep(0.03, 0.25, dir.y) * (1.0 - smoothstep(0.75, 1.0, dir.y));
-    return c * fade * night * 0.05;
+    return c * fade * night * 0.03;
 #else
     return vec3(0.0);
 #endif
