@@ -18,6 +18,8 @@
     #define STYLE_FOLIAGE vec4(1.25, 1.10, 0.45, 0.50)   // rgb: colour (luma-normalised), a: how far towards it
     #define STYLE_WATER vec4(0.45, 0.95, 0.85, 0.40)
     #define STYLE_PAINT                                  // painted brush-stroke finish (final.fsh)
+    #define STYLE_CLOUD vec4(0.03, 0.75, 0.24, 1.0)      // clouds: x more cover, y size, z edge softness, w brightness
+    #define STYLE_CLOUD_SHADE vec3(1.00, 0.85, 0.80)     // the shaded underside: warm
 #elif STYLE == 2        // Witchy: violet dusks and nights, bright purple moonlight, aurora, ember torches, thick valley mist
     #define STYLE_SKY_PAINT 0.85
     #define STYLE_SUN_TINT vec3(0.98, 0.92, 0.95)
@@ -33,6 +35,8 @@
     #define STYLE_WATER vec4(0.45, 0.30, 1.10, 0.65)     // inky violet
     #define STYLE_FOLIAGE_GAIN 0.80
     #define STYLE_FIREFLIES
+    #define STYLE_CLOUD vec4(0.10, 1.00, 0.22, 0.60)     // heavy, dark
+    #define STYLE_CLOUD_SHADE vec3(0.70, 0.55, 1.00)     // violet undersides
 #elif STYLE == 3        // Storybook: bright cartoon sky, banded toon light, ink outlines
     #define STYLE_SKY_PAINT 0.9
     #define STYLE_SUN_TINT vec3(1.06, 1.00, 0.90)
@@ -48,6 +52,9 @@
     #define STYLE_FOLIAGE_SAT 1.6                        // cartoon green: more saturated, not a different hue
     #define STYLE_WATER vec4(0.25, 0.75, 1.60, 0.50)
     #define STYLE_POSTER                                 // flat poster bands (final.fsh)
+    #define STYLE_CLOUD vec4(0.02, 0.60, 0.03, 1.15)     // big puffy cartoon clouds with crisp edges
+    #define STYLE_CLOUD_SHADE vec3(0.80, 0.88, 1.10)
+    #define STYLE_CLOUD_TOON                             // two flat light bands and an ink rim
 #elif STYLE == 4        // Fairytale: pink-and-turquoise sky, rose shade, sparkling glow, pearly haze
     #define STYLE_SKY_PAINT 0.85
     #define STYLE_SUN_TINT vec3(1.06, 0.94, 1.00)
@@ -62,6 +69,8 @@
     #define STYLE_WATER vec4(0.25, 1.15, 1.15, 0.60)     // turquoise
     #define STYLE_FOLIAGE_GAIN 1.15
     #define STYLE_SPARKLE                                // twinkles on bright surfaces (final.fsh)
+    #define STYLE_CLOUD vec4(-0.02, 1.20, 0.30, 1.10)    // wispy
+    #define STYLE_CLOUD_SHADE vec3(1.10, 0.80, 1.00)     // pink undersides
 #else
     #define STYLE_SKY_PAINT 0.0
     #define STYLE_SUN_TINT vec3(1.0)
@@ -74,6 +83,10 @@
     #define STYLE_GLOW 0.0
 #endif
 
+#ifndef STYLE_CLOUD
+    #define STYLE_CLOUD vec4(0.0, 1.0, 0.18, 1.0)
+    #define STYLE_CLOUD_SHADE vec3(1.0)
+#endif
 #ifndef STYLE_FOLIAGE_GAIN
     #define STYLE_FOLIAGE_GAIN 1.0
 #endif
