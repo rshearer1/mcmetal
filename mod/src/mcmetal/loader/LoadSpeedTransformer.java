@@ -31,12 +31,20 @@ import org.objectweb.asm.tree.VarInsnNode;
  * order); see load/WoodcutterHooks.
  * Vegan Delight: VeganLabels.initialize() runs whenever recipes load and asked an ArrayList of up to 57,000 items
  * whether it holds an item, over and over (16-19 s); see load/SeenListHooks.
+ * Carry On: ListHandler.initConfigLists() runs whenever tags load and rebuilt every block's name for each of its
+ * config's wildcards (5-9 s on the main thread); see load/WildcardNameHooks.
+ * KubeJS: a script's replaceInput() walked every item of every recipe ingredient for each item it replaces (8.5 s of
+ * Hearth & Hex's recipe load); see load/IngredientMatchHooks.
  */
 final class LoadSpeedTransformer implements ITransformer<ClassNode> {
     static final String HEXEREI = "net.joefoxe.hexerei.data.recipes.WoodcutterRecipes";
     static final String VEGAN = "net.player005.vegandelightfabric.labels.VeganLabels";
     static final String WOOD_HOOKS = "mcmetal/loader/load/WoodcutterHooks";
     static final String SEEN_HOOKS = "mcmetal/loader/load/SeenListHooks";
+    static final String CARRYON = "tschipp.carryon.common.config.ListHandler";
+    static final String NAME_HOOKS = "mcmetal/loader/load/WildcardNameHooks";
+    static final String KUBEJS = "dev.latvian.mods.kubejs.recipe.component.IngredientComponent";
+    static final String MATCH_HOOKS = "mcmetal/loader/load/IngredientMatchHooks";
     static final String PREFIX = GpuCullTransformer.PREFIX;
     /** createRecipes() of Hexerei 0.5.0.3 (see fingerprint()); any other version keeps its own loop. */
     static final Set<String> KNOWN_CREATE_RECIPES = Set.of("1f31c51f74d9f41b");
@@ -53,6 +61,10 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
             woodcutter(c);
         else if (c.name.equals(VEGAN.replace('.', '/')))
             veganSeen(c);
+        else if (c.name.equals(CARRYON.replace('.', '/')))
+            carryOnNames(c);
+        else if (c.name.equals(KUBEJS.replace('.', '/')))
+            kubeMatches(c);
         return c;
     }
 
@@ -141,6 +153,64 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
         MetalBootstrap.log("load fixes: Vegan Delight's labels keep their seen items in a set (MCMETAL_LOAD_FIXES)");
     }
 
+    static void carryOnNames(ClassNode c) {
+        // addWithWildcards(): key.toString() twice in the loop over all ids; initConfigLists(): the end
+        java.util.List<MethodInsnNode> names = new java.util.ArrayList<>();
+        java.util.List<AbstractInsnNode> ends = new java.util.ArrayList<>();
+        MethodNode init = null;
+        for (MethodNode m : c.methods) {
+            boolean isAdd = m.name.equals("addWithWildcards") && m.desc.equals(
+                    "(Ljava/util/List;Ljava/util/Set;Lnet/minecraft/core/Registry;Ljava/util/Map;Ljava/util/List;)V");
+            boolean isInit = m.name.equals("initConfigLists") && m.desc.equals("()V");
+            if (isInit)
+                init = m;
+            for (AbstractInsnNode n : m.instructions.toArray()) {
+                if (isInit && n.getOpcode() == Opcodes.RETURN)
+                    ends.add(n);
+                if (isAdd && n instanceof MethodInsnNode mi && mi.getOpcode() == Opcodes.INVOKEVIRTUAL
+                        && mi.owner.equals("net/minecraft/resources/ResourceLocation") && mi.name.equals("toString"))
+                    names.add(mi);
+            }
+        }
+        ClassNode hooks = GpuCullTransformer.readHooks(NAME_HOOKS);
+        if (hooks != null && hooks.methods.stream().anyMatch(m -> m.name.equals("<clinit>")))
+            hooks = null;
+        if (init == null || names.size() != 2 || ends.isEmpty() || hooks == null) {
+            MetalBootstrap.log("load fixes: Carry On's config lists are not the expected ones, left as they are");
+            return;
+        }
+        GpuCullTransformer.merge(hooks, c);
+        for (MethodInsnNode mi : names)
+            redirect(mi, c.name, "name", "(Ljava/lang/Object;)Ljava/lang/String;");
+        for (AbstractInsnNode n : ends)
+            init.instructions.insertBefore(n, new MethodInsnNode(Opcodes.INVOKESTATIC, c.name, PREFIX + "done", "()V", false));
+        MetalBootstrap.log("load fixes: Carry On's wildcard lists reuse each id's name (MCMETAL_LOAD_FIXES)");
+    }
+
+    static void kubeMatches(ClassNode c) {
+        // matches(cx, Ingredient, info): "itemMatch.matches(cx, ingredient, info.exact())", exactly once
+        String match = "dev/latvian/mods/kubejs/recipe/match/ItemMatch";
+        String cx = "Ldev/latvian/mods/kubejs/recipe/filter/RecipeMatchContext;";
+        String ing = "Lnet/minecraft/world/item/crafting/Ingredient;";
+        java.util.List<MethodInsnNode> calls = new java.util.ArrayList<>();
+        for (MethodNode m : c.methods)
+            if (m.name.equals("matches") && m.desc.equals("(" + cx + ing + "Ldev/latvian/mods/kubejs/recipe/match/ReplacementMatchInfo;)Z"))
+                for (AbstractInsnNode n : m.instructions.toArray())
+                    if (n instanceof MethodInsnNode mi && mi.getOpcode() == Opcodes.INVOKEINTERFACE && mi.owner.equals(match)
+                            && mi.name.equals("matches") && mi.desc.equals("(" + cx + ing + "Z)Z"))
+                        calls.add(mi);
+        ClassNode hooks = GpuCullTransformer.readHooks(MATCH_HOOKS);
+        if (hooks != null && hooks.methods.stream().anyMatch(m -> m.name.equals("<clinit>")))
+            hooks = null;
+        if (calls.size() != 1 || hooks == null) {
+            MetalBootstrap.log("load fixes: KubeJS's ingredient matching is not the expected one, left as it is");
+            return;
+        }
+        GpuCullTransformer.merge(hooks, c);
+        redirect(calls.get(0), c.name, "matches", "(L" + match + ";" + cx + ing + "Z)Z");
+        MetalBootstrap.log("load fixes: KubeJS's replaceInput looks items up in each ingredient's set (MCMETAL_LOAD_FIXES)");
+    }
+
     /** A call on the object in front of its arguments becomes a static call of the merged hook with the same order. */
     static void redirect(MethodInsnNode mi, String owner, String hook, String desc) {
         mi.setOpcode(Opcodes.INVOKESTATIC);
@@ -194,7 +264,7 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
 
     @Override
     public Set<Target<ClassNode>> targets() {
-        return Set.of(Target.targetClass(HEXEREI), Target.targetClass(VEGAN));
+        return Set.of(Target.targetClass(HEXEREI), Target.targetClass(VEGAN), Target.targetClass(CARRYON), Target.targetClass(KUBEJS));
     }
 
     @Override
