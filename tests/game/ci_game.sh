@@ -10,6 +10,7 @@
 #   (default: the first three)
 # WORK holds the game install (cacheable), OUT gets screenshots and logs. Needs Java 21 as `java` or $JAVA.
 set -uo pipefail
+CRASHED= # phases where the JVM crashed or Minecraft wrote a crash report: the job fails at the end
 SRC=$(cd "$(dirname "$0")/../.." && pwd)
 mkdir -p "$1" "$2"
 WORK=$(cd "$1" && pwd); OUT=$(cd "$2" && pwd); shift 2  # absolute: the game runs in WORK/game
@@ -251,8 +252,18 @@ run_phase() { # name seconds world shaders [VAR=value ...]: extra env for this p
     bench_from=
     echo "phase $name took $((SECONDS - started)) s"
     cp "$G/logs/latest.log" "$OUT/$name/latest.log" 2>/dev/null
-    ls "$G"/hs_err_pid*.log >/dev/null 2>&1 && mv "$G"/hs_err_pid*.log "$OUT/$name/"
-    ls -d "$G"/crash-reports/* >/dev/null 2>&1 && cp -r "$G/crash-reports" "$OUT/$name/"
+    # a JVM crash (hs_err) or a Minecraft crash report fails the job at the end (the phase's fps and shots still
+    # get collected): a crash a few seconds into the world used to pass green
+    if ls "$G"/hs_err_pid*.log >/dev/null 2>&1; then
+        mv "$G"/hs_err_pid*.log "$OUT/$name/"
+        CRASHED="$CRASHED $name"
+        echo "::error::phase $name: the JVM crashed ($(grep -m1 -hE 'SIGSEGV|SIGBUS|fatal error|Internal Error' "$OUT/$name"/hs_err_pid*.log | head -1 | cut -c1-160))"
+    fi
+    if ls "$G"/crash-reports/*.txt >/dev/null 2>&1; then
+        mkdir -p "$OUT/$name/crash-reports" && mv "$G"/crash-reports/*.txt "$OUT/$name/crash-reports/"
+        CRASHED="$CRASHED $name"
+        echo "::error::phase $name: Minecraft crash report ($(grep -m1 -h '^Description:' "$OUT/$name"/crash-reports/*.txt | cut -c1-160))"
+    fi
     echo "screenshots: $(ls "$OUT/$name"/shot-*.png 2>/dev/null | wc -l)"
     # our own pack: keep the source of programs that failed to link (pack code + Iris's wrapper; skip anything with
     # Sodium's terrain code) outside glsl/, so it lands in the uploaded artifact
@@ -556,3 +567,4 @@ for p in $PHASES; do
         ls -la "$WORK/cache" | tail -3 ;;
     esac
 done
+[ -z "${CRASHED:-}" ] || { echo "crashed:$CRASHED"; exit 1; }
