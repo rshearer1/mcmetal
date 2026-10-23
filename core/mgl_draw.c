@@ -293,6 +293,7 @@ static void gather_uniforms(mgl_draw *d, mgl_program *p)
         if (b < 0 || b >= MGL_MAX_UBO_BINDINGS)
             continue;
         mgl_buffer *buf = mgl_buffer_obj(mgl->ubo[b].buffer);
+        mgl_buffer_settle(buf);
         d->ubo[i] = buf ? buf->mem : NULL;
         d->ubo_offset[i] = mgl->ubo[b].offset;
         d->ubo_size[i] = mgl->ubo[b].size ? mgl->ubo[b].size : (buf ? buf->size - mgl->ubo[b].offset : 0);
@@ -302,6 +303,8 @@ static void gather_uniforms(mgl_draw *d, mgl_program *p)
         if (b < 0 || b >= MGL_MAX_SSBO_BINDINGS)
             continue;
         mgl_buffer *buf = mgl_buffer_obj(mgl->ssbo[b].buffer);
+        mgl_buffer_settle(buf);
+        mgl_buffer_gpu_written(buf);
         d->ssbo[i] = buf ? buf->mem : NULL;
         d->ssbo_offset[i] = mgl->ssbo[b].offset;
     }
@@ -313,9 +316,33 @@ static void gather_uniforms(mgl_draw *d, mgl_program *p)
             }
 }
 
+/* the GL buffer behind each of the last built draw's vertex buffer slots (NULL: the constant-attribute buffer) */
+static mgl_buffer *vsrc[MGL_MAX_VERTEX_BUFFERS];
+
+/* Vertex buffers left partly in old memory by a lazy rename (mgl_buffer.c) are fine as long as the draw fetches
+   only the bytes already written; otherwise, or when the range can't be known (max_vertex < 0), they are settled. */
+static void vertex_ranges(const mgl_draw *d, long min_vertex, long max_vertex)
+{
+    for (int i = 0; i < d->num_vbufs; i++) {
+        mgl_buffer *b = vsrc[i];
+        if (!b || !b->lazy)
+            continue;
+        const mgl_vertex_buf *vb = &d->vbufs[i];
+        if (max_vertex >= 0 && min_vertex >= 0 && !vb->divisor && vb->stride > 0 && d->instances <= 1) {
+            size_t lo = vb->offset + (size_t)min_vertex * (size_t)vb->stride;
+            size_t hi = vb->offset + ((size_t)max_vertex + 1) * (size_t)vb->stride;
+            if (lo >= b->valid_lo && hi <= b->valid_hi)
+                continue;
+        }
+        mgl_buffer_settle(b);
+        ((mgl_draw *)d)->vbufs[i].buf = b->mem;
+    }
+}
+
 /* Returns 0 when the draw can't happen (no program, no target). */
 static int build_draw(mgl_draw *d)
 {
+    memset(vsrc, 0, sizeof vsrc);
     mgl_program *p = mgl_current_program();
     memset(d, 0, sizeof *d);
     if (p)
@@ -391,6 +418,7 @@ static int build_draw(mgl_draw *d)
             d->vbufs[slot].stride = a->stride;
             d->vbufs[slot].offset = a->offset;
             d->vbufs[slot].divisor = (int)a->divisor;
+            vsrc[slot] = buf;
         }
         if (slot < 0)
             return 0;
@@ -541,6 +569,15 @@ static void draw(GLenum mode, GLsizei count, GLenum type, const void *indices, G
         mgl_log("indexed draw without an element buffer (client-side indices are not supported)");
         return;
     }
+    mgl_buffer_settle(ib);
+    if (ib) {
+        size_t es = type == GL_UNSIGNED_SHORT ? 2 : type == GL_UNSIGNED_INT ? 4 : 1;
+        long top = mode == GL_TRIANGLE_FAN || (size_t)indices % es ? -1
+                   : mgl_buffer_index_bound(ib, type, (size_t)indices / es, (size_t)count);
+        vertex_ranges(&d, basevertex < 0 ? -1 : basevertex, top < 0 ? -1 : top + basevertex);
+    } else {
+        vertex_ranges(&d, first, (long)first + count - 1);
+    }
     if (ib && (type == GL_UNSIGNED_BYTE || mode == GL_TRIANGLE_FAN))
         mglb_buffer_wait_writes(ib->mem); /* read on the CPU below */
     if (type == GL_UNSIGNED_BYTE && mode != GL_TRIANGLE_FAN) {
@@ -599,6 +636,8 @@ void glMultiDrawElementsBaseVertex(GLenum mode, const GLsizei *count, GLenum typ
         mgl_draw d;
         if (!build_draw(&d))
             return;
+        mgl_buffer_settle(ib);
+        vertex_ranges(&d, -1, -1);
         d.primitive = (int)mode;
         d.instances = 1;
         d.index_buf = ib->mem;
@@ -625,6 +664,8 @@ void glMultiDrawElementsBaseVertex(GLenum mode, const GLsizei *count, GLenum typ
         mgl_draw d;
         if (!build_draw(&d))
             return;
+        mgl_buffer_settle(ib);
+        vertex_ranges(&d, -1, -1);
         d.primitive = (int)mode;
         d.instances = 1;
         d.index_buf = ib->mem;

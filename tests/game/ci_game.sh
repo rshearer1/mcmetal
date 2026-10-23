@@ -1,6 +1,7 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
 #   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary sound sound-off water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-underwater ours-vista ours-vista-STYLE-TIME
+#   menu menu-noif menu-shaders particles ab-menu ab-menu-noif ab-particles (JEI, ImmediatelyFast, Particle Rain)
 #   pack-NAME packnight-NAME packshadow-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
 #   herd-NAME (the pack over a busy farm: 240 mobs and 64 chests, for entity costs; ab-herd-NAME for A/B)
 #   glcount-pack-NAME (the pack on Apple's OpenGL, draws counted by tools/glcount.c)
@@ -348,6 +349,41 @@ dh_phase() { # dh / dh-shaders / dh-PACK: Distant Horizons at noon, without a pa
     if [ "$purl" != - ]; then rm -rf "$G/shaderpacks/$file"; fi
 }
 
+# Menus and particles, with the client mods Hearth & Hex ships for them (same versions), fetched at run time like the
+# packs and removed after the phase:
+#   menu         the inventory held open (MCMETAL_TEST_SCREEN) with a full grid of items and JEI's item list beside it,
+#                ImmediatelyFast on (as in the pack); GUI scale 2, so JEI shows several hundred icons at 1920x1200
+#   menu-noif    the same without ImmediatelyFast (every item icon its own draw)
+#   menu-shaders the same with Complementary on behind the menu
+#   particles    rain with Particle Rain (thousands of rain and splash particles) + ImmediatelyFast, no shaders
+#   ab-menu, ab-menu-noif, ab-particles: new, old (GAME_AB_OFF's env), new in one job
+JEI="https://cdn.modrinth.com/data/u6dRKJwZ/versions/ufHUqt9b/jei-1.21.1-neoforge-19.51.0.418.jar|d19552586f686eae4ef5e7199f31604d1d3cfca7"
+IMMEDIATELYFAST="https://cdn.modrinth.com/data/5ZwdcRci/versions/EJzmEPZV/ImmediatelyFast-NeoForge-1.6.15%2B1.21.1.jar|f991166f7c82b493481c876e3c83c9fac4159671"
+PARTICLE_RAIN="https://cdn.modrinth.com/data/nrikgvxm/versions/RxfaR4ud/particlerain-4.0.2%2B1.21.1-neoforge.jar|444c6f221e57cca8e433702b18c4643faa82545a"
+fetch_mod() { # "url|sha" file-in-mods/
+    local url sha; IFS='|' read -r url sha <<< "$1"
+    python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import bare_mc; bare_mc.fetch(*sys.argv[2:])' \
+        "$SRC/tools" "$url" "$G/mods/$2" "$sha" || { echo "could not download $2"; return 1; }
+}
+gui_phase() { # kind (menu, menu-noif, menu-shaders, particles) out-name [VAR=value ...]
+    local kind=$1 out=$2; shift 2
+    rm -f "$G/mods/mcm-jei.jar" "$G/mods/mcm-immediatelyfast.jar" "$G/mods/mcm-particlerain.jar"
+    case $kind in menu-noif) ;; *) fetch_mod "$IMMEDIATELYFAST" mcm-immediatelyfast.jar || return ;; esac
+    case $kind in
+    menu*)
+        fetch_mod "$JEI" mcm-jei.jar || return
+        scene noon clear menu
+        cp "$G/options.txt" "$G/options.txt.gui"; sed -i.bak 's/^guiScale:.*/guiScale:2/' "$G/options.txt"
+        run_phase "$out" 240 metal "$([ $kind = menu-shaders ] && echo true || echo false)" MCMETAL_TEST_SCREEN=inventory "$@"
+        mv "$G/options.txt.gui" "$G/options.txt" ;;
+    particles)
+        fetch_mod "$PARTICLE_RAIN" mcm-particlerain.jar || return
+        scene 3000 rain
+        run_phase "$out" 240 metal false "$@" ;;
+    esac
+    rm -f "$G/mods/mcm-jei.jar" "$G/mods/mcm-immediatelyfast.jar" "$G/mods/mcm-particlerain.jar"
+}
+
 # packnight-NAME turns each pack's coloured block light on (all ship with it off except Solas and RV)
 PACK_LIGHT="photon|COLORED_LIGHTS=true
 bliss|LPV_ENABLED=true
@@ -494,6 +530,12 @@ for p in $PHASES; do
         third_party "$inner" "$p" MCMETAL_DISABLE=1 GLCOUNT_LOG="$OUT/$p/glcount.log"
         LIBARGS=()
         tail -5 "$OUT/$p/glcount.log" 2>/dev/null ;;
+    menu|menu-noif|menu-shaders|particles) gui_phase "$p" "$p" ;;
+    ab-menu|ab-menu-noif|ab-particles) # new, old (GAME_AB_OFF's env), new, as for the packs below
+        inner=${p#ab-}
+        gui_phase "$inner" "$p-new1"
+        gui_phase "$inner" "$p-old" ${GAME_AB_OFF:-}
+        gui_phase "$inner" "$p-new2" ;;
     ab-*) # A/B in one job (separate jobs run on machines up to ~30% apart): ab-pack-NAME runs the pack with this
           # change (new), with GAME_AB_OFF's env (old, e.g. MGL_TEX_COMPRESS=0), then new again; compare in fps.txt
         inner=${p#ab-}

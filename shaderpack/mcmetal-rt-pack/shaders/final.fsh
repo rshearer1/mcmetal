@@ -6,7 +6,7 @@
 #include "/lib/aces.glsl"
 #include "/lib/style.glsl"
 
-uniform sampler2D colortex0, colortex6;
+uniform sampler2D colortex0, colortex6, depthtex0;
 
 in vec2 texcoord;
 
@@ -15,6 +15,25 @@ layout(location = 0) out vec4 outColor;
 void main() {
     float exposure = texelFetch(colortex6, ivec2(0), 0).r * EXPOSURE;   // from composite2
     vec3 col = texture(colortex0, texcoord).rgb * exposure;
+#ifdef STYLE_PAINT
+    // painted finish (Kuwahara): of the four 3x3 corners around the pixel, take the average of the calmest one, so
+    // flat areas become soft dabs of colour while edges stay sharp
+    {
+        vec2 px = 1.5 / vec2(viewWidth, viewHeight);
+        float best = 1e9;
+        for (int q = 0; q < 4; q++) {
+            vec2 dir = vec2(q == 1 || q == 3 ? 1.0 : -1.0, q >= 2 ? 1.0 : -1.0);
+            vec3 m = vec3(0.0); float s1 = 0.0, s2 = 0.0;
+            for (int j = 0; j < 3; j++) for (int i = 0; i < 3; i++) {
+                vec3 t = texture(colortex0, texcoord + vec2(i, j) * dir * px).rgb;
+                float l = luma(t);
+                m += t; s1 += l; s2 += l * l;
+            }
+            float var = s2 / 9.0 - (s1 / 9.0) * (s1 / 9.0);
+            if (var < best) { best = var; col = m / 9.0 * exposure; }
+        }
+    }
+#endif
 #if DEBUG_VIEW > 0
     outColor = vec4(texture(colortex0, texcoord).rgb, 1.0);   // debug views: raw values, no grading
     return;
@@ -33,6 +52,21 @@ void main() {
 #endif
     col = acesFitted(col);
     col = styleGrade(col, texcoord);
+#ifdef STYLE_POSTER
+    if (texture(depthtex0, texcoord).r < 1.0) {   // flat poster colour on the world (the sky stays smooth)
+        float l = luma(col);
+        float b = l * 6.0;
+        float q = (floor(b) + smoothstep(0.35, 0.65, fract(b))) / 6.0;
+        col = mix(col, col * (q / max(l, 1e-3)), 0.6);
+    }
+#endif
+#ifdef STYLE_SPARKLE
+    {   // twinkles: a few bright surface pixels flash for a moment (leaves, water, snow in the sun)
+        vec2 cell = floor(gl_FragCoord.xy / 3.0);
+        float h = fract(sin(dot(cell, vec2(12.9898, 78.233)) + floor(frameTimeCounter * 3.0) * 7.31) * 43758.5453);
+        col += vec3(1.0, 0.92, 1.0) * step(0.996, h) * smoothstep(0.45, 0.8, luma(col)) * 0.8;
+    }
+#endif
     col = mix(vec3(luma(col)), col, SATURATION);
     col = clamp((col - 0.18) * CONTRAST + 0.18, 0.0, 1.0);
     col = toSRGB(col);

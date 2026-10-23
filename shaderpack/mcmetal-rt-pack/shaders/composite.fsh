@@ -13,6 +13,7 @@ const vec4 colortex13ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 #include "/lib/common.glsl"
 #include "/lib/uniforms.glsl"
 #include "/lib/sky.glsl"
+#include "/lib/style.glsl"
 
 uniform sampler2D colortex0, colortex1, colortex5, colortex8, colortex11, colortex13, depthtex0, depthtex1;
 
@@ -74,7 +75,7 @@ void main() {
         vec3 nc = octDecode(texture(colortex1, texcoord).xy);
         float edge = 0.0;
         for (int i = 0; i < 4; i++) {
-            vec2 o = (i == 0 ? vec2(1.0, 0.0) : i == 1 ? vec2(-1.0, 0.0) : i == 2 ? vec2(0.0, 1.0) : vec2(0.0, -1.0)) * px;
+            vec2 o = (i == 0 ? vec2(1.0, 0.0) : i == 1 ? vec2(-1.0, 0.0) : i == 2 ? vec2(0.0, 1.0) : vec2(0.0, -1.0)) * px * 2.0;   // 2 px: a bold ink line
             float d = texture(depthtex0, texcoord + o).r;
             float ln = d >= 1.0 ? far * 4.0 : linDepth(d);
             if (lc - ln > 0.03 * lc + 0.15) edge = 1.0;                            // something in front: outline it
@@ -131,6 +132,12 @@ void main() {
             col = mix(col, skyColor(normalize(vec3(hd.x, max(hd.y, 0.0) + 0.12, hd.z)), sunDir), amount);
         }
     }
+#ifdef STYLE_FIREFLIES
+    if (isEyeInWater == 0) {
+        vec3 vd = normalize((gbufferModelViewInverse * vec4((gbufferProjectionInverse * vec4(texcoord * 2.0 - 1.0, 1.0, 1.0)).xyz, 0.0)).xyz);
+        col += styleFireflies(vd, depth < 1.0 ? dist : 1e3, cameraPosition, smoothstep(0.12, -0.04, sunDir.y));
+    }
+#endif
 #if defined USE_RT && defined LIGHT_SHAFTS
     if (isEyeInWater <= 1) col += texture(colortex8, texcoord * LIGHT_SHAFTS_SCALE).rgb;   // deferred3.fsh
 #endif

@@ -447,6 +447,7 @@ static const void *unpack_source(const void *pixels)
 {
     if (mgl->pixel_unpack_buffer) {
         mgl_buffer *b = mgl_buffer_obj(mgl->pixel_unpack_buffer);
+        mgl_buffer_settle(b);
         if (!b || !b->mem)
             return NULL;
         mglb_buffer_wait_writes(b->mem); /* a GPU copy into it may still be on its way */

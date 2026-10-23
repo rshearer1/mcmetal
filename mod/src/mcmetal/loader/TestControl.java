@@ -14,13 +14,16 @@ import java.util.List;
  *   shaders          reloads the shader pack (Iris re-reads iris.properties and the pack's options file)
  *   mark TEXT        just logs "[mcmetal] mark TEXT", for the rig to find its place in the log
  * Then it logs "[mcmetal] control done N". Never starts without the variable.
+ *
+ * MCMETAL_TEST_SCREEN=inventory (test rig only): once a world is loaded, opens the player's inventory (with JEI's
+ * item list beside it when JEI is installed) and opens it again whenever it closes, for menu frame-rate runs.
  */
 final class TestControl {
     private TestControl() {
     }
 
     static void start(String path) {
-        Thread t = new Thread(() -> run(new File(path)), "mcmetal test control");
+        Thread t = new Thread(() -> run(path == null || path.isEmpty() ? null : new File(path)), "mcmetal test control");
         t.setDaemon(true);
         t.start();
     }
@@ -43,9 +46,12 @@ final class TestControl {
                 }
             }
             int done = 0;
+            String screen = System.getenv("MCMETAL_TEST_SCREEN");
             while (true) {
                 Thread.sleep(500);
-                if (!file.exists())
+                if (screen != null && !screen.isEmpty())
+                    holdScreen(getInstance.invoke(null), cl, screen);
+                if (file == null || !file.exists())
                     continue;
                 List<String> lines = Files.readAllLines(file.toPath());
                 if (!file.delete())
@@ -72,6 +78,36 @@ final class TestControl {
         } catch (Throwable t) {
             MetalBootstrap.log("test control stopped: " + t);
         }
+    }
+
+    private static int screenOpens;
+
+    /** Opens the named screen on the render thread when the world is loaded and no screen is open. */
+    private static void holdScreen(Object mc, ClassLoader cl, String name) throws ReflectiveOperationException {
+        Class<?> mcc = mc.getClass();
+        Object player = mcc.getField("player").get(mc);
+        if (player == null || mcc.getField("screen").get(mc) != null)
+            return;
+        if (!name.equals("inventory")) {
+            MetalBootstrap.log("control: unknown MCMETAL_TEST_SCREEN " + name);
+            System.exit(1); // a typo must not measure the world instead of a menu
+        }
+        Class<?> playerClass = Class.forName("net.minecraft.world.entity.player.Player", false, cl);
+        Class<?> screenClass = Class.forName("net.minecraft.client.gui.screens.Screen", false, cl);
+        var make = Class.forName("net.minecraft.client.gui.screens.inventory.InventoryScreen", true, cl)
+                .getConstructor(playerClass);
+        Method set = mcc.getMethod("setScreen", screenClass);
+        Runnable r = () -> { // screens are made and shown on the render thread
+            try {
+                if (mcc.getField("screen").get(mc) == null)
+                    set.invoke(mc, make.newInstance(player));
+            } catch (ReflectiveOperationException e) {
+                MetalBootstrap.log("control: opening " + name + " failed: " + e.getCause());
+            }
+        };
+        mcc.getMethod("execute", Runnable.class).invoke(mc, r);
+        if (screenOpens++ < 5)
+            MetalBootstrap.log("control: screen " + name + " opened");
     }
 
     /** A command as the integrated server itself, on the server thread. */
