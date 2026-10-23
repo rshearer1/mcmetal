@@ -862,13 +862,16 @@ static void wire(MCSource *s, AVAudioFormat *fmt) {
         s.node = [AVAudioPlayerNode new];
         [d.engine attachNode:s.node];
     } else [d.engine disconnectNodeOutput:s.node];
-    [d.engine connect:s.node to:(env ? (AVAudioNode *)d.env : (AVAudioNode *)d.flat) format:fmt];
     s.nodeFormat = fmt;
     s.toEnv = env;
+    /* Volume, position and the rest go on the node before it is connected: the connection takes them from the
+     * start. Set only after connecting, a sound's first ~50 ms played at full volume (al_test, GitHub Mac). */
     if (env) {
         if (@available(macOS 13.0, *)) s.node.renderingAlgorithm = AVAudio3DMixingRenderingAlgorithmAuto;
         else s.node.renderingAlgorithm = AVAudio3DMixingRenderingAlgorithmHRTFHQ;
     }
+    apply(s);
+    [d.engine connect:s.node to:(env ? (AVAudioNode *)d.env : (AVAudioNode *)d.flat) format:fmt];
 }
 
 static void finished(MCSource *s, unsigned gen, BOOL streamed) {
