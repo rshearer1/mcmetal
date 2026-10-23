@@ -129,7 +129,7 @@ vec3 styleAurora(vec3 dir, float night) {
         c += band * rays * mix(vec3(0.10, 1.00, 0.55), vec3(0.65, 0.25, 1.00), clamp(dir.y * 2.0 + fi * 0.2, 0.0, 1.0));
     }
     float fade = smoothstep(0.03, 0.25, dir.y) * (1.0 - smoothstep(0.75, 1.0, dir.y));
-    return c * fade * night * 0.02;
+    return c * fade * night * 0.05;
 #else
     return vec3(0.0);
 #endif
@@ -139,15 +139,15 @@ vec3 styleAurora(vec3 dir, float night) {
 vec3 styleGrade(vec3 c, vec2 uv) {
     float vig = 1.0 - dot(uv - 0.5, uv - 0.5);   // 1 in the middle, 0.5 in the corners
 #if STYLE == 1
-    c = mix(vec3(luma(c)), c, 1.10);
+    c = mix(vec3(luma(c)), c, 1.10) * vec3(1.04, 1.00, 0.92);     // honey
     c *= mix(0.85, 1.0, smoothstep(0.5, 0.8, vig));
 #elif STYLE == 2
-    c = mix(vec3(luma(c)), c, 0.95);
+    c = mix(vec3(luma(c)), c, 0.95) * vec3(0.97, 0.94, 1.06);     // dusk violet
     c *= mix(0.70, 1.0, smoothstep(0.5, 0.85, vig));
 #elif STYLE == 3
     c = mix(vec3(luma(c)), c, 1.30);
 #elif STYLE == 4
-    c = mix(vec3(luma(c)), c, 1.22);
+    c = mix(vec3(luma(c)), c, 1.22) * vec3(1.03, 0.97, 1.04);     // rose
     c *= mix(0.90, 1.0, smoothstep(0.5, 0.8, vig));
 #endif
     return clamp(c, 0.0, 1.0);

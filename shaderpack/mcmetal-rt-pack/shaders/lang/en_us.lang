@@ -19,8 +19,8 @@ option.CLOUD_SPEED=Cloud Speed
 profile.LOW=Low (M1, M2: aims for 60 fps)
 profile.SMOOTH=Smooth (bounce light at a quarter rate: for 120 fps on M3/M4 Max, best with MetalFX)
 profile.MEDIUM=Medium (M1/M2 Pro and Max, M3, M4)
-profile.HIGH=High (M3/M4 Max: full-rate bounce light, 60 fps)
-profile.ULTRA=Ultra (M3/M4 Max, best with MetalFX)
+profile.HIGH=High (M3/M4 Max: more torch lights and sharper shafts, about 60 fps)
+profile.ULTRA=Ultra (M3/M4 Max: full-rate bounce light, best with MetalFX)
 profile.comments=Presets per Mac. M3 and newer have ray-tracing hardware; on M1/M2 Low leaves out bounce light and light shafts, and MetalFX upscaling (mcmetal's MCMETAL_UPSCALE=1) is what gets a plain M1/M2 near 60 fps.
 option.RAIN_PUDDLES=Rain Puddles
 option.RAIN_PUDDLES.comment=Puddles on open ground when it rains, with ray-traced reflections.
