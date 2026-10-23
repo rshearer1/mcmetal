@@ -82,7 +82,7 @@ jobs:
           for i in 1 2 3 4 5; do
             for v in 0 1; do
               MGL_LOG=$PWD/smoke-rep-mgl.log MGL_GS_UNTRACKED=$v ./build/gl_smoke > smoke-rep.txt 2>&1 \
-                || { echo "run $i MGL_GS_UNTRACKED=$v exited $?"; tail -5 smoke-rep.txt; exit 1; }
+                || { echo "run $i MGL_GS_UNTRACKED=$v exited $?"; tail -60 smoke-rep.txt; exit 1; }
             done
           done
           echo "10 runs clean"

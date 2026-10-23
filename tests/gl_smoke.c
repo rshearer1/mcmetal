@@ -5,6 +5,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <execinfo.h>
+#include <signal.h>
+#include <unistd.h>
 #include "mgl_gl.h"
 
 static int failed;
@@ -126,9 +129,24 @@ static GLuint program_from_files(const char *vs_path, const char *fs_path)
     return p;
 }
 
+/* a rare segfault at exit with MGL_GS_UNTRACKED=1 (CI, 10-22 and 10-23) leaves no crash report on the runner: print
+   the stack ourselves */
+static void on_crash(int sig)
+{
+    void *frames[64];
+    int n = backtrace(frames, 64);
+    static const char msg[] = "gl_smoke: crashed, stack:\n";
+    write(2, msg, sizeof msg - 1);
+    backtrace_symbols_fd(frames, n, 2);
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
 int main(int argc, char **argv)
 {
     static unsigned px[64 * 64];
+    signal(SIGSEGV, on_crash);
+    signal(SIGBUS, on_crash);
     setvbuf(stdout, NULL, _IOLBF, 0); /* piped through tee in CI: keep the lines a crash would otherwise lose */
     const char *r = (const char *)glGetString(GL_RENDERER);
     printf("renderer: %s\n", r ? r : "?");
