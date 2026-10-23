@@ -58,9 +58,9 @@
     #define STYLE_GROUND_MIST 0.4
     #define STYLE_SHAFTS 2.0
     #define STYLE_GLOW 0.30
-    #define STYLE_FOLIAGE vec4(0.70, 1.25, 0.95, 0.55)   // pastel mint
+    #define STYLE_FOLIAGE vec4(0.70, 1.25, 0.95, 0.70)   // pastel mint
     #define STYLE_WATER vec4(0.25, 1.15, 1.15, 0.60)     // turquoise
-    #define STYLE_FOLIAGE_GAIN 1.10
+    #define STYLE_FOLIAGE_GAIN 1.15
     #define STYLE_SPARKLE                                // twinkles on bright surfaces (final.fsh)
 #else
     #define STYLE_SKY_PAINT 0.0
@@ -115,7 +115,7 @@ vec3 styleFireflies(vec3 dir, float sceneDist, vec3 camPos, float night) {
         vec3 w = camPos + dir * t;
         vec3 cell = floor(w / 3.0);
         float h = fract(sin(dot(cell, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
-        if (h > 0.35) continue;                                        // about a third of the cells have one
+        if (h > 0.08) continue;                                        // one cell in twelve has one
         float tm = frameTimeCounter * 0.4 + h * 40.0;
         vec3 fp = (cell + 0.5 + 0.35 * vec3(sin(tm * 1.3), sin(tm * 0.9 + 1.7), cos(tm * 1.1))) * 3.0;
         // distance from the firefly to the view ray, in blocks
@@ -124,9 +124,9 @@ vec3 styleFireflies(vec3 dir, float sceneDist, vec3 camPos, float night) {
         if (along < 0.5 || along > sceneDist) continue;
         float d = length(rel - dir * along);
         float pulse = 0.55 + 0.45 * sin(tm * 3.0);
-        acc += vec3(0.75, 1.0, 0.35) * pulse * exp(-d * d * 220.0 / (1.0 + along * 0.15)) ;
+        acc += vec3(0.75, 1.0, 0.35) * pulse * exp(-d * d * 900.0 / (1.0 + along * 0.1));
     }
-    return acc * night * 0.6;
+    return acc * night * 0.12;
 #else
     return vec3(0.0);
 #endif

@@ -6,7 +6,7 @@
 #include "/lib/aces.glsl"
 #include "/lib/style.glsl"
 
-uniform sampler2D colortex0, colortex6;
+uniform sampler2D colortex0, colortex6, depthtex0;
 
 in vec2 texcoord;
 
@@ -53,11 +53,11 @@ void main() {
     col = acesFitted(col);
     col = styleGrade(col, texcoord);
 #ifdef STYLE_POSTER
-    {   // flat poster colour: brightness in 6 bands with soft steps, the colour kept
+    if (texture(depthtex0, texcoord).r < 1.0) {   // flat poster colour on the world (the sky stays smooth)
         float l = luma(col);
         float b = l * 6.0;
         float q = (floor(b) + smoothstep(0.35, 0.65, fract(b))) / 6.0;
-        col = mix(col, col * (q / max(l, 1e-3)), 0.75);
+        col = mix(col, col * (q / max(l, 1e-3)), 0.6);
     }
 #endif
 #ifdef STYLE_SPARKLE
