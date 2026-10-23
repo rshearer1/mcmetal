@@ -46,6 +46,7 @@ public final class MetalBootstrap implements GraphicsBootstrapper {
             log("not an Apple Silicon Mac, nothing to do");
             return;
         }
+        audioEngine(args);
         if (Boolean.getBoolean("mcmetal.disable") || System.getenv("MCMETAL_DISABLE") != null) {
             log("turned off (mcmetal.disable / MCMETAL_DISABLE)");
             return;
@@ -91,6 +92,10 @@ public final class MetalBootstrap implements GraphicsBootstrapper {
                     # Terrain chunks out of view are skipped on the GPU. Turn it off if terrain ever goes missing.
                     #MCMETAL_GPU_CULL=0
                     #
+                    # Experimental: Minecraft's sound (and Voice Chat's) through Apple's own audio engine, for
+                    # spatial audio with AirPods head tracking.
+                    #MCMETAL_AUDIO_ENGINE=apple
+                    #
                     # Experimental, with a shader pack: mobs and block entities far away for their size cast no
                     # shadow (a cow's shadow goes at ~45 blocks), to save time in busy farms. Bigger keeps more.
                     #MCMETAL_SHADOW_ENTITY_LOD=32
@@ -108,6 +113,48 @@ public final class MetalBootstrap implements GraphicsBootstrapper {
         System.setProperty("org.lwjgl.glfw.libname", glfw.toString());
         System.setProperty(ACTIVE, "true");
         log("OpenGL now runs on Metal through " + gl);
+    }
+
+    /**
+     * MCMETAL_AUDIO_ENGINE=apple (in the environment or mcmetal/options.txt): Minecraft's OpenAL calls, and Voice
+     * Chat's and Sound Physics', go to libmcmetal-al (OpenAL on Apple's AVAudioEngine: spatial audio with AirPods
+     * head tracking, no slow device checks) instead of LWJGL's OpenAL Soft. Independent of Metal itself.
+     */
+    private static void audioEngine(String[] args) {
+        try {
+            Path home = gameDir(args).resolve("mcmetal");
+            String want = System.getenv("MCMETAL_AUDIO_ENGINE");
+            if (want == null)
+                want = option(home.resolve("options.txt"), "MCMETAL_AUDIO_ENGINE");
+            if (!"apple".equalsIgnoreCase(want))
+                return;
+            String preset = System.getProperty("org.lwjgl.openal.libname");
+            if (preset != null) {
+                log("org.lwjgl.openal.libname is already set to " + preset + ", leaving the sound as it is");
+                return;
+            }
+            Path dir = home.resolve("natives");
+            Files.createDirectories(dir);
+            Path al = unpack("libmcmetal-al.dylib", dir);
+            System.setProperty("org.lwjgl.openal.libname", al.toString());
+            log("sound now runs on Apple's audio engine through " + al + " (MCMETAL_AUDIO_ENGINE=apple)");
+        } catch (Throwable t) {
+            log("Apple's audio engine could not be set up, keeping OpenAL: " + t);
+        }
+    }
+
+    /** KEY=value from an options file (lines starting with # are off), or null. */
+    private static String option(Path file, String key) {
+        try {
+            for (String line : Files.readAllLines(file)) {
+                line = line.strip();
+                if (line.startsWith(key + "="))
+                    return line.substring(key.length() + 1).strip();
+            }
+        } catch (IOException e) {
+            // no options file yet
+        }
+        return null;
     }
 
     private static Path gameDir(String[] args) {
