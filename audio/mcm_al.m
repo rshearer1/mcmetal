@@ -520,7 +520,19 @@ static int hasWord(const char *list, const char *w) {
     return 0;
 }
 AL_API ALCboolean alcIsExtensionPresent(ALCdevice *dev, const ALCchar *name) { return name && hasWord(ALC_EXTS, name); }
-AL_API void *alcGetProcAddress(ALCdevice *dev, const ALCchar *name) { return name ? dlsym(RTLD_SELF, name) : NULL; }
+/* Our own exports by name. Not dlsym(RTLD_SELF): that searches from the image that called dlsym, and as a tail
+ * call that is the caller of alGetProcAddress (LWJGL's native stub), so LWJGL got NULL for every core function and
+ * Minecraft's sound did not start (GitHub Mac game test). */
+static void *ownSymbol(const char *name) {
+    static void *handle;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        Dl_info info;
+        if (dladdr((const void *)ownSymbol, &info) && info.dli_fname) handle = dlopen(info.dli_fname, RTLD_LAZY | RTLD_NOLOAD);
+    });
+    return handle && name ? dlsym(handle, name) : NULL;
+}
+AL_API void *alcGetProcAddress(ALCdevice *dev, const ALCchar *name) { return ownSymbol(name); }
 AL_API ALCenum alcGetEnumValue(ALCdevice *dev, const ALCchar *name) { return 0; }
 
 AL_API const ALCchar *alcGetString(ALCdevice *dev, ALCenum p) {
@@ -691,7 +703,7 @@ AL_API void alEnable(ALenum cap) { LOCK(); ALCcontext *c = ctx(); if (c && cap =
 AL_API void alDisable(ALenum cap) { LOCK(); ALCcontext *c = ctx(); if (c && cap == AL_SOURCE_DISTANCE_MODEL) c->sourceModel = 0; else seterr(AL_INVALID_ENUM); UNLOCK(); }
 AL_API ALboolean alIsEnabled(ALenum cap) { ALCcontext *c = ctx(); return c && cap == AL_SOURCE_DISTANCE_MODEL && c->sourceModel; }
 AL_API ALboolean alIsExtensionPresent(const ALchar *name) { return name && hasWord(AL_EXTS, name); }
-AL_API void *alGetProcAddress(const ALchar *name) { return name ? dlsym(RTLD_SELF, name) : NULL; }
+AL_API void *alGetProcAddress(const ALchar *name) { return ownSymbol(name); }
 AL_API ALenum alGetEnumValue(const ALchar *name) { return 0; }
 AL_API const ALchar *alGetString(ALenum p) {
     switch (p) {
