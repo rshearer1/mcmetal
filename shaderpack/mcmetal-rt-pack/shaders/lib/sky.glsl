@@ -70,7 +70,7 @@ vec3 lightTransmittance(vec3 lightDir) {
 vec3 skyColorExact(vec3 dir, vec3 sunDir) {
     vec3 c = atmosphere(dir, sunDir, SUN_INTENSITY);
     c += atmosphere(dir, -sunDir, MOON_INTENSITY) + vec3(0.0006, 0.0009, 0.0018);
-    return stylePaintSky(c * PI, dir, sunDir);   // the chosen look's sky colours (lib/style.glsl)
+    return seasonSky(stylePaintSky(c * PI, dir, sunDir), seasonWeights());   // the look's and the season's sky colours
 }
 
 // The sky table (colortex12, 128x64, shaders.properties size.buffer): the sky only depends on how high a direction

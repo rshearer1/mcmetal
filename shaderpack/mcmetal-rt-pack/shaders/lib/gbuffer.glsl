@@ -148,10 +148,18 @@ void main() {
 #if defined TERRAIN && STYLE > 0
     c.rgb = styleFoliage(c.rgb, tint.rgb, mat == MAT_WATER);   // the look's own greens and water
 #endif
+#if defined TERRAIN && defined SEASONS
+    if (mat != MAT_WATER) c.rgb = seasonPlants(c.rgb, seasonWeights(), clamp((tint.g - max(tint.r, tint.b)) * 6.0, 0.0, 1.0));
+#endif
     c.rgb = mix(c.rgb, entityColor.rgb, entityColor.a);   // red hurt flash on mobs
 
     vec3 n = normalize(normalW);
     if (!gl_FrontFacing) n = -n;
+#if defined TERRAIN && defined OPAQUE && defined SEASONS
+    if (mat == MAT_NONE || mat == MAT_FOLIAGE)   // winter frost on what faces the open sky
+        c.rgb = seasonFrost(c.rgb, seasonWeights(), clamp((tint.g - max(tint.r, tint.b)) * 6.0, 0.0, 1.0),
+                            smoothstep(0.5, 0.9, n.y), lmcoord.y);
+#endif
 
 #if defined OPAQUE
     float puddle = 0.0;

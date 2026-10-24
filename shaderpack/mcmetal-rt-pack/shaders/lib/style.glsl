@@ -4,6 +4,7 @@
 // 0 Natural, 1 Cottage, 2 Witchy, 3 Storybook, 4 Fairytale.
 #ifndef STYLE_LIB
 #define STYLE_LIB
+#include "/lib/season.glsl"
 
 #if STYLE == 1          // Cottage: golden afternoons, peach sunsets, soft blue-lavender shade, morning mist
     #define STYLE_SKY_PAINT 0.8
@@ -100,7 +101,9 @@ vec3 styleFoliage(vec3 c, vec3 tint, bool water) {
         return mix(c, luma(c) * STYLE_WATER.rgb, STYLE_WATER.a);
   #endif
     } else {
-        float tinted = clamp((tint.g - min(tint.r, tint.b)) * 5.0, 0.0, 1.0);   // 0 for untinted (white) blocks
+        // 0 for untinted (white) blocks, and for autumn and winter tints from Serene Seasons (orange, red, grey):
+        // the look recolours green plants only, so the seasons' colours come through
+        float tinted = clamp((tint.g - max(tint.r, tint.b)) * 6.0, 0.0, 1.0);
         if (tinted > 0.0) {
   #ifdef STYLE_FOLIAGE
             vec3 f = mix(c, luma(c) * STYLE_FOLIAGE.rgb, STYLE_FOLIAGE.a) * STYLE_FOLIAGE_GAIN;

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
-#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary sound sound-off sound-apple water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-underwater ours-vista ours-vista-STYLE-TIME
+#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary sound sound-off sound-apple water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-underwater ours-vista ours-vista-STYLE-TIME ours-season-SEASON[-STYLE]
 #   menu menu-noif menu-shaders particles ab-menu ab-menu-noif ab-particles (JEI, ImmediatelyFast, Particle Rain)
 #   pack-NAME packnight-NAME packshadow-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
 #   herd-NAME (the pack over a busy farm: 240 mobs and 64 chests, for entity costs; ab-herd-NAME for A/B)
@@ -522,6 +522,11 @@ for p in $PHASES; do
     ours-vista-*-*) # ours-vista-<STYLE>-<noon|sunset|night>: one look at one time of day, for style comparisons
         v=${p#ours-vista-}; t=${v#*-}; case $t in sunset) t=12600 ;; night) t=18000 ;; esac
         GAME_TP="${VISTA_TP:-~ 88 ~ 90 10}" scene $t; PACK_OPTS="STYLE=${v%%-*} ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase $p 180 metal true ;;
+    ours-season-*) # ours-season-<spring|summer|autumn|winter>[-STYLE]: the vista at noon in the middle of a season (the
+                   # pack follows Serene Seasons' calendar from the world's day count: 8-day sub-seasons, from spring)
+        v=${p#ours-season-}; sn=${v%%-*}; st=0; [ "$v" != "$sn" ] && st=${v#*-}
+        case $sn in spring) d=12 ;; summer) d=36 ;; autumn) d=60 ;; *) d=84 ;; esac
+        GAME_TP="${VISTA_TP:-~ 88 ~ 90 10}" scene $((d * 24000 + ${SEASON_TIME:-6000})); PACK_OPTS="STYLE=$st ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase $p 180 metal true ;;
     ours-gl) scene 1500; PACK=mcmetal-rt-pack run_phase ours-gl 180 metal true MCMETAL_DISABLE=1 ;; # shadow-map fallback on Apple GL
     nether) scene noon clear nether; run_phase nether 180 metal false ;;                       # Nether room, Sodium
     nether-shaders) scene noon clear nether; run_phase nether-shaders 240 metal true ;;      # Nether room, Complementary

@@ -8,7 +8,7 @@ vec3 lightDirection() { return normalize(mat3(gbufferModelViewInverse) * shadowL
 void lightColorsExact(out vec3 sunCol, out vec3 skyAmb) {
     vec3 sunDir = sunDirection();
     float moonLight = 0.25 + 0.75 * abs(float(moonPhase) - 4.0) / 4.0;   // full moon brightest
-    vec3 sun = lightTransmittance(sunDir) * (SUN_INTENSITY * 0.2) * STYLE_SUN_TINT;
+    vec3 sun = lightTransmittance(sunDir) * (SUN_INTENSITY * 0.2) * STYLE_SUN_TINT * seasonSunTint(seasonWeights());
     vec3 moon = lightTransmittance(-sunDir) * (MOON_INTENSITY * 0.2 * moonLight * STYLE_MOON) * vec3(0.8, 0.9, 1.15) * STYLE_MOON_TINT;
     sunCol = (sun + moon) * SUN_STRENGTH;
     vec3 h = normalize(vec3(sunDir.x, 0.0, sunDir.z) + vec3(0.0001));
