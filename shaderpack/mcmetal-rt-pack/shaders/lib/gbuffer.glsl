@@ -148,6 +148,9 @@ void main() {
 #if defined TERRAIN && STYLE > 0
     c.rgb = styleFoliage(c.rgb, tint.rgb, mat == MAT_WATER);   // the look's own greens and water
 #endif
+#if defined TERRAIN && defined SEASONS
+    if (mat != MAT_WATER) c.rgb = seasonPlants(c.rgb, seasonWeights(), clamp((tint.g - max(tint.r, tint.b)) * 6.0, 0.0, 1.0));
+#endif
     c.rgb = mix(c.rgb, entityColor.rgb, entityColor.a);   // red hurt flash on mobs
 
     vec3 n = normalize(normalW);

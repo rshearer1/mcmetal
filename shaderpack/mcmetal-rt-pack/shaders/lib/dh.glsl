@@ -74,7 +74,11 @@ void main() {
     vec3 refl = skyColor(reflect(v, n), sunDirection()) * smoothstep(0.3, 0.9, lmcoord.y);
     outColor = vec4(mix(col, refl, f), mix(0.6, 1.0, f));
 #else
-    outAlbedo = vec4(styleFoliage(tint.rgb, tint.rgb, false), 1.0);   // far greens match the look too
+    vec3 albedo = styleFoliage(tint.rgb, tint.rgb, false);   // far greens match the look too
+  #ifdef SEASONS
+    albedo = seasonPlants(albedo, seasonWeights(), clamp((tint.g - max(tint.r, tint.b)) * 6.0, 0.0, 1.0));   // and the season
+  #endif
+    outAlbedo = vec4(albedo, 1.0);
     outNormalLight = vec4(octEncode(n), lmcoord);
     // glowing LODs (lava, light blocks) use the emission channel LabPBR uses
     outMaterial = vec4(float(MAT_DH) / 255.0, 1.0, 0.0, dhMat == DH_BLOCK_ILLUMINATED ? 0.5 : 0.0);

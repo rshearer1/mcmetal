@@ -40,8 +40,8 @@ vec3 seasonSky(vec3 c, vec4 w) {
     float l = luma(c);
     vec3 tint = vec3(1.0) * (1.0 - dot(w, vec4(1.0)))
               + w.x * vec3(0.97, 1.03, 1.00)
-              + w.y * vec3(0.90, 0.98, 1.10)
-              + w.z * vec3(1.08, 1.00, 0.86)
+              + w.y * vec3(0.86, 0.97, 1.14)
+              + w.z * vec3(1.14, 1.00, 0.80)
               + w.w * vec3(0.94, 0.98, 1.06);
     c *= tint;
     c = mix(c, vec3(luma(c)), 0.35 * w.w);   // winter: a washed-out sky
@@ -50,15 +50,29 @@ vec3 seasonSky(vec3 c, vec4 w) {
 
 // more (or fewer) clouds and how grey they are: x cover added, y brightness
 vec2 seasonClouds(vec4 w) {
-    return vec2(dot(w, vec4(0.02, -0.07, 0.06, 0.10)), 1.0 - 0.18 * w.w - 0.06 * w.z);
+    return vec2(dot(w, vec4(0.02, -0.10, 0.10, 0.16)), 1.0 - 0.20 * w.w - 0.08 * w.z);
 }
 
 // air haze (times the look's own) and low mist: spring mornings, thick autumn mist, a little in winter
-float seasonFog(vec4 w) { return 1.0 + dot(w, vec4(0.0, -0.15, 0.6, 0.35)); }
+float seasonFog(vec4 w) { return 1.0 + dot(w, vec4(0.1, -0.15, 1.2, 0.7)); }
 float seasonMist(vec4 w) {
     float t = float(worldTime);
     float morning = 1.0 - smoothstep(1500.0, 4000.0, mod(t + 1000.0, 24000.0));   // dawn to mid morning
     return w.x * (0.15 + 0.45 * morning) + w.z * (0.45 + 0.3 * morning) + w.w * 0.25;
+}
+
+// plants that are still green (tinted: 1 for green grass and leaves): fresh lime in spring, deep in summer, gold and
+// russet in autumn, faded in winter. Serene Seasons' own autumn and winter tints aren't green, so they are kept as
+// they are; this turns the rest (and every plant when the mod isn't there) with the season.
+vec3 seasonPlants(vec3 c, vec4 w, float tinted) {
+    if (tinted <= 0.0 || dot(w, vec4(1.0)) <= 0.0) return c;
+    float l = luma(c);
+    vec3 f = c;
+    f = mix(f, l * vec3(0.85, 1.25, 0.50), 0.30 * w.x);                   // spring: fresh lime
+    f = mix(f, max(mix(vec3(l), f, 1.25), 0.0), w.y);                     // summer: deep, saturated
+    f = mix(f, l * mix(vec3(1.45, 1.00, 0.35), vec3(1.55, 0.70, 0.30), 0.4), 0.55 * w.z);   // autumn: gold, russet
+    f = mix(f, mix(vec3(l), f, 0.55) * vec3(0.95, 0.97, 1.0), w.w);       // winter: faded
+    return mix(c, f, tinted);
 }
 
 // winter frost on what faces the sky: white on the tops of plants, lighter on other blocks. c: surface colour,
