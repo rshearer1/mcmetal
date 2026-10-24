@@ -115,12 +115,14 @@ void main() {
     } else if (isEyeInWater == 3) {
         col = mix(col, vec3(0.6, 0.7, 0.8) * (skyAmb * 0.4), 1.0 - exp(-dist * 2.0));
     } else if (depth < 1.0) {
-        float haze = (1.0 - exp(-dist * 0.0012 * FOG_DENSITY * STYLE_FOG * (1.0 + 5.0 * rainStrength)));
-  #if STYLE == 1 || STYLE == 2 || STYLE == 4
-        // low mist that sits in valleys and over water (thickest below about sea level + 4)
-        float low = smoothstep(10.0, -2.0, p.y + cameraPosition.y - 63.0);
-        haze = max(haze, STYLE_GROUND_MIST * 0.45 * low * (1.0 - exp(-dist * 0.025)));
-  #endif
+        vec4 season = seasonWeights();
+        float haze = (1.0 - exp(-dist * 0.0012 * FOG_DENSITY * STYLE_FOG * seasonFog(season) * (1.0 + 5.0 * rainStrength)));
+        // low mist that sits in valleys and over water (thickest below about sea level + 4): the look's and the season's
+        float mist = STYLE_GROUND_MIST + seasonMist(season);
+        if (mist > 0.0) {
+            float low = smoothstep(10.0, -2.0, p.y + cameraPosition.y - 63.0);
+            haze = max(haze, min(mist, 1.2) * 0.45 * low * (1.0 - exp(-dist * 0.025)));
+        }
         // hide the edge of the loaded world (chunks load in a column round the player: measured across, not up/down,
         // or high up the ground below would all count as past the edge)
         float edge = smoothstep(fogEnd * 0.8, fogEnd, length(p.xz));

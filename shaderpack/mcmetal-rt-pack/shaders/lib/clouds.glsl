@@ -9,7 +9,7 @@ float cloudDensity(vec2 w) {
     w = (w + drift) * 0.0016 / STYLE_CLOUD.y;
     float d = valueNoise(w) * 0.55 + valueNoise(w * 2.03 + 7.1) * 0.27 + valueNoise(w * 4.1 + 3.7) * 0.13
             + valueNoise(w * 8.3 + 1.3) * 0.05;
-    float cover = mix(0.56, 0.32, rainStrength) - 0.06 * (CLOUD_AMOUNT - 1.0) - STYLE_CLOUD.x;
+    float cover = mix(0.56, 0.32, rainStrength) - 0.06 * (CLOUD_AMOUNT - 1.0) - STYLE_CLOUD.x - seasonClouds(seasonWeights()).x;
     return smoothstep(cover, cover + STYLE_CLOUD.z, d);
 }
 
@@ -30,7 +30,7 @@ vec3 drawClouds(vec3 sky, vec3 dir, vec3 lightDir, vec3 sunCol, vec3 skyAmb) {
 #endif
     vec3 lit = sunCol * sunPart * glow * 0.7 * mix(STYLE_CLOUD_SHADE, vec3(1.0), sunPart / 0.9)
              + skyAmb * (0.9 - 0.3 * d) * STYLE_CLOUD_SHADE;
-    lit *= STYLE_CLOUD.w;
+    lit *= STYLE_CLOUD.w * seasonClouds(seasonWeights()).y;   // greyer in autumn and winter
 #ifdef STYLE_CLOUD_TOON
     lit *= mix(0.55, 1.0, smoothstep(0.0, 0.35, d));          // ink rim at the edge
 #endif
