@@ -20,6 +20,8 @@ import com.seibel.distanthorizons.core.render.RenderParams;
  */
 public final class DhCaptureHooks {
     private static float dhA, dhB, dhIx, dhIy, dhNear, dhFar; // projection: ndc z = (A*z + B) / -z; 1/P00, 1/P11
+    private static float dhMcA, dhMcB;                       // the same for Minecraft's own projection (chunk edge fade)
+    private static float dhUpX, dhUpY, dhUpZ;                // the world's up direction in view space
     private static int dhColor, dhDepth, dhFlags;            // flags: 1 = depth range 0..1, 2 = reverse Z
     private static boolean dhFresh, dhFailed;
 
@@ -40,6 +42,18 @@ public final class DhCaptureHooks {
             dhB = rowMajor ? m.m23 : m.m32;
             dhIx = 1f / m.m00;
             dhIy = 1f / m.m11;
+            DhApiMat4f mc = p.mcProjectionMatrix;
+            if (mc != null) {
+                boolean mcRowMajor = Math.abs(mc.m32 + 1f) < Math.abs(mc.m23 + 1f);
+                dhMcA = mc.m22;
+                dhMcB = mcRowMajor ? mc.m23 : mc.m32;
+            }
+            DhApiMat4f mv = p.mcModelViewMatrix; // mRC = row R, column C (DH's own setClipPlanes writes B to m23)
+            if (mv != null) {
+                dhUpX = mv.m01;
+                dhUpY = mv.m11;
+                dhUpZ = mv.m21;
+            }
             dhNear = p.nearClipPlane;
             dhFar = p.farClipPlane;
             IDhApiRenderProxy rp = DhApi.Delayed.renderProxy;
@@ -59,7 +73,7 @@ public final class DhCaptureHooks {
         }
     }
 
-    /** This frame's capture into out (A, B, 1/P00, 1/P11, near, far, colour, depth, flags); 0 if DH drew nothing. */
+    /** This frame's capture into out (A, B, 1/P00, 1/P11, near, far, colour, depth, flags, Minecraft's A, B, up x/y/z); 0 if DH drew nothing. */
     public static int dhTake(float[] out) {
         if (!dhFresh)
             return 0;
@@ -73,6 +87,11 @@ public final class DhCaptureHooks {
         out[6] = dhColor;
         out[7] = dhDepth;
         out[8] = dhFlags;
+        out[9] = dhMcA;
+        out[10] = dhMcB;
+        out[11] = dhUpX;
+        out[12] = dhUpY;
+        out[13] = dhUpZ;
         return 1;
     }
 }

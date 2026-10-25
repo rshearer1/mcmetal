@@ -32,8 +32,9 @@ public final class DhCompositeHooks {
     private static MethodHandle dhMarkOn;        // GlGenericObjectRenderer.mcmetal$dhMarkOn() (DhGenericHooks), or null
     private static float[] dhV;
     private static float dhFog;                  // MCMETAL_DH_FOG: how much the far LODs fade into the sky, 0-2
+    private static float dhEdge;                 // MCMETAL_DH_EDGE: share of the render distance faded into DH, 0-1
     private static int dhProgram, dhVao, dhFbo, dhFboTex;
-    private static int dhUProj, dhUFog, dhUDepth;
+    private static int dhUProj, dhUFog, dhUDepth, dhUEdge, dhUUp;
     private static long dhFrames;
 
     private DhCompositeHooks() {
@@ -49,7 +50,9 @@ public final class DhCompositeHooks {
             }
             """;
     // proj: A, B, 1/P00, 1/P11 of DH's projection; fog: start, end, haze at the start, strength;
-    // depth: ndc = depth * x + y, z = the empty (cleared) DH depth
+    // depth: ndc = depth * x + y, z = the empty (cleared) DH depth; edge: A, B of Minecraft's projection and the
+    // distances over which Minecraft's own chunks fade into DH's (0 to 1), so the render distance shows no hard edge;
+    // up: the world's up direction in view space
     private static final String FSH = """
             #version 330 core
             uniform sampler2D dhColor;
@@ -58,20 +61,29 @@ public final class DhCompositeHooks {
             uniform vec4 proj;
             uniform vec4 fog;
             uniform vec3 depth;
+            uniform vec4 edge;
+            uniform vec3 up;
             in vec2 uv;
             out vec4 outColor;
             ivec2 at(sampler2D s) { return ivec2(uv * vec2(textureSize(s, 0))); }
+            vec3 view(float z) { return vec3((uv * 2.0 - 1.0) * proj.zw, -1.0) * abs(z); }
+            float ray(float z) { return length(view(z)); }
             void main() {
-                if (texelFetch(sceneDepth, at(sceneDepth), 0).r < 1.0) discard; // the pack drew something here
                 float d = texelFetch(dhDepth, at(dhDepth), 0).r;
-                if (d == depth.z) discard;                                     // no LOD here either: the pack's sky
+                if (d == depth.z) discard;                                     // no LOD here: the pack's own picture
+                float dist = ray(proj.y / (d * depth.x + depth.y + proj.x));   // distance to the LOD
+                float keep = 1.0;                                              // how much of the LOD to show
+                float s = texelFetch(sceneDepth, at(sceneDepth), 0).r;
+                if (s < 1.0) {                                                 // Minecraft's own terrain is here
+                    vec3 v = view(edge.y / (s * 2.0 - 1.0 + edge.x));          // Minecraft draws to a horizontal
+                    float sd = length(v - up * dot(v, up));                    // distance: measure it that way
+                    keep = smoothstep(edge.z, edge.w, sd);                     // near the render distance: fade to DH
+                    if (keep <= 0.0) discard;
+                }
                 vec3 c = texelFetch(dhColor, at(dhColor), 0).rgb;
-                float z = proj.y / (d * depth.x + depth.y + proj.x);           // distance along the view axis
-                vec2 xy = (uv * 2.0 - 1.0) * proj.zw;
-                float dist = abs(z) * sqrt(1.0 + dot(xy, xy));
                 float f = clamp((dist - fog.x) / max(fog.y - fog.x, 1.0), 0.0, 1.0);
                 f = clamp(mix(fog.z, 1.0, f * f * (3.0 - 2.0 * f)) * fog.w, 0.0, 1.0);
-                outColor = vec4(c, 1.0 - f);                                   // blended over the pack's sky
+                outColor = vec4(c, keep * (1.0 - f));                          // blended over the pack's picture
             }
             """;
 
@@ -111,6 +123,16 @@ public final class DhCompositeHooks {
             dhState = -1;
             return;
         }
+        String edge = System.getenv("MCMETAL_DH_EDGE");
+        if (edge == null)
+            edge = System.getProperty("mcmetal.opt.MCMETAL_DH_EDGE");
+        dhEdge = 0.25f;
+        try {
+            if (edge != null)
+                dhEdge = Math.max(0f, Math.min(1f, Float.parseFloat(edge.trim())));
+        } catch (NumberFormatException e) {
+            // keep 0.25
+        }
         dhFog = 1f;
         try {
             if (fog != null)
@@ -141,7 +163,7 @@ public final class DhCompositeHooks {
         } catch (Throwable t) {
             dhMarkOn = null;
         }
-        dhV = new float[9];
+        dhV = new float[14];
         dhState = 1;
     }
 
@@ -208,6 +230,11 @@ public final class DhCompositeHooks {
             // fog from the edge of Minecraft's own terrain out to DH's LOD radius (DH's far clip is that + 512, times sqrt 2)
             float start = mc.options.getEffectiveRenderDistance() * 16f, end = Math.max(start + 64f, dhV[5] * 0.7071f - 512f);
             GL20.glUniform4f(dhUFog, start, end, 0.15f, dhFog);
+            // Minecraft's chunks fade into DH's over the last quarter of the render distance, all DH by the last
+            // chunk (the jagged chunk outline), none if MCMETAL_DH_EDGE=0 or Minecraft's projection is unknown
+            float edgeTo = Math.max(16f, start - 16f), edgeFrom = dhEdge <= 0f || dhV[10] == 0f ? 1e9f : edgeTo * (1f - dhEdge);
+            GL20.glUniform4f(dhUEdge, dhV[9], dhV[10], edgeFrom, edgeFrom >= 1e9f ? 2e9f : edgeTo);
+            GL20.glUniform3f(dhUUp, dhV[11], dhV[12], dhV[13]);
             boolean zeroToOne = (flags & 1) != 0, reverse = (flags & 2) != 0;
             GL20.glUniform3f(dhUDepth, zeroToOne ? 1f : 2f, zeroToOne ? 0f : -1f, reverse ? 0f : 1f);
             GL30.glBindVertexArray(dhVao);
@@ -264,6 +291,8 @@ public final class DhCompositeHooks {
         dhUProj = GL20.glGetUniformLocation(p, "proj");
         dhUFog = GL20.glGetUniformLocation(p, "fog");
         dhUDepth = GL20.glGetUniformLocation(p, "depth");
+        dhUEdge = GL20.glGetUniformLocation(p, "edge");
+        dhUUp = GL20.glGetUniformLocation(p, "up");
         dhProgram = p;
         dhVao = GL30.glGenVertexArrays();
         dhFbo = GL30.glGenFramebuffers();

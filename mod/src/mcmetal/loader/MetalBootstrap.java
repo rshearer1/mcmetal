@@ -111,6 +111,9 @@ public final class MetalBootstrap implements GraphicsBootstrapper {
                     #MCMETAL_DH_COMPOSITE=0
                     # How strongly that far terrain fades into the sky (0 = no fade, 1 = default, 2 = twice).
                     #MCMETAL_DH_FOG=1
+                    # How much of the last stretch before the render distance fades Minecraft's chunks into DH's
+                    # (0 = hard edge, 0.25 = default, 1 = the whole way out).
+                    #MCMETAL_DH_EDGE=0.25
                     """);
         // the native side reads this file itself; the Java side (in-memory patches) sees it as mcmetal.opt.NAME
         for (String line : Files.readAllLines(options)) {
