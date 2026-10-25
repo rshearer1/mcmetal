@@ -399,6 +399,35 @@ int main(int argc, char **argv)
     read_texture(rb, tex, ssbo, px);
     check(near(px[32 * 64 + 32], rgba(255, 0, 0, 255)), "depth test keeps the nearest surface");
 
+    /* 4b. depth mipmaps, as SEUS PTGI reads its shadow map: glGenerateMipmap on the depth texture, then a shadow
+       compare at LOD 4. The red quad left depth 0.25 everywhere: reference 0.2 passes (left), 0.3 fails (right).
+       Metal's blit mipmaps skip depth formats, and unbuilt levels put water caustics on every SEUS surface.
+       Level 0 is cleared to 1.0 after the mipmaps are made, so reading level 0 instead of 4 fails on the right. */
+    glBindTexture(GL_TEXTURE_2D, depth);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, 0, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+    GLuint mprog = program("#version 330 core\nlayout(location = 0) in vec2 pos;\nout vec2 uv;\n"
+                           "void main() { uv = pos * 0.5 + 0.5; gl_Position = vec4(pos, 0.0, 1.0); }\n",
+                           "#version 330 core\nin vec2 uv;\nuniform sampler2DShadow s;\nout vec4 frag;\n"
+                           "void main() { float lit = textureLod(s, vec3(uv, uv.x < 0.5 ? 0.2 : 0.3), 4.0);\n"
+                           "  frag = vec4(lit, 0.0, 1.0 - lit, 1.0); }\n", NULL);
+    glUseProgram(mprog);
+    glActiveTexture(GL_TEXTURE0);
+    glUniform1i(glGetUniformLocation(mprog, "s"), 0);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depth, 0); /* later tests use it */
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    read_texture(rb, tex, ssbo, px);
+    check(near(px[32 * 64 + 8], rgba(255, 0, 0, 255)) && near(px[32 * 64 + 56], rgba(0, 0, 255, 255)),
+          "depth mipmaps: shadow compare at LOD 4 sees the drawn depth");
+
     /* 6. a Sodium-style terrain quad: packed integer vertex data (uvec2 position in 20-bit thirds, ushort
        texcoords, ubyte light/material/draw id) in a 20-byte vertex, a lightmap read in the vertex stage, a flat
        uint varying, indexed UINT draw with a base vertex and index offset, back-face culling, depth LEQUAL.
