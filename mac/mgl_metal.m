@@ -621,6 +621,8 @@ static int size_class(size_t size)
 static uint64_t write_seq;
 static size_t buf_live_bytes, buf_pooled_bytes; /* MGL_PROFILE: Metal buffer memory we hold, and of it in the pool */
 static size_t buf_purgeable_bytes;              /* of the pooled: marked purgeable (mem_trim) */
+static unsigned long buf_fresh;                /* MGL_PROFILE: new Metal buffers (the pool had none free) */
+static size_t buf_fresh_bytes;
 static unsigned long tr_oneoff, tr_waits;       /* transient allocations that fell back to their own buffer; waits for a chunk */
 int mglb_fence_wait(uint64_t id, uint64_t timeout_ns);
 
@@ -677,6 +679,8 @@ mglb_buffer *mglb_buffer_new(size_t size)
             return b;
         }
     }
+    buf_fresh++;
+    buf_fresh_bytes += cap;
     struct mglb_buffer *b = calloc(1, sizeof *b);
     id<MTLBuffer> m = [dev newBufferWithLength:cap options:MTLResourceStorageModeShared];
     if (!m) {
@@ -714,7 +718,16 @@ void mglb_buffer_release(mglb_buffer *b)
         return;
     priv_forget(b);
     int c = size_class(b->cap);
-    int keep = b->cap > ((size_t)16 << 20) ? 2 : b->cap <= ((size_t)64 << 10) ? 1024 : 64; /* don't hoard big buffers */
+    /* Enough for a few frames in flight: a buffer renamed every frame comes back while the GPU still reads it, so the
+       pool needs ~3 frames' worth before one is free again. A count cap of 64 (2 over 16 MB) made the rest new
+       Metal buffers every frame (a kernel call each: ~9% of the render thread with DH + a shader pack on the M3).
+       mem_sweep still frees what sits unused for 5 s, and big ones are purgeable while they wait. */
+    size_t budget = (size_t)256 << 20;
+    int keep = b->cap <= ((size_t)64 << 10) ? 1024 : (int)(budget / b->cap);
+    if (keep < 4)
+        keep = 4;
+    if (keep > 1024)
+        keep = 1024;
     if (pool_count[c] < keep) {
         b->next_free = NULL;
         if (pool_tail[c])
@@ -1416,6 +1429,25 @@ destinationBytesPerImage:row * (size_t)h];
     mglb_finish();
     memcpy(out, stage->ptr, row * (size_t)h);
     mglb_buffer_release(stage);
+}
+
+int mglb_texture_read_to_buffer(mglb_texture *t, int level, int x, int y, int w, int h, mglb_buffer *dst, size_t off,
+                                size_t bytes_per_row)
+{
+    if (!t || !dst || w <= 0 || h <= 0 || is_depth_format(t->pf) || (off | bytes_per_row) & 3)
+        return 0;
+    size_t bpt = (size_t)bytes_per_texel(t->pf);
+    if (bytes_per_row < bpt * (size_t)w || off + bytes_per_row * (size_t)(h - 1) + bpt * (size_t)w > dst->size)
+        return 0;
+    id<MTLBlitCommandEncoder> e = blit_encoder();
+    [e copyFromTexture:OBJ(id<MTLTexture>, t->mtl) sourceSlice:0 sourceLevel:(NSUInteger)level
+          sourceOrigin:MTLOriginMake((NSUInteger)x, (NSUInteger)y, 0) sourceSize:MTLSizeMake((NSUInteger)w, (NSUInteger)h, 1)
+              toBuffer:OBJ(id<MTLBuffer>, dst->mtl) destinationOffset:off destinationBytesPerRow:bytes_per_row
+destinationBytesPerImage:bytes_per_row * (size_t)h];
+    use_buffer(dst);
+    dst->gpu_write = cb_serial;
+    dst->priv_ok = 0;
+    return 1;
 }
 
 void mglb_texture_copy(mglb_texture *src, int src_level, int sx, int sy, int sz, mglb_texture *dst, int dst_level,
@@ -6535,10 +6567,13 @@ static void profile_frame(unsigned long draws)
         gsc_hits = gsc_stores = gsc_misses = gsc_skips = gsc_full = 0;
         gsc_why_bufs = gsc_why_unis = gsc_why_new = 0;
     }
-    mgl_log("profile: buffers %.0f MB held (%.0f MB pooled), %d of %d transient chunks, %.1f one-off transient "
-            "buffers and %.1f waits for a chunk per frame", buf_live_bytes / 1048576.0, buf_pooled_bytes / 1048576.0, tr_n,
-            TR_MAX, tr_oneoff / f, tr_waits / f);
+    mgl_log("profile: buffers %.0f MB held (%.0f MB pooled), %.1f new Metal buffers (%.2f MB) per frame, %d of %d "
+            "transient chunks, %.1f one-off transient buffers and %.1f waits for a chunk per frame",
+            buf_live_bytes / 1048576.0, buf_pooled_bytes / 1048576.0, buf_fresh / f, buf_fresh_bytes / f / 1048576.0,
+            tr_n, TR_MAX, tr_oneoff / f, tr_waits / f);
     tr_oneoff = tr_waits = 0;
+    buf_fresh = 0;
+    buf_fresh_bytes = 0;
     double lazy_renames = (double)mgl_bstats.lazy_renames, lazy_settles = (double)mgl_bstats.settles,
            lazy_scans = (double)mgl_bstats.index_scans;
     mgl_log("profile: cpu buffer traffic per frame: %.1f renames (%.2f MB copied, %.2f ms), %.1f glCopyBufferSubData "

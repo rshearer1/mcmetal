@@ -39,6 +39,8 @@ void mglb_texture_read(mglb_texture *t, int level, int x, int y, int w, int h, v
 {
     memset(out, 0x80, (size_t)w * (size_t)h * 4); /* grey: nothing is rendered here */
 }
+int mglb_texture_read_to_buffer(mglb_texture *t, int level, int x, int y, int w, int h, mglb_buffer *dst, size_t off,
+                                size_t bpr) { return 0; }
 void mglb_texture_upload(mglb_texture *t, int level, int x, int y, int z, int w, int h, int d, const void *data,
                          size_t bpr, size_t bpi) { uploads++; }
 void mglb_texture_generate_mipmaps(mglb_texture *t) {}

@@ -67,6 +67,11 @@ typedef struct {
 extern mgl_buf_stats mgl_bstats;
 /* reads w x h texels at (x, y) of a colour texture into out, tightly packed, GL row order; waits for the GPU */
 void mglb_texture_read(mglb_texture *t, int level, int x, int y, int w, int h, void *out);
+/* the same into a buffer at off (rows bytes_per_row apart), as a GPU copy in command order: no wait. 0: not possible
+   (offset or row not 4-byte aligned, depth texture); read on the CPU instead. Like mglb_buffer_copy, the CPU must
+   not touch dst until mglb_buffer_wait_writes says the copy has run. */
+int mglb_texture_read_to_buffer(mglb_texture *t, int level, int x, int y, int w, int h, mglb_buffer *dst, size_t off,
+                                size_t bytes_per_row);
 enum mgl_format mglb_texture_format(mglb_texture *t);
 void mglb_texture_clear(mglb_texture *t, int level, const void *texel /* one texel in format, NULL = zero */);
 void mglb_texture_copy(mglb_texture *src, int src_level, int sx, int sy, int sz,
