@@ -124,13 +124,24 @@ final class TestControl {
     }
 
     private static boolean searchPicked;
+    private static final String CREATIVE = "net.minecraft.client.gui.screens.inventory.CreativeModeInventoryScreen";
+
+    private static boolean isCreative(Object screen) {
+        for (Class<?> c = screen == null ? null : screen.getClass(); c != null; c = c.getSuperclass())
+            if (c.getName().equals(CREATIVE))
+                return true;
+        return false;
+    }
 
     /** Switches an open creative menu to its search tab (all items), once, on the render thread. */
     private static void pickSearchTab(Object mc, ClassLoader cl, Object open) throws ReflectiveOperationException {
-        Class<?> creative = Class.forName("net.minecraft.client.gui.screens.inventory.CreativeModeInventoryScreen", false, cl);
-        if (searchPicked || !creative.isInstance(open))
+        // by name: loading game classes on this thread (at the title screen, say) races the game's own loading
+        if (searchPicked || !isCreative(open))
             return;
         searchPicked = true;
+        Class<?> creative = open.getClass();
+        while (!creative.getName().equals(CREATIVE))
+            creative = creative.getSuperclass();
         Class<?> tabClass = Class.forName("net.minecraft.world.item.CreativeModeTab", false, cl);
         Object search = Class.forName("net.minecraft.world.item.CreativeModeTabs", true, cl).getMethod("searchTab").invoke(null);
         Method select = creative.getDeclaredMethod("selectTab", tabClass);
@@ -150,10 +161,14 @@ final class TestControl {
 
     /** Moves an open creative menu's item list down a little (as the mouse wheel does), wrapping at the end. */
     private static void scrollCreative(Object mc, ClassLoader cl) throws ReflectiveOperationException {
-        Object open = mc.getClass().getField("screen").get(mc);
-        Class<?> creative = Class.forName("net.minecraft.client.gui.screens.inventory.CreativeModeInventoryScreen", false, cl);
-        if (!searchPicked || !creative.isInstance(open))
+        if (!searchPicked)
             return;
+        Object open = mc.getClass().getField("screen").get(mc);
+        if (!isCreative(open))
+            return;
+        Class<?> creative = open.getClass();
+        while (!creative.getName().equals(CREATIVE))
+            creative = creative.getSuperclass();
         Object menu = creative.getMethod("getMenu").invoke(open);
         Field offs = creative.getDeclaredField("scrollOffs");
         offs.setAccessible(true);
