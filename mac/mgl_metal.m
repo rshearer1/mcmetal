@@ -1217,6 +1217,18 @@ mglb_texture *mglb_texture_new(const mglb_texture_desc *d)
     mt->bytes = t.allocatedSize;
     tex_bytes += mt->bytes;
     tex_count++;
+    /* A new Metal texture holds whatever its memory held before; GL drivers hand out zeroed storage, and packs
+       count on it: Rethinking Voxels' irradiance cache (an Iris image with clear=false) accumulates into its
+       first contents, and leftovers there drew a white haze and dark straight lines over its water.
+       3D textures start zeroed; MGL_ZERO_3D=0 leaves them as Metal makes them. */
+    static int zero3d = -1;
+    if (zero3d < 0) {
+        const char *e = getenv("MGL_ZERO_3D");
+        zero3d = !(e && *e == '0');
+    }
+    if (zero3d && d->type == MGLT_3D)
+        for (int l = 0; l < (int)td.mipmapLevelCount; l++)
+            mglb_texture_clear(mt, l, NULL);
     return mt;
 }
 
