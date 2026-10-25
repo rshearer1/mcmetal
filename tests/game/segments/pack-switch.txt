@@ -1,0 +1,6 @@
+# shader-pack switch stutter (PS1): the phase's own pack, then packs this game hasn't compiled yet, measured from the
+# moment each reload is done. Run with GAME_SEG_SETTLE_SHADERS=0 and MGL_LOG set (the "[mcmetal] pipelines:" lines);
+# A/B with MGL_ASYNC_PIPELINES=0. Pack names are file-name starts in shaderpacks/ (edit for the game dir's packs).
+bliss||||-|yes|bliss
+photon||||-|yes|photon
+back|||||yes|complementary
