@@ -112,7 +112,19 @@ GLFWbool _glfwInitNSGL(void)
                     continue;
                 *eq = 0;
                 char* value = eq + 1;
-                value[strcspn(value, " \t\r\n#")] = 0;
+                // the rest of the line, so paths with spaces work ("Application Support"); a " # comment" and
+                // trailing blanks are dropped
+                value[strcspn(value, "\r\n")] = 0;
+                for (char* c = value; *c; c++)
+                    if (*c == '#' && (c == value || c[-1] == ' ' || c[-1] == '\t'))
+                    {
+                        *c = 0;
+                        break;
+                    }
+                for (size_t n = strlen(value); n && (value[n - 1] == ' ' || value[n - 1] == '\t'); n--)
+                    value[n - 1] = 0;
+                while (*value == ' ' || *value == '\t')
+                    value++;
                 if (*value)
                     setenv(line, value, 0);
             }

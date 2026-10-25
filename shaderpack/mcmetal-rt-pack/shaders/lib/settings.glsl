@@ -19,6 +19,7 @@
 #else
     #define SHADOW_BLEND 0.125
 #endif
+#define GI_COARSE_RAYS // bounce light rays see leaves and plants beyond 2 blocks as solid (no alpha test: faster in forests; needs mcmetal from 10-25 or newer)
 #define GI_FILTER 9 // [9 25] taps in the GI blur/upscale (9: 6% less GPU on the M3, no visible difference)
 #define GI_HALF_RES 1 // [0 1] trace GI and AO for every 2x2 pixels (about half the cost), then upscale
 #if GI_HALF_RES == 1
@@ -39,6 +40,7 @@
 #define COLORED_SHADOWS // sunlight through stained glass (and water) takes its colour
 #define RT_REFLECTIONS // ray-traced reflections on water and glass
 #define RT_REFLECT_DISTANCE 128.0 // [32.0 64.0 128.0 256.0]
+#define WATER_REFLECT_HALF // open water's reflections traced at half resolution, half the pixels each frame, averaged over frames (much faster)
 
 #define LIGHT_SHAFTS // ray-traced light shafts (god rays) where sunlight comes through gaps
 #define LIGHT_SHAFTS_STRENGTH 1.0 // [0.25 0.5 0.75 1.0 1.5 2.0 3.0]
@@ -100,6 +102,11 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #endif
 #ifdef RT_REFLECTIONS
 #endif
+#ifdef WATER_REFLECT_HALF
+#endif
+#if defined USE_RT && defined RT_REFLECTIONS && defined WATER_SHADOWS && defined WATER_REFLECT_HALF
+    #define WATER_REFLECT_PASS   // composite.fsh traces open water's reflections, composite1.fsh adds them
+#endif
 #ifdef COLORED_SHADOWS
 #endif
 #ifdef COLORED_LIGHT
@@ -109,6 +116,8 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef LIGHT_SHAFTS
 #endif
 #ifdef CAUSTICS
+#endif
+#ifdef GI_COARSE_RAYS
 #endif
 #ifdef SHADOW_CHECKERBOARD
 #endif

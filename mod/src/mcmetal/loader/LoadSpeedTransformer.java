@@ -35,6 +35,8 @@ import org.objectweb.asm.tree.VarInsnNode;
  * config's wildcards (5-9 s on the main thread); see load/WildcardNameHooks.
  * KubeJS: a script's replaceInput() walked every item of every recipe ingredient for each item it replaces (8.5 s of
  * Hearth & Hex's recipe load); see load/IngredientMatchHooks.
+ * Create: its ItemStack mixin looked every new stack's item up in the item registry to see if it is a clipboard (a
+ * quarter of JEI's start after joining a world in the cloud test, 2026-10-25); see load/ClipboardHooks.
  */
 final class LoadSpeedTransformer implements ITransformer<ClassNode> {
     static final String HEXEREI = "net.joefoxe.hexerei.data.recipes.WoodcutterRecipes";
@@ -45,6 +47,8 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
     static final String NAME_HOOKS = "mcmetal/loader/load/WildcardNameHooks";
     static final String KUBEJS = "dev.latvian.mods.kubejs.recipe.component.IngredientComponent";
     static final String MATCH_HOOKS = "mcmetal/loader/load/IngredientMatchHooks";
+    static final String CREATE_STACK = "com.simibubi.create.foundation.mixin.ItemStackMixin";
+    static final String CLIP_HOOKS = "mcmetal/loader/load/ClipboardHooks";
     static final String PREFIX = GpuCullTransformer.PREFIX;
     /** createRecipes() of Hexerei 0.5.0.3 (see fingerprint()); any other version keeps its own loop. */
     static final Set<String> KNOWN_CREATE_RECIPES = Set.of("1f31c51f74d9f41b");
@@ -65,6 +69,8 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
             carryOnNames(c);
         else if (c.name.equals(KUBEJS.replace('.', '/')))
             kubeMatches(c);
+        else if (c.name.equals(CREATE_STACK.replace('.', '/')))
+            createClipboard(c);
         return c;
     }
 
@@ -218,6 +224,53 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
         MetalBootstrap.log("load fixes: KubeJS's replaceInput looks items up in each ingredient's set (MCMETAL_LOAD_FIXES)");
     }
 
+    /**
+     * Create's ItemStackMixin (Create 6.0.x) runs create$migrateOldClipboardComponents() in every ItemStack constructor;
+     * its first line "if (!BuiltInRegistries.ITEM.getKey(item.asItem()).equals(CLIPBOARD_ID)) return;" becomes
+     * "if (!mcmetal$isClipboard(item, CLIPBOARD_ID)) return;", see load/ClipboardHooks. This class is the mixin itself:
+     * Mixin reads it through the transformers before copying its methods into ItemStack.
+     */
+    static void createClipboard(ClassNode c) {
+        String itemLike = "net/minecraft/world/level/ItemLike", loc = "net/minecraft/resources/ResourceLocation";
+        String desc = "(L" + itemLike + ";ILnet/minecraft/core/component/PatchedDataComponentMap;"
+                + "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V";
+        MethodNode migrate = null;
+        MethodInsnNode equals = null;
+        AbstractInsnNode[] gone = null; // ITEM, asItem(), getKey()
+        int found = 0;
+        for (MethodNode m : c.methods)
+            if (m.name.equals("create$migrateOldClipboardComponents") && m.desc.equals(desc))
+                for (AbstractInsnNode n : m.instructions.toArray())
+                    if (n instanceof MethodInsnNode eq && eq.getOpcode() == Opcodes.INVOKEVIRTUAL && eq.owner.equals(loc)
+                            && eq.name.equals("equals") && eq.desc.equals("(Ljava/lang/Object;)Z")
+                            && prev(eq) instanceof FieldInsnNode id && id.getOpcode() == Opcodes.GETSTATIC && id.owner.equals(c.name)
+                            && id.desc.equals("L" + loc + ";")
+                            && prev(id) instanceof MethodInsnNode key && key.name.equals("getKey")
+                            && key.owner.equals("net/minecraft/core/DefaultedRegistry")
+                            && prev(key) instanceof MethodInsnNode as && as.name.equals("asItem") && as.owner.equals(itemLike)
+                            && prev(as) instanceof VarInsnNode v && v.getOpcode() == Opcodes.ALOAD && v.var == 1
+                            && prev(v) instanceof FieldInsnNode reg && reg.getOpcode() == Opcodes.GETSTATIC
+                            && reg.owner.equals("net/minecraft/core/registries/BuiltInRegistries") && reg.name.equals("ITEM")) {
+                        migrate = m;
+                        equals = eq;
+                        gone = new AbstractInsnNode[] {reg, as, key};
+                        found++;
+                    }
+        ClassNode hooks = GpuCullTransformer.readHooks(CLIP_HOOKS);
+        if (hooks != null && hooks.methods.stream().anyMatch(m -> m.name.equals("<clinit>")))
+            hooks = null;
+        if (found != 1 || hooks == null) {
+            MetalBootstrap.log("load fixes: Create's clipboard check is not the expected one, left as it is");
+            return;
+        }
+        GpuCullTransformer.merge(hooks, c);
+        // ITEM, item, asItem(), getKey(), CLIPBOARD_ID, equals()  ->  item, CLIPBOARD_ID, mcmetal$isClipboard()
+        for (AbstractInsnNode n : gone)
+            migrate.instructions.remove(n);
+        redirect(equals, c.name, "isClipboard", "(L" + itemLike + ";L" + loc + ";)Z");
+        MetalBootstrap.log("load fixes: Create's clipboard check compares items (MCMETAL_LOAD_FIXES)");
+    }
+
     /** A call on the object in front of its arguments becomes a static call of the merged hook with the same order. */
     static void redirect(MethodInsnNode mi, String owner, String hook, String desc) {
         mi.setOpcode(Opcodes.INVOKESTATIC);
@@ -271,7 +324,8 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
 
     @Override
     public Set<Target<ClassNode>> targets() {
-        return Set.of(Target.targetClass(HEXEREI), Target.targetClass(VEGAN), Target.targetClass(CARRYON), Target.targetClass(KUBEJS));
+        return Set.of(Target.targetClass(HEXEREI), Target.targetClass(VEGAN), Target.targetClass(CARRYON), Target.targetClass(KUBEJS),
+                Target.targetClass(CREATE_STACK));
     }
 
     @Override
