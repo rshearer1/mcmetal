@@ -75,7 +75,7 @@ use_rp() { # NAME (see GAME_RP above; empty = none): puts the pack in resourcepa
     fi
 }
 use_rp "${GAME_RP:-}" || exit 1
-mkdir -p "$G/shaderpacks" && find "$G/shaderpacks" -maxdepth 1 -name "mcmetal-rt-*" ! -name "*.txt" -exec rm -rf {} + && cp -r "$SRC/tests/game/packs/"mcmetal-rt-* "$SRC/shaderpack/mcmetal-rt-pack" "$G/shaderpacks/"
+mkdir -p "$G/shaderpacks" && find "$G/shaderpacks" -maxdepth 1 -name "mcmetal-*" ! -name "*.txt" -exec rm -rf {} + && cp -r "$SRC/tests/game/packs/"mcmetal-* "$SRC/shaderpack/mcmetal-rt-pack" "$G/shaderpacks/"
 rm -rf "$G/saves/metal" && tar xzf "$SRC/tests/game/world-metal.tgz" -C "$G/saves"
 # The game loads mcmetal the way players will: through the mod jar in mods/, no JVM arguments.
 # GAME_JVM_ARGS=true uses the old -Dorg.lwjgl.*.libname route instead.
@@ -360,11 +360,13 @@ EUPHORIA_PACK="ComplementaryReimagined_r5.9.3 + EuphoriaPatches_1.10.5"
 # Distant Horizons (LOD terrain past the render distance), fetched at run time like the packs and removed after
 DH="https://cdn.modrinth.com/data/uCdwusMi/versions/9w34y8ai/DistantHorizons-3.3.3-1.21.1-fabric-neoforge.jar|4357b4d19fab818780c94f0e43dad1cc931634b2"
 dh_phase() { # dh / dh-shaders / dh-PACK: Distant Horizons at noon, without a pack, with Complementary (it has DH
-             # support) or with PACK (a name from PACKS, or "ours" for shaderpack/mcmetal-rt-pack); 16 screenshots
+             # support) or with PACK (a name from PACKS, "ours" for shaderpack/mcmetal-rt-pack, or "nodh" for
+             # tests/game/packs/mcmetal-nodh-test, a pack without DH programs: mcmetal draws DH's LODs behind it); 16 screenshots
              # (~160 s) so DH has time to build its distant terrain
     local url sha pack=${3:-} file= purl=-
     if [ -n "$pack" ]; then
         if [ "$pack" = ours ]; then file=mcmetal-rt-pack
+        elif [ "$pack" = nodh ]; then file=mcmetal-nodh-test # our stand-in for SEUS: no dh_* programs (DH composite)
         else
             IFS='|' read -r _ file purl sha <<< "$(grep "^$pack|" <<< "$PACKS")"
             [ -n "$file" ] || { echo "unknown pack $pack"; return; }
