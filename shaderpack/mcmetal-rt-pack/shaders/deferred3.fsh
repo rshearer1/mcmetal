@@ -79,7 +79,7 @@ void main() {
         float lit = 0.0;
         for (int i = 0; i < LIGHT_SHAFTS_STEPS; i++) {
             float t = (float(i) + jitter) * stepLen;
-            // air further away is seen through more air (the haze in composite.fsh adds the rest)
+            // air further away is seen through more air (the haze in composite1.fsh adds the rest)
             float vis = exp(-t * density);
             float through = vis;
   #ifdef CAUSTICS
