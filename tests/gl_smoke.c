@@ -844,6 +844,38 @@ int main(int argc, char **argv)
         snprintf(what, sizeof what, "geometry shader through a multi-draw: both sections drawn (pixels %08x %08x)",
                  px[32 * 64 + 60], px[32 * 64 + 3]);
         check(near(px[32 * 64 + 60], rgba(64, 128, 191, 255)) && near(px[32 * 64 + 3], rgba(64, 128, 191, 255)), what);
+
+        /* a second strip after a 3-vertex one (Rethinking Voxels' shadow pass: a voxel triangle, then the shadow
+           triangle) starts with its own first triangle's winding, so back-face culling keeps it like the 1-strip one */
+        GLuint p2 = glCreateProgram();
+        glAttachShader(p2, shader(GL_VERTEX_SHADER, "#version 330 core\nlayout(location = 0) in vec2 pos;\nout vec4 vt;\n"
+                                                    "void main() { vt = vec4(0.25, 0.5, 0.9, 0.9); gl_Position = vec4(pos, 0.0, 1.0); }\n"));
+        glAttachShader(p2, shader(GL_GEOMETRY_SHADER, "#version 330 core\nlayout(triangles) in;\n"
+                                                      "layout(triangle_strip, max_vertices = 6) out;\nin vec4 vt[];\nout vec4 tc;\nout float k;\n"
+                                                      "void main() {\n  k = 0.75;\n  for (int i = 0; i < 3; i++) {\n"
+                                                      "    tc = vt[i];\n    gl_Position = vec4(-0.99, -0.99, 0.0, 1.0);\n    EmitVertex();\n  }\n"
+                                                      "  EndPrimitive();\n  for (int i = 0; i < 3; i++) {\n"
+                                                      "    tc = vt[i];\n    gl_Position = gl_in[i].gl_Position;\n    EmitVertex();\n  }\n"
+                                                      "  EndPrimitive();\n}\n"));
+        glAttachShader(p2, shader(GL_FRAGMENT_SHADER, "#version 330 core\nin vec4 tc;\nin float k;\nout vec4 frag;\n"
+                                                      "void main() { frag = vec4(tc.x, tc.y, k, 1.0); }\n"));
+        glLinkProgram(p2);
+        unsigned one_strip = 0;
+        glEnable(GL_CULL_FACE);
+        for (int pass = 0; pass < 2; pass++) {
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+            glClear(GL_COLOR_BUFFER_BIT);
+            glUseProgram(pass ? p2 : p);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            read_texture(rb, tex, ssbo, px);
+            if (!pass)
+                one_strip = px[32 * 64 + 32];
+        }
+        glDisable(GL_CULL_FACE);
+        snprintf(what, sizeof what, "geometry shader: a second strip keeps its winding under culling (pixels %08x %08x)",
+                 one_strip, px[32 * 64 + 32]);
+        check(near(one_strip, rgba(64, 128, 191, 255)) && near(px[32 * 64 + 32], one_strip), what);
     }
 
     /* 14. GL_RGB textures live in RGBA8: whatever alpha the uploaded texels carry, GL samples alpha as 1 */

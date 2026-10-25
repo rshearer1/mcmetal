@@ -504,7 +504,8 @@ static int type_info(const char *t, int *comps, int *is_int, int *is_uint)
 static const char *swz[5] = {"", ".x", ".xy", ".xyz", ""};
 
 /* value of a varying packed into a vec4 (ints as bits) */
-/* Records are tightly packed floats: position (4), then each varying's own components, then the strip id (1).
+/* Records are tightly packed floats: position (4), then each varying's own components, then the strip id (1: the
+   slot its strip starts at).
    SEUS's shadow pass writes 20 floats per vertex instead of 10 vec4s: the record traffic was most of the geometry
    stage's cost. Outputs set only to a constant and components the fragment shader never reads are left out. */
 static void pack_store(sb *o, const varying *v, const char *expr, int off)
@@ -886,7 +887,7 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
     }
 
     /* record floats: position, the components of each varying the fragment shader mentions (the rest are never
-       stored, voff -1; MGL_GS_KEEP_ALL=1 keeps them), strip id */
+       stored, voff -1; MGL_GS_KEEP_ALL=1 keeps them), strip id (the slot the strip starts at) */
     int R = 5, voff[64];
     char konst[64][96]; /* outputs only ever set to one constant (voff -2): written by the passthrough stage */
     int keep_all = !src[MGL_FRAGMENT] || (getenv("MGL_GS_KEEP_ALL") && atoi(getenv("MGL_GS_KEEP_ALL")));
@@ -936,7 +937,7 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
         if (voff[i] >= 0)
             pack_store(&comp, &gout[i], gout[i].name, voff[i]);
     sb_printf(&comp, "  mgl_ov[mgl_rec + %du] = uintBitsToFloat(mgl_strip);\n  mgl_emitted++;\n}\n"
-                     "void mgl_end_primitive() { mgl_strip++; }\n", R - 1);
+                     "void mgl_end_primitive() { mgl_strip = mgl_emitted; }\n", R - 1);
     /* one vertex-stage run: fetch the attributes of vtx, run the vertex shader, store the results as input c */
     for (int i = 0; i < nattrs; i++) /* see mgl_fetchf; set by mglb_draw_gs once a draw's vertex format is known */
         sb_printf(&comp, "layout(constant_id = %d) const int mgl_kb%d = -1;\nlayout(constant_id = %d) const int mgl_kf%d = 0;\n",
@@ -1069,11 +1070,13 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
                      "  uint mgl_v = uint(gl_VertexIndex);\n  uint mgl_prim = mgl_v / (mgl_T * 3u);\n"
                      "  uint mgl_rem = mgl_v %% (mgl_T * 3u);\n"
                      "  uint mgl_t = mgl_rem / 3u;\n  uint mgl_j = mgl_rem %% 3u;\n"
-                     "  uint mgl_k = (mgl_t & 1u) != 0u ? (mgl_j == 0u ? 1u : (mgl_j == 1u ? 0u : 2u)) : mgl_j; /* keep strip winding */\n"
                      "  uint mgl_base = mgl_prim * mgl_M;\n"
-                     "  bool mgl_ok = mgl_t + 2u < mgl_oc[mgl_prim] &&\n"
-                     "      floatBitsToUint(mgl_ov[(mgl_base + mgl_t) * mgl_R + mgl_R - 1u]) ==\n"
-                     "      floatBitsToUint(mgl_ov[(mgl_base + mgl_t + 2u) * mgl_R + mgl_R - 1u]);\n"
+                     "  bool mgl_ok = mgl_t + 2u < mgl_oc[mgl_prim];\n"
+                     "  uint mgl_s0 = mgl_ok ? floatBitsToUint(mgl_ov[(mgl_base + mgl_t) * mgl_R + mgl_R - 1u]) : 0u;\n"
+                     "  mgl_ok = mgl_ok && mgl_s0 == floatBitsToUint(mgl_ov[(mgl_base + mgl_t + 2u) * mgl_R + mgl_R - 1u]);\n"
+                     /* every strip starts with its first triangle as emitted: odd triangles counted from the strip's
+                        own first vertex swap two corners (the second strip after a 3-vertex one starts at slot 3) */
+                     "  uint mgl_k = ((mgl_t - mgl_s0) & 1u) != 0u ? (mgl_j == 0u ? 1u : (mgl_j == 1u ? 0u : 2u)) : mgl_j; /* keep strip winding */\n"
                      "  uint mgl_rec = (mgl_base + mgl_t + mgl_k) * mgl_R;\n"
                      "  gl_Position = mgl_ok ? vec4(mgl_ov[mgl_rec], mgl_ov[mgl_rec + 1u], mgl_ov[mgl_rec + 2u], mgl_ov[mgl_rec + 3u]) : vec4(2.0, 2.0, 2.0, 1.0);\n",
               max_vertices, R);
