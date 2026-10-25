@@ -51,6 +51,39 @@ static void *pack_dest(void *pixels)
     return (char *)mglb_buffer_ptr(b->mem) + (size_t)pixels;
 }
 
+/* RGBA into a GL_PIXEL_PACK_BUFFER: a GPU copy in command order, no wait. The buffer's map or glGetBufferSubData
+   waits for it if it's read before the GPU got there (a mod reading last frame's copy waits for nothing). */
+static int read_to_pack_buffer(mglb_texture *tex, int level, int x, int y, int w, int h, GLenum format, void *pixels)
+{
+    if (!mgl->pixel_pack_buffer || format != GL_RGBA || !tex || !is_rgba8(mglb_texture_format(tex)))
+        return 0;
+    mgl_buffer *b = mgl_table_get(&mgl->buffers, mgl->pixel_pack_buffer);
+    if (!b || !b->mem)
+        return 0;
+    int row_px = mgl->pack_row_length > 0 ? mgl->pack_row_length : w;
+    int align = mgl->pack_alignment > 0 ? mgl->pack_alignment : 4;
+    size_t stride = ((size_t)row_px * 4 + (size_t)align - 1) / (size_t)align * (size_t)align;
+    size_t off = (size_t)pixels;
+    if (off + stride * (size_t)(h - 1) + (size_t)w * 4 > b->size)
+        return 0;
+    mgl_buffer_settle(b);
+    mgl_buffer_gpu_written(b);
+    mglb_buffer_written(b->mem); /* caches keyed on its contents start over */
+    return mglb_texture_read_to_buffer(tex, level, x, y, w, h, b->mem, off, stride);
+}
+
+/* A read into client memory waits for the whole GPU queue. If a mod does that every frame, name it once: after
+   300 reads, log the Java stack of the caller (it shows in the game log as STDERR lines). */
+static void note_reader(int w, int h)
+{
+    static unsigned long reads;
+    if (++reads == 300) {
+        mgl_log("glReadPixels has been called 300 times (this one %dx%d, %s); the Java caller:", w, h,
+                mgl->pixel_pack_buffer ? "into a pixel pack buffer" : "into client memory, a full GPU wait each");
+        mgl_java_stack();
+    }
+}
+
 static int supported(GLenum format, GLenum type, const char *who)
 {
     if ((format == GL_RGBA || format == GL_BGRA) && (type == GL_UNSIGNED_BYTE || type == GL_UNSIGNED_INT_8_8_8_8_REV))
@@ -75,6 +108,9 @@ void glReadPixels(GLint x, GLint y, GLsizei w, GLsizei h, GLenum format, GLenum 
             att = (int)(f->read_buffer - GL_COLOR_ATTACHMENT0);
     }
     mglb_texture *tex = t.tex[att];
+    note_reader(w, h);
+    if (read_to_pack_buffer(tex, t.level[att], x, y, w, h, format, pixels))
+        return;
     void *dst = pack_dest(pixels);
     if (!tex || !dst)
         return;
