@@ -1,0 +1,39 @@
+# Vanilla twins for each light colour in lights.tsv, best first. A shader pack only knows the blocks it names in its
+# block.properties, so for a light it doesn't name, mcmetal gives it the id of the first twin the pack does name: the
+# pack then lights it the way it lights that vanilla block. Twins named with lit=true (campfire, redstone lamp) or
+# without states count; twins a pack only names per facing (SEUS's lit furnaces) don't.
+# Small lights (only the bright pixels glow) come first in a chain for small-light colours, so packs that make the
+# whole block glow for glowstone-like ids (SEUS PTGI) don't light up a lamp's iron frame. Each chain ends with torch
+# or glowstone, which every pack names (SEUS PTGI E12 knows nothing newer than Minecraft 1.14).
+# Columns: colour, twins (space separated)
+torch	torch lantern glowstone
+fire	campfire fire torch glowstone
+orange	torch lantern shroomlight glowstone
+yellow	lantern ochre_froglight torch glowstone
+brown	torch lantern glowstone
+glow_berries	cave_vines lantern torch glowstone
+copper	verdant_froglight torch glowstone
+redstone	redstone_torch redstone_wall_torch torch glowstone
+red	redstone_torch redstone_wall_torch torch glowstone
+soul	soul_torch soul_lantern soul_campfire torch sea_lantern glowstone
+blue	soul_torch soul_lantern torch sea_lantern glowstone
+light_blue	soul_lantern soul_torch torch sea_lantern glowstone
+cyan	soul_lantern soul_torch sea_lantern torch glowstone
+white	end_rod torch sea_lantern glowstone
+end_rod	end_rod torch sea_lantern glowstone
+green	verdant_froglight torch glowstone
+lime	verdant_froglight sea_pickle torch glowstone
+pink	pearlescent_froglight torch glowstone
+magenta	pearlescent_froglight amethyst_cluster torch glowstone
+purple	amethyst_cluster crying_obsidian torch glowstone
+amethyst	amethyst_cluster crying_obsidian torch glowstone
+crying_obsidian	crying_obsidian amethyst_cluster glowstone torch
+glowstone	glowstone torch
+sea_lantern	sea_lantern glowstone torch
+shroomlight	shroomlight glowstone torch
+ochre	ochre_froglight glowstone torch
+verdant	verdant_froglight glowstone torch
+pearlescent	pearlescent_froglight glowstone torch
+magma	magma_block glowstone torch
+lava	magma_block glowstone torch
+soul_fire	soul_campfire soul_lantern sea_lantern glowstone torch
