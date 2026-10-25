@@ -48,6 +48,7 @@ in vec3 playerPos;
 flat in int dhMat;
 #ifdef DH_WATER
 flat in vec3 sunCol, skyAmb;
+uniform sampler2D depthtex1;   // Minecraft's own blocks (DH has a depth buffer of its own)
 /* RENDERTARGETS: 0 */
 layout(location = 0) out vec4 outColor;
 #else
@@ -64,6 +65,9 @@ void main() {
     if (d < far * 0.85 + 8.0 * ign(gl_FragCoord.xy, frameCounter) - 4.0) discard;
     vec3 n = normalize(normalW);
 #ifdef DH_WATER
+    // DH's water is tested only against DH's own depth, so far water seen past a nearby house or hill (from high up,
+    // the sea beyond and below it) would be drawn over them: wherever a real block is on this pixel, it's nearer
+    if (texelFetch(depthtex1, ivec2(gl_FragCoord.xy), 0).r < 1.0) discard;
     vec3 a = styleFoliage(toLinear(tint.rgb) * 1.6, tint.rgb, true);   // the real water nearby is lighter: it shows the lit bottom through it
     vec3 L = lightDirection();
     vec3 col = a * surfaceLight(playerPos, n, lmcoord, 1.0, MAT_NONE, L, sunCol, skyAmb,

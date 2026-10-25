@@ -540,6 +540,7 @@ for p in $PHASES; do
     nether-shaders) scene noon clear nether; run_phase nether-shaders 240 metal true ;;      # Nether room, Complementary
     dh) dh_phase dh false ;;                    # Distant Horizons, Sodium
     dh-shaders) dh_phase dh-shaders true ;;     # Distant Horizons + Complementary
+    dh-ours-high) GAME_TP="${DH_TP:-~ 140 ~ 90 35}" dh_phase "$p" true ours ;;  # from high up, looking down past the near chunks at far water
     dh-*) dh_phase "$p" true "${p#dh-}" ;;      # Distant Horizons + a pack: dh-photon, dh-bliss, dh-ours, ...
     glcount-*) # the pack on Apple's OpenGL through tools/glcount.c, which logs draws and triangles per second (all,
                # and into shadow-map-sized viewports) to glcount.log: what Iris and Sodium draw on real OpenGL
