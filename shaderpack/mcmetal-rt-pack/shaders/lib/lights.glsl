@@ -3,6 +3,8 @@
 // traces a shadow ray to a random point inside it. Averaged over frames with the GI (deferred.fsh) that is every
 // nearby light, each with its own colour and soft shadow. Fragment shaders only. Needs settings, common, uniforms.
 
+#include "/lib/lights_modded.glsl"
+
 // the light's colour (linear) and vanilla light level, by block id
 vec3 lightColorOf(int id, out float level) {
     level = 15.0;
@@ -27,7 +29,7 @@ vec3 lightColorOf(int id, out float level) {
     case 10207:               return vec3(1.00, 0.55, 1.00);   // pearlescent froglight
     case 10208: level = 3.0;  return vec3(1.00, 0.30, 0.08);   // magma block
     }
-    return vec3(1.0, 0.6, 0.3);
+    return moddedLightColor(id, level);                          // modded lights (block.properties' modded part)
 }
 
 #ifdef USE_LIGHTS
@@ -71,8 +73,13 @@ vec3 coloredBlockLight(vec3 p, vec3 n, int mat, float u1, float u2, float u3) {
         if (x < w[i]) { pick = i; break; }
         x -= w[i];
     }
+#ifdef SHARP_LIGHT_SHADOWS
+    // every ray goes to the light's centre: crisp shadow edges, like a point light
+    vec3 target = lp[pick];
+#else
     // a random point inside the light block makes soft shadows over the frames
     vec3 target = lp[pick] + (vec3(u2, u3, fract(u2 + u3 * 1.618)) - 0.5) * 0.5;
+#endif
     vec3 dir; float dist;
     vec3 l = lightFrom(p, n, mat, target, ids[pick], dir, dist);
     vec3 o = mat == MAT_FOLIAGE ? p + dir * 0.06 : p + n * 0.02 + dir * 0.01;
