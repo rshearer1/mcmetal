@@ -127,7 +127,9 @@ def read_tga(data):
 
 def read_png(data):
     pos, idat, plte, trns = 8, b"", None, None
-    while pos < len(data):
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError("not a PNG")
+    while pos + 8 <= len(data):
         ln, = struct.unpack_from(">I", data, pos); t = data[pos + 4:pos + 8]; d = data[pos + 8:pos + 8 + ln]
         if t == b"IHDR":
             w, h, depth, ctype, _, _, inter = struct.unpack(">IIBBBBB", d)
@@ -137,6 +139,8 @@ def read_png(data):
             trns = d
         elif t == b"IDAT":
             idat += d
+        elif t == b"IEND":
+            break
         pos += 12 + ln
     if depth not in (1, 2, 4, 8) or inter or (depth < 8 and ctype not in (0, 3)):
         raise ValueError("only non-interlaced 8-bit, or palette/grey 1-4 bit PNGs")
