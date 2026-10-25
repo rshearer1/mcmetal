@@ -107,27 +107,55 @@ fps_summary() { # label log skip count: Minecraft's fps counter (one line a seco
 
 # GAME_SEGMENTS=FILE (bench mode): after the phase's own measurement, the same launch measures more scenes, one per
 # line of FILE, instead of relaunching the game (JVM, NeoForge and world load) for each. A line is
-#   name|time|weather|look|options|shot
+#   name|time|weather|look|options|shot|pack
 # time: "time set" value (noon, 12300, midnight); weather: clear/rain; look: "yaw pitch" or "~2 7" (pan), as
 # GAME_LOOK; options: shader pack options added to the phase's own (e.g. "LIGHT_SLOTS=8 RT_GI=false"), "-" for the
 # phase's own; shot: yes for one screenshot at the end (in OUT/PHASE/NAME/). Empty fields keep the last segment's
-# value. Only things that can change in a running game: env vars (MGL_*) and the stage still need their own launch.
+# value. pack: switch to another shader pack in shaderpacks/ (its file name, or the start of it, any case: "bliss"),
+# as a player would in the shader menu (with its own options file; options then apply to that pack).
+# GAME_SEG_SETTLE_SHADERS=0 measures from the moment the reload is done (pack-switch stutter).
+# Only things that can change in a running game: env vars (MGL_*) and the stage still need their own launch.
 # The mod's MCMETAL_CONTROL file runs the commands (time, weather, datapack reload for the look, shader reload).
 segments() { # phase
     local name=$1 ctl=$OUT/$1/control look_f="$G/saves/metal/datapacks/mcm-scene/data/mcm/function/look.mcfunction"
-    local opts_f="$G/shaderpacks/${PACK:-ComplementaryReimagined_r5.9.3.zip}.txt" base_opts= last_opts=- n=0 reloads=0
+    local phase_pack=${PACK:-ComplementaryReimagined_r5.9.3.zip} iris_f="$G/config/iris.properties"
+    local cur_pack=$phase_pack opts_f="$G/shaderpacks/$phase_pack.txt" base_opts= last_opts=- n=0 reloads=0
     [ -f "$opts_f" ] && base_opts=$(cat "$opts_f")
+    local phase_opts=$base_opts phase_iris; phase_iris=$(cat "$iris_f" 2>/dev/null)
     local base_look; base_look=$(cat "$look_f" 2>/dev/null)
-    local seg tm wx look opts shot
-    while IFS='|' read -r seg tm wx look opts shot; do
+    local seg tm wx look opts shot pack
+    while IFS='|' read -r seg tm wx look opts shot pack; do
         case $seg in ''|'#'*) continue ;; esac
         local t0=$SECONDS lines= wait=${GAME_SEG_SETTLE:-5}
         [ -n "$tm" ] && lines+="cmd time set $tm"$'\n'
         [ -n "$wx" ] && lines+="cmd weather $wx 100000"$'\n'
         [ -n "$look" ] && { echo "tp @s ~ ~ ~ $look" > "$look_f"; lines+="cmd reload"$'\n'; }
+        if [ -n "$pack" ]; then
+            local found=
+            for f in "$G/shaderpacks"/*; do
+                local b; b=$(basename "$f")
+                case $b in *.txt) continue ;; esac
+                [[ ${b,,} == "${pack,,}"* ]] && { found=$b; break; }
+            done
+            if [ -z "$found" ]; then
+                echo "segment $seg: no shader pack matching \"$pack\" in shaderpacks/, not measured" | tee -a "$OUT/fps.txt"
+                continue
+            fi
+            if [ "$found" != "$cur_pack" ]; then
+                # the old pack's options file back as it was, then the new pack's own
+                [ -n "$base_opts" ] && echo "$base_opts" > "$opts_f" || rm -f "$opts_f"
+                cur_pack=$found opts_f="$G/shaderpacks/$found.txt" base_opts= last_opts=-
+                [ -f "$opts_f" ] && base_opts=$(cat "$opts_f")
+                printf 'enableShaders=true\nshaderPack=%s\ncolorSpace=SRGB\ndisableUpdateMessage=true\n' "$found" > "$iris_f"
+                echo "segment $seg: switching to shader pack $found"
+                [[ $lines == *shaders* ]] || lines+="shaders"$'\n'
+                wait=${GAME_SEG_SETTLE_SHADERS:-10}
+            fi
+        fi
         if [ -n "$opts" ] && [ "$opts" != "$last_opts" ]; then
             { [ -n "$base_opts" ] && echo "$base_opts"; [ "$opts" != - ] && tr ' ' '\n' <<< "$opts"; } > "$opts_f"
-            lines+="shaders"$'\n'; wait=${GAME_SEG_SETTLE_SHADERS:-10}; last_opts=$opts
+            [[ $lines == *shaders* ]] || lines+="shaders"$'\n'
+            wait=${GAME_SEG_SETTLE_SHADERS:-10}; last_opts=$opts
         fi
         n=$((n + 1))
         printf '%smark segment %s\n' "$lines" "$seg" > "$ctl.tmp" && mv "$ctl.tmp" "$ctl" # whole batches only
@@ -158,6 +186,11 @@ segments() { # phase
         echo "segment $seg took $((SECONDS - t0)) s"
     done < "$GAME_SEGMENTS"
     [ -n "$base_opts" ] && echo "$base_opts" > "$opts_f" || rm -f "$opts_f"
+    if [ "$cur_pack" != "$phase_pack" ]; then # the phase's own pack and options for whatever runs next
+        opts_f="$G/shaderpacks/$phase_pack.txt"
+        [ -n "$phase_opts" ] && echo "$phase_opts" > "$opts_f" || rm -f "$opts_f"
+        [ -n "$phase_iris" ] && echo "$phase_iris" > "$iris_f"
+    fi
     [ -n "$base_look" ] && echo "$base_look" > "$look_f" # the phase's own camera for whatever runs next
 }
 
