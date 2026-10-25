@@ -1,6 +1,7 @@
 package mcmetal.loader;
 
 import java.io.File;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.util.List;
@@ -17,6 +18,9 @@ import java.util.List;
  *
  * MCMETAL_TEST_SCREEN=inventory (test rig only): once a world is loaded, opens the player's inventory (with JEI's
  * item list beside it when JEI is installed) and opens it again whenever it closes, for menu frame-rate runs.
+ * MCMETAL_TEST_SCREEN=creative does the same in creative mode (the inventory becomes the creative menu) and picks the
+ * search tab, which lists every item; creative-scroll also scrolls that list down a little every 100 ms (wrapping at
+ * the end), as someone browsing it does.
  */
 final class TestControl {
     private TestControl() {
@@ -47,8 +51,14 @@ final class TestControl {
             }
             int done = 0;
             String screen = System.getenv("MCMETAL_TEST_SCREEN");
+            boolean scroll = "creative-scroll".equals(screen);
+            int ticks = 0;
             while (true) {
-                Thread.sleep(500);
+                Thread.sleep(scroll ? 100 : 500);
+                if (scroll)
+                    scrollCreative(getInstance.invoke(null), cl);
+                if (scroll && ++ticks % 5 != 0)
+                    continue;
                 if (screen != null && !screen.isEmpty())
                     holdScreen(getInstance.invoke(null), cl, screen);
                 if (file == null || !file.exists())
@@ -86,9 +96,12 @@ final class TestControl {
     private static void holdScreen(Object mc, ClassLoader cl, String name) throws ReflectiveOperationException {
         Class<?> mcc = mc.getClass();
         Object player = mcc.getField("player").get(mc);
-        if (player == null || mcc.getField("screen").get(mc) != null)
+        Object open = mcc.getField("screen").get(mc);
+        if (player != null && open != null && name.startsWith("creative"))
+            pickSearchTab(mc, cl, open);
+        if (player == null || open != null)
             return;
-        if (!name.equals("inventory")) {
+        if (!name.equals("inventory") && !name.equals("creative") && !name.equals("creative-scroll")) {
             MetalBootstrap.log("control: unknown MCMETAL_TEST_SCREEN " + name);
             System.exit(1); // a typo must not measure the world instead of a menu
         }
@@ -108,6 +121,69 @@ final class TestControl {
         mcc.getMethod("execute", Runnable.class).invoke(mc, r);
         if (screenOpens++ < 5)
             MetalBootstrap.log("control: screen " + name + " opened");
+    }
+
+    private static boolean searchPicked;
+    private static final String CREATIVE = "net.minecraft.client.gui.screens.inventory.CreativeModeInventoryScreen";
+
+    private static boolean isCreative(Object screen) {
+        for (Class<?> c = screen == null ? null : screen.getClass(); c != null; c = c.getSuperclass())
+            if (c.getName().equals(CREATIVE))
+                return true;
+        return false;
+    }
+
+    /** Switches an open creative menu to its search tab (all items), once, on the render thread. */
+    private static void pickSearchTab(Object mc, ClassLoader cl, Object open) throws ReflectiveOperationException {
+        // by name: loading game classes on this thread (at the title screen, say) races the game's own loading
+        if (searchPicked || !isCreative(open))
+            return;
+        searchPicked = true;
+        Class<?> creative = open.getClass();
+        while (!creative.getName().equals(CREATIVE))
+            creative = creative.getSuperclass();
+        Class<?> tabClass = Class.forName("net.minecraft.world.item.CreativeModeTab", false, cl);
+        Object search = Class.forName("net.minecraft.world.item.CreativeModeTabs", true, cl).getMethod("searchTab").invoke(null);
+        Method select = creative.getDeclaredMethod("selectTab", tabClass);
+        select.setAccessible(true);
+        Runnable r = () -> {
+            try {
+                select.invoke(open, search);
+                MetalBootstrap.log("control: creative search tab");
+            } catch (ReflectiveOperationException e) {
+                MetalBootstrap.log("control: picking the search tab failed: " + e.getCause());
+            }
+        };
+        mc.getClass().getMethod("execute", Runnable.class).invoke(mc, r);
+    }
+
+    private static float scrollPos;
+
+    /** Moves an open creative menu's item list down a little (as the mouse wheel does), wrapping at the end. */
+    private static void scrollCreative(Object mc, ClassLoader cl) throws ReflectiveOperationException {
+        if (!searchPicked)
+            return;
+        Object open = mc.getClass().getField("screen").get(mc);
+        if (!isCreative(open))
+            return;
+        Class<?> creative = open.getClass();
+        while (!creative.getName().equals(CREATIVE))
+            creative = creative.getSuperclass();
+        Object menu = creative.getMethod("getMenu").invoke(open);
+        Field offs = creative.getDeclaredField("scrollOffs");
+        offs.setAccessible(true);
+        Method scrollTo = menu.getClass().getMethod("scrollTo", float.class);
+        scrollPos = scrollPos >= 1f ? 0f : Math.min(1f, scrollPos + 0.01f);
+        float to = scrollPos;
+        Runnable r = () -> {
+            try {
+                offs.setFloat(open, to);
+                scrollTo.invoke(menu, to);
+            } catch (ReflectiveOperationException e) {
+                MetalBootstrap.log("control: scrolling failed: " + e.getCause());
+            }
+        };
+        mc.getClass().getMethod("execute", Runnable.class).invoke(mc, r);
     }
 
     /** A command as the integrated server itself, on the server thread. */

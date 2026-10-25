@@ -99,6 +99,12 @@ public final class MetalBootstrap implements GraphicsBootstrapper {
                     # Experimental, with a shader pack: mobs and block entities far away for their size cast no
                     # shadow (a cow's shadow goes at ~45 blocks), to save time in busy farms. Bigger keeps more.
                     #MCMETAL_SHADOW_ENTITY_LOD=32
+                    #
+                    # While an inventory, chest or the creative menu is open, the world behind it is redrawn this
+                    # many times a second (default 10) and the menu itself at full speed. 0 = only when it opens.
+                    #MCMETAL_MENU_WORLD_FPS=10
+                    # Redraw the world behind menus every frame, as before.
+                    #MCMETAL_MENU_CACHE=0
                     """);
         // the native side reads this file itself; the Java side (in-memory patches) sees it as mcmetal.opt.NAME
         for (String line : Files.readAllLines(options)) {
