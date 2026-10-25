@@ -52,7 +52,8 @@ static int cenc_concurrent; /* cenc lets its dispatches overlap (geometry-shader
                           =0 turns it off. Waits on completion signals instead of polling, and presents at an even rate
                           (120/60/40/30/24/20/15 fps, 12 with interpolation, whichever the last frames' cost sustains, only rates that divide the screen's
                           refresh rate; MGL_TARGET_FPS forces one, over the power cap too: it's a test override).
-                          Only with vsync on. MGL_PRESENT_STATS=1 logs how evenly frames reach the screen. */
+                          Only with vsync on. MGL_PRESENT_STATS=1 logs how evenly frames reach the screen.
+                          MGL_PACE_FREE_FPS=N leaves frames that fit N fps or more unpaced (see pace_free). */
 static int opt(const char *name)
 {
     const char *e = getenv(name);
@@ -5916,6 +5917,33 @@ static int choose_paced_fps(mgl_ctx *c, int shown_per_frame)
     return c->paced_fps;
 }
 
+/* MGL_PACE_FREE_FPS=N (off unless set): with pacing on, frames that could come faster than the paced rate and at
+   least N fps go to the screen as soon as they are ready instead of being held to an even 60/40/...: on a 120 Hz
+   screen the even rates jump from 120 straight to 60, so a frame costing 10 ms (M3, Metal test instance, RT pack +
+   MetalFX: CPU 7.9 + GPU 10.4 ms) was held at 60 when it could show ~90, unevenly. Below N pacing works as before.
+   The paced rate keeps being chosen underneath, so it takes over again as soon as the cost drops below N, with 10%
+   either way so the two don't flip back and forth. */
+static int pace_free(mgl_ctx *c, int fps)
+{
+    static int free_fps = -1, on;
+    if (free_fps < 0) {
+        const char *e = getenv("MGL_PACE_FREE_FPS");
+        free_fps = e ? atoi(e) : 0;
+        if (free_fps > 0)
+            mgl_log("frame pacing: frames that fit %d fps or more go out unpaced", free_fps);
+    }
+    if (free_fps <= 0 || fps >= pace_rates[0] || c->avg_frame_ms <= 0) {
+        on = 0;
+        return 0;
+    }
+    double can = 1000.0 / c->avg_frame_ms;
+    int was = on;
+    on = on ? can >= free_fps * 0.9 && can > fps : can >= free_fps * 1.1 && can > fps * 1.1;
+    if (on != was)
+        mgl_log("frame pacing: %s (frame time %.1f ms, paced rate %d)", on ? "unpaced" : "paced again", c->avg_frame_ms, fps);
+    return on;
+}
+
 /* MGL_PRESENT_STATS=1 (or MGL_PROFILE): once a second, log how evenly frames reached the screen, from the
    drawables' presentedTime: shown fps, mean and spread of the time each frame stayed on screen, the worst one,
    and judder = share of frames whose time on screen differs from the previous frame's by more than 2 ms.
@@ -7146,7 +7174,10 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
                 atomic_store(&pace_target_ms, 1000.0 / fps);
                 mgl_log("frame pacing: presenting at an even %d fps (frame time %.1f ms)", fps, c->avg_frame_ms);
             }
-            [current_cb() presentDrawable:drawable afterMinimumDuration:1.0 / fps];
+            if (pace_free(c, fps))
+                [current_cb() presentDrawable:drawable];
+            else
+                [current_cb() presentDrawable:drawable afterMinimumDuration:1.0 / fps];
         } else {
             [current_cb() presentDrawable:drawable];
         }
