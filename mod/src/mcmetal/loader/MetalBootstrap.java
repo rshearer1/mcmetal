@@ -105,6 +105,15 @@ public final class MetalBootstrap implements GraphicsBootstrapper {
                     #MCMETAL_MENU_WORLD_FPS=10
                     # Redraw the world behind menus every frame, as before.
                     #MCMETAL_MENU_CACHE=0
+                    #
+                    # Distant Horizons with a shader pack that has no DH support (SEUS PTGI): DH's far terrain is
+                    # drawn behind the pack's picture, fading into its sky. 0 = leave it out, as before.
+                    #MCMETAL_DH_COMPOSITE=0
+                    # How strongly that far terrain fades into the sky (0 = no fade, 1 = default, 2 = twice).
+                    #MCMETAL_DH_FOG=1
+                    # How much of the last stretch before the render distance fades Minecraft's chunks into DH's
+                    # (0 = hard edge, 0.25 = default, 1 = the whole way out).
+                    #MCMETAL_DH_EDGE=0.25
                     """);
         // the native side reads this file itself; the Java side (in-memory patches) sees it as mcmetal.opt.NAME
         for (String line : Files.readAllLines(options)) {

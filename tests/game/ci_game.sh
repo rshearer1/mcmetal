@@ -1,6 +1,7 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
 #   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary sound sound-off sound-apple water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-gi-fine ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-water ours-water-full ours-underwater ours-vista ours-vista-STYLE-TIME ours-season-SEASON[-STYLE]
+#   pbr-VIEW[+RP] (material gallery for resource packs: VIEW ours comp comp-pom comp-ipbr plain, RP as GAME_RP)
 #   menu menu-noif menu-shaders creative creative-shaders creative-scroll particles ab-menu ab-menu-noif ab-menu-shaders ab-creative ab-creative-shaders ab-particles (JEI, ImmediatelyFast, Particle Rain)
 #   pack-NAME packnight-NAME packshadow-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
 #   herd-NAME (the pack over a busy farm: 240 mobs and 64 chests, for entity costs; ab-herd-NAME for A/B)
@@ -36,13 +37,45 @@ if [ "${GAME_BENCH:-}" = true ]; then
     sed -i.bak 's/^enableVsync:.*/enableVsync:false/; s/^maxFps:.*/maxFps:260/; s/^renderDistance:.*/renderDistance:12/' "$G/options.txt"
     export MCMETAL_FPS_LOG=1 MCMETAL_FPS_EVERY=1 MGL_SHOT_EVERY=0 # screenshots only after measuring: each one stalls the GPU
 fi
-# GAME_RP=labpbr-test: our own LabPBR test textures (tests/game/rp/make_labpbr_test.py) as the resource pack
-rm -f "$G/resourcepacks/mcm-labpbr-test.zip"
-if [ "${GAME_RP:-}" = labpbr-test ]; then
-    mkdir -p "$G/resourcepacks" && python3 -I "$SRC/tests/game/rp/make_labpbr_test.py" "$G/resourcepacks/mcm-labpbr-test.zip" > /dev/null
-    sed -i.bak 's|^resourcePacks:.*|resourcePacks:["vanilla","file/mcm-labpbr-test.zip"]|' "$G/options.txt"
-fi
-mkdir -p "$G/shaderpacks" && find "$G/shaderpacks" -maxdepth 1 -name "mcmetal-rt-*" ! -name "*.txt" -exec rm -rf {} + && cp -r "$SRC/tests/game/packs/"mcmetal-rt-* "$SRC/shaderpack/mcmetal-rt-pack" "$G/shaderpacks/"
+# GAME_RP: a LabPBR resource pack for the game
+#   labpbr-test       our own LabPBR test textures (tests/game/rp/make_labpbr_test.py)
+#   vanilla-rtx[-opus] Cubeir's Vanilla RTX (the Bedrock RTX pack) converted by shaderpack/tools/vanilla_rtx_labpbr.py
+#                     (16x normals, or Opus's 96x); downloaded at a fixed commit, never stored in this repo
+#   spbr              SPBR 16.2 from Modrinth (Hearth & Hex's PBR pack in 1.3.12-1.3.14)
+VANILLA_RTX_COMMIT=07239401a49d43e4538f66fa3d67a11a7168f061
+SPBR="https://cdn.modrinth.com/data/aNcOVoD7/versions/jtNbhldU/SPBR-16_2.zip|55221318c6b0a817f7edea282f308ddd15b133e5"
+use_rp() { # NAME (see GAME_RP above; empty = none): puts the pack in resourcepacks/ and selects it in options.txt
+    local rp_file= v url sha
+    rm -f "$G/resourcepacks/"mcm-*.zip
+    case "$1" in
+    '') ;;
+    labpbr-test) mkdir -p "$G/resourcepacks" && python3 -I "$SRC/tests/game/rp/make_labpbr_test.py" "$G/resourcepacks/mcm-labpbr-test.zip" > /dev/null
+        rp_file=mcm-labpbr-test.zip ;;
+    vanilla-rtx|vanilla-rtx-opus)
+        v=$WORK/vanilla-rtx-$VANILLA_RTX_COMMIT
+        if [ ! -d "$v" ]; then
+            rm -rf "$v.tmp"; mkdir -p "$v.tmp"
+            curl -fsSL "https://codeload.github.com/Cubeir/Vanilla-RTX/tar.gz/$VANILLA_RTX_COMMIT" | tar xz -C "$v.tmp" --strip-components 1 \
+                && mv "$v.tmp" "$v" || { echo "could not download Vanilla RTX"; return 1; }
+        fi
+        mkdir -p "$G/resourcepacks" && python3 -I "$SRC/shaderpack/tools/vanilla_rtx_labpbr.py" "$v" "$WORK/mc/versions/1.21.1/1.21.1.jar" \
+            "$G/resourcepacks/mcm-$1.zip" $([ "$1" = vanilla-rtx-opus ] && echo --opus) > "$OUT/rp-$1.log" || return 1
+        cut -c1-200 "$OUT/rp-$1.log"
+        rp_file=mcm-$1.zip ;;
+    spbr) IFS='|' read -r url sha <<< "$SPBR"; mkdir -p "$G/resourcepacks"
+        python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import bare_mc; bare_mc.fetch(*sys.argv[2:])' \
+            "$SRC/tools" "$url" "$G/resourcepacks/mcm-spbr.zip" "$sha" || { echo "could not download SPBR"; return 1; }
+        rp_file=mcm-spbr.zip ;;
+    *) echo "unknown resource pack $1"; return 1 ;;
+    esac
+    if [ -n "$rp_file" ]; then
+        sed -i.bak "s|^resourcePacks:.*|resourcePacks:[\"vanilla\",\"file/$rp_file\"]|" "$G/options.txt"
+    else
+        sed -i.bak 's|^resourcePacks:.*|resourcePacks:[]|' "$G/options.txt"
+    fi
+}
+use_rp "${GAME_RP:-}" || exit 1
+mkdir -p "$G/shaderpacks" && find "$G/shaderpacks" -maxdepth 1 -name "mcmetal-*" ! -name "*.txt" -exec rm -rf {} + && cp -r "$SRC/tests/game/packs/"mcmetal-* "$SRC/shaderpack/mcmetal-rt-pack" "$G/shaderpacks/"
 rm -rf "$G/saves/metal" && tar xzf "$SRC/tests/game/world-metal.tgz" -C "$G/saves"
 # The game loads mcmetal the way players will: through the mod jar in mods/, no JVM arguments.
 # GAME_JVM_ARGS=true uses the old -Dorg.lwjgl.*.libname route instead.
@@ -74,27 +107,55 @@ fps_summary() { # label log skip count: Minecraft's fps counter (one line a seco
 
 # GAME_SEGMENTS=FILE (bench mode): after the phase's own measurement, the same launch measures more scenes, one per
 # line of FILE, instead of relaunching the game (JVM, NeoForge and world load) for each. A line is
-#   name|time|weather|look|options|shot
+#   name|time|weather|look|options|shot|pack
 # time: "time set" value (noon, 12300, midnight); weather: clear/rain; look: "yaw pitch" or "~2 7" (pan), as
 # GAME_LOOK; options: shader pack options added to the phase's own (e.g. "LIGHT_SLOTS=8 RT_GI=false"), "-" for the
 # phase's own; shot: yes for one screenshot at the end (in OUT/PHASE/NAME/). Empty fields keep the last segment's
-# value. Only things that can change in a running game: env vars (MGL_*) and the stage still need their own launch.
+# value. pack: switch to another shader pack in shaderpacks/ (its file name, or the start of it, any case: "bliss"),
+# as a player would in the shader menu (with its own options file; options then apply to that pack).
+# GAME_SEG_SETTLE_SHADERS=0 measures from the moment the reload is done (pack-switch stutter).
+# Only things that can change in a running game: env vars (MGL_*) and the stage still need their own launch.
 # The mod's MCMETAL_CONTROL file runs the commands (time, weather, datapack reload for the look, shader reload).
 segments() { # phase
     local name=$1 ctl=$OUT/$1/control look_f="$G/saves/metal/datapacks/mcm-scene/data/mcm/function/look.mcfunction"
-    local opts_f="$G/shaderpacks/${PACK:-ComplementaryReimagined_r5.9.3.zip}.txt" base_opts= last_opts=- n=0 reloads=0
+    local phase_pack=${PACK:-ComplementaryReimagined_r5.9.3.zip} iris_f="$G/config/iris.properties"
+    local cur_pack=$phase_pack opts_f="$G/shaderpacks/$phase_pack.txt" base_opts= last_opts=- n=0 reloads=0
     [ -f "$opts_f" ] && base_opts=$(cat "$opts_f")
+    local phase_opts=$base_opts phase_iris; phase_iris=$(cat "$iris_f" 2>/dev/null)
     local base_look; base_look=$(cat "$look_f" 2>/dev/null)
-    local seg tm wx look opts shot
-    while IFS='|' read -r seg tm wx look opts shot; do
+    local seg tm wx look opts shot pack
+    while IFS='|' read -r seg tm wx look opts shot pack; do
         case $seg in ''|'#'*) continue ;; esac
         local t0=$SECONDS lines= wait=${GAME_SEG_SETTLE:-5}
         [ -n "$tm" ] && lines+="cmd time set $tm"$'\n'
         [ -n "$wx" ] && lines+="cmd weather $wx 100000"$'\n'
         [ -n "$look" ] && { echo "tp @s ~ ~ ~ $look" > "$look_f"; lines+="cmd reload"$'\n'; }
+        if [ -n "$pack" ]; then
+            local found= want; want=$(tr '[:upper:]' '[:lower:]' <<< "$pack") # macOS /bin/bash 3.2: no ${x,,}
+            for f in "$G/shaderpacks"/*; do
+                local b; b=$(basename "$f")
+                case $b in *.txt) continue ;; esac
+                [[ $(tr '[:upper:]' '[:lower:]' <<< "$b") == "$want"* ]] && { found=$b; break; }
+            done
+            if [ -z "$found" ]; then
+                echo "segment $seg: no shader pack matching \"$pack\" in shaderpacks/, not measured" | tee -a "$OUT/fps.txt"
+                continue
+            fi
+            if [ "$found" != "$cur_pack" ]; then
+                # the old pack's options file back as it was, then the new pack's own
+                [ -n "$base_opts" ] && echo "$base_opts" > "$opts_f" || rm -f "$opts_f"
+                cur_pack=$found opts_f="$G/shaderpacks/$found.txt" base_opts= last_opts=-
+                [ -f "$opts_f" ] && base_opts=$(cat "$opts_f")
+                printf 'enableShaders=true\nshaderPack=%s\ncolorSpace=SRGB\ndisableUpdateMessage=true\n' "$found" > "$iris_f"
+                echo "segment $seg: switching to shader pack $found"
+                [[ $lines == *shaders* ]] || lines+="shaders"$'\n'
+                wait=${GAME_SEG_SETTLE_SHADERS:-10}
+            fi
+        fi
         if [ -n "$opts" ] && [ "$opts" != "$last_opts" ]; then
             { [ -n "$base_opts" ] && echo "$base_opts"; [ "$opts" != - ] && tr ' ' '\n' <<< "$opts"; } > "$opts_f"
-            lines+="shaders"$'\n'; wait=${GAME_SEG_SETTLE_SHADERS:-10}; last_opts=$opts
+            [[ $lines == *shaders* ]] || lines+="shaders"$'\n'
+            wait=${GAME_SEG_SETTLE_SHADERS:-10}; last_opts=$opts
         fi
         n=$((n + 1))
         printf '%smark segment %s\n' "$lines" "$seg" > "$ctl.tmp" && mv "$ctl.tmp" "$ctl" # whole batches only
@@ -125,6 +186,11 @@ segments() { # phase
         echo "segment $seg took $((SECONDS - t0)) s"
     done < "$GAME_SEGMENTS"
     [ -n "$base_opts" ] && echo "$base_opts" > "$opts_f" || rm -f "$opts_f"
+    if [ "$cur_pack" != "$phase_pack" ]; then # the phase's own pack and options for whatever runs next
+        opts_f="$G/shaderpacks/$phase_pack.txt"
+        [ -n "$phase_opts" ] && echo "$phase_opts" > "$opts_f" || rm -f "$opts_f"
+        [ -n "$phase_iris" ] && echo "$phase_iris" > "$iris_f"
+    fi
     [ -n "$base_look" ] && echo "$base_look" > "$look_f" # the phase's own camera for whatever runs next
 }
 
@@ -293,7 +359,11 @@ scene() { # time [weather [stage]]: copy the test datapack into the world; it bu
     [ "${3:-scene}" = nether ] && echo 'tp @s 0.5 64 0.5 -90 7' > "$f/look.mcfunction" # held in the Nether room
     [ "${3:-scene}" = dh ] && echo 'tp @s 0.5 150 0.5 -45 12' > "$f/look.mcfunction" # high up, looking at the horizon
     [ "${3:-scene}" = herd ] && echo 'tp @s ~ ~ ~ -90 20' > "$f/look.mcfunction" # above the farm, looking down at it
-    [ -n "${GAME_LOOK:-}" ] && echo "tp @s ~ ~ ~ $GAME_LOOK" > "$f/look.mcfunction" # GAME_LOOK="yaw pitch"
+    # GAME_LOOK="yaw pitch" turns the player where the scene put them; "x y z yaw pitch" also moves them there
+    if [ -n "${GAME_LOOK:-}" ]; then
+        if [ "$(wc -w <<< "$GAME_LOOK")" -ge 5 ]; then echo "tp @s $GAME_LOOK" > "$f/look.mcfunction"
+        else echo "tp @s ~ ~ ~ $GAME_LOOK" > "$f/look.mcfunction"; fi
+    fi
     [ -n "${GAME_TP:-}" ] && echo "tp @s $GAME_TP" > "$f/look.mcfunction" # GAME_TP="~0.1 ~ ~ ~2 7": walk and turn each tick
     return 0
 }
@@ -327,11 +397,13 @@ EUPHORIA_PACK="ComplementaryReimagined_r5.9.3 + EuphoriaPatches_1.10.5"
 # Distant Horizons (LOD terrain past the render distance), fetched at run time like the packs and removed after
 DH="https://cdn.modrinth.com/data/uCdwusMi/versions/9w34y8ai/DistantHorizons-3.3.3-1.21.1-fabric-neoforge.jar|4357b4d19fab818780c94f0e43dad1cc931634b2"
 dh_phase() { # dh / dh-shaders / dh-PACK: Distant Horizons at noon, without a pack, with Complementary (it has DH
-             # support) or with PACK (a name from PACKS, or "ours" for shaderpack/mcmetal-rt-pack); 16 screenshots
+             # support) or with PACK (a name from PACKS, "ours" for shaderpack/mcmetal-rt-pack, or "nodh" for
+             # tests/game/packs/mcmetal-nodh-test, a pack without DH programs: mcmetal draws DH's LODs behind it); 16 screenshots
              # (~160 s) so DH has time to build its distant terrain
     local url sha pack=${3:-} file= purl=-
     if [ -n "$pack" ]; then
         if [ "$pack" = ours ]; then file=mcmetal-rt-pack
+        elif [ "$pack" = nodh ]; then file=mcmetal-nodh-test # our stand-in for SEUS: no dh_* programs (DH composite)
         else
             IFS='|' read -r _ file purl sha <<< "$(grep "^$pack|" <<< "$PACKS")"
             [ -n "$file" ] || { echo "unknown pack $pack"; return; }
@@ -513,6 +585,22 @@ for p in $PHASES; do
     ours-puddles) GAME_LOOK="-90 50" scene 3000 rain room; PACK=mcmetal-rt-pack run_phase ours-puddles 180 metal true ;;  # open ground in rain
     ours-puddle-mask) GAME_LOOK="-90 50" scene 3000 rain room; PACK_OPTS="DEBUG_VIEW=6 ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-puddle-mask 180 metal true ;;
     ours-pbr) GAME_LOOK="-90 10" scene 3000 clear pbr; PACK=mcmetal-rt-pack run_phase ours-pbr 180 metal true ;;  # with GAME_RP=labpbr-test
+    pbr-ours*|pbr-comp*|pbr-plain*) # pbr-VIEW[+RP]: the material gallery for resource-pack looks, with resource pack RP
+        # (as GAME_RP: vanilla-rtx, vanilla-rtx-opus, spbr, labpbr-test; none without +RP). VIEW: ours = our RT pack,
+        # comp = Complementary reading LabPBR with POM off (Bedrock RTX has no parallax), comp-pom = with POM,
+        # comp-ipbr = Complementary's own Integrated PBR (as shipped), plain = no shaders
+        v=${p%%+*}; [ "$v" = "$p" ] && r=${GAME_RP:-} || r=${p#*+}
+        use_rp "$r" || { CRASHED="$CRASHED $p"; continue; }
+        GAME_LOOK="-90 18" scene 1500 clear pbr_gallery
+        case $v in
+        pbr-ours) PACK=mcmetal-rt-pack run_phase $p 180 metal true ;;
+        pbr-comp) PACK_OPTS="RP_MODE=3 ${PACK_OPTS:-}" run_phase $p 240 metal true ;;
+        pbr-comp-pom) PACK_OPTS="RP_MODE=3 POM=true ${PACK_OPTS:-}" run_phase $p 240 metal true ;;
+        pbr-comp-ipbr) run_phase $p 240 metal true ;;
+        pbr-plain) run_phase $p 180 metal false ;;
+        *) echo "unknown phase $p" ;;
+        esac
+        use_rp "${GAME_RP:-}" ;;
     ours-low|ours-ultra)   # the Low / Ultra presets (shaders.properties profile.LOW / profile.ULTRA) in the test room
         [ $p = ours-low ] && o="RT_GI=false LIGHT_SLOTS=2 LIGHT_SHAFTS=false LIGHT_SHAFTS_STEPS=4 RT_REFLECT_DISTANCE=32.0 RT_GI_DISTANCE=16.0 RT_AO_FRAMES=32.0" \
                           || o="LIGHT_SLOTS=8 LIGHT_SHAFTS_STEPS=12 RT_REFLECT_DISTANCE=256.0 RT_GI_DISTANCE=64.0 RT_AO_FRAMES=32.0"
