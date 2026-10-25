@@ -45,7 +45,8 @@ static int cenc_concurrent; /* cenc lets its dispatches overlap (geometry-shader
                           background; its draws wait for it up to MGL_PIPELINE_WAIT_MS per frame (default 4: a
                           pipeline Apple already has in its own cache is back in ~1 ms) and are skipped after
                           that, so an object can be missing for a frame or two the first time it is seen.
-                          Small full-screen draws (a shader pack's composite passes, blits) always wait.
+                          Small full-screen draws (a shader pack's composite passes, blits) and draws that
+                          write images or storage buffers always wait.
                           =0 builds every pipeline on the render thread as before.
    MGL_FRAME_PACING=0     ON BY DEFAULT (M3: SEUS 47 fps with ~75% judder -> an even 40, plain world even 120);
                           =0 turns it off. Waits on completion signals instead of polling, and presents at an even rate
@@ -2678,7 +2679,7 @@ static void pipe_frame_end(void)
 }
 
 /* A draw found its pipeline still building: wait for it while this frame's budget lasts (always, up to 2 s, for
-   small full-screen draws: a skipped composite pass would show a stale or black picture), else skip the draw. */
+   the draws draw_must_wait picks), else skip the draw. */
 static id<MTLRenderPipelineState> wait_pending_pipe(MGLPendingPipe *pp, NSData *key, int must)
 {
     uint64_t budget = pipe_wait_budget_ns();
@@ -2702,6 +2703,23 @@ static id<MTLRenderPipelineState> wait_pending_pipe(MGLPendingPipe *pp, NSData *
     if ([got isKindOfClass:[MGLPendingPipe class]]) /* the build failed */
         return nil;
     return got;
+}
+
+/* Draws that wait for their pipeline however long it takes: full-screen passes and blits (a quad or a triangle,
+   which may be drawn only once), and draws that write images or storage buffers (a voxel volume, say: what they
+   write can't be made up for by drawing again next frame) */
+static int draw_must_wait(const mgl_draw *d)
+{
+    if (d->multi_n == 0 && d->count <= 6 && d->instances <= 1 && !d->gs_sec_n)
+        return 1;
+    for (int i = 0; i < 8; i++)
+        if (d->ssbo[i])
+            return 1;
+    for (int st = 0; st < 2; st++)
+        for (int i = 0; i < d->num_textures[st] && i < MGL_MAX_TEXTURES; i++)
+            if (d->textures[st][i].is_image && d->textures[st][i].tex)
+                return 1;
+    return 0;
 }
 
 static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_target *t)
@@ -2758,8 +2776,7 @@ static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_targ
     @synchronized(pipelines) {
         ps_or_pending = pipelines[key];
     }
-    /* full-screen passes and blits: a quad or a triangle, drawn once */
-    int must = d->multi_n == 0 && d->count <= 6 && d->instances <= 1 && !d->gs_sec_n;
+    int must = draw_must_wait(d);
     if ([ps_or_pending isKindOfClass:[MGLPendingPipe class]]) { /* still building in the background */
         id<MTLRenderPipelineState> got = wait_pending_pipe(ps_or_pending, key, must);
         if (got) {
