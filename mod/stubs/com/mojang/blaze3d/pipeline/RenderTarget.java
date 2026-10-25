@@ -3,5 +3,7 @@ package com.mojang.blaze3d.pipeline;
 public abstract class RenderTarget {
     public int width;
     public int height;
+    public int frameBufferId;
     public int getColorTextureId() { return 0; }
+    public int getDepthTextureId() { return 0; }
 }
