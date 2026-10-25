@@ -235,6 +235,7 @@ void mgl_rt_link(mgl_program *p);
 void mgl_program_jitter(mgl_program *p, GLuint name, const mgl_target *t, int world); /* MCMETAL_UPSCALE=2, see mgl_program.c */
 void mgl_rt_record(mgl_program *p, const mgl_draw *d);
 void mgl_rt_note_write(mglb_buffer *m, size_t offset, size_t size);
+void mgl_rt_note_free(mglb_buffer *m); /* the backend frees buffer memory for good */
 void mgl_rt_end_frame(void); /* called by the backend before present */
 /* Waits for a program's background compile and applies it; draws and dispatches call this before using p->gpu. */
 void mgl_program_wait(mgl_program *p);

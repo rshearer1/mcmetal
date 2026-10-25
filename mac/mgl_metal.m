@@ -709,6 +709,7 @@ size_t mglb_buffer_size(mglb_buffer *b) { return b ? b->size : 0; }
 static void priv_forget(mglb_buffer *b);
 static void buf_destroy(mglb_buffer *b)
 {
+    mgl_rt_note_free(b);
     buf_live_bytes -= b->cap;
     if (b->last_use <= atomic_load(&completed_serial) && b->cap >= ((size_t)1 << 20))
         /* the GPU is done with it: drop its pages now. On GitHub's Mac, Metal's allocated size did not go down when

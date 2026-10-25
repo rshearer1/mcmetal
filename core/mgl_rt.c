@@ -543,6 +543,10 @@ void mgl_rt_record(mgl_program *p, const mgl_draw *d)
         snap_env = getenv("MGL_RT_SNAPSHOT") != NULL;
     if (!snap_env && (!scene_wanted || t - scene_wanted > 5.0)) {
         rtd.idle++;
+        if (num_draws) { /* nothing prunes the capture while idle: start afresh when rays are next wanted */
+            num_draws = 0;
+            tab_stale = 1;
+        }
         return; /* no ray-tracing shader in use: capture costs nothing */
     }
     if (p && p->ublock[MGL_VERTEX] && entity_program(p)) {
@@ -701,6 +705,19 @@ void mgl_rt_note_write(mglb_buffer *m, size_t offset, size_t size)
         rtd.writes++;
         rtd.write_bytes += size == (size_t)-1 ? 0 : size;
     }
+}
+
+/* Buffer memory freed for good (not just back to the pool, which keeps it whole): captured draws that read it
+   would hand rt_update a dangling buffer (a pack switch crashed in setBuffer after Sodium freed its arenas). */
+void mgl_rt_note_free(mglb_buffer *m)
+{
+    int n = 0;
+    for (int i = 0; i < num_draws; i++)
+        if (draws[i].g.vbuf != m && draws[i].g.ibuf != m)
+            draws[n++] = draws[i];
+    if (n != num_draws)
+        tab_stale = 1;
+    num_draws = n;
 }
 
 static int num_draws_fwd(void) { return num_draws; }
