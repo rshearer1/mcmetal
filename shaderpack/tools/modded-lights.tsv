@@ -1,0 +1,2268 @@
+# Modded light blocks (Hearth & Hex 1.3.13 light dump): block, lit states (blank = every state), light level, colour
+adorablehamsterpets:sunflower_block	lit=true	15	yellow
+aether:aether_portal		11	torch
+aether:ambrosium_torch		14	torch
+aether:ambrosium_wall_torch		14	torch
+aether:light_angelic_stone		11	torch
+aether:light_hellfire_stone		11	torch
+aether:locked_light_angelic_stone		11	torch
+aether:locked_light_hellfire_stone		11	torch
+aether:locked_sentry_stone		11	torch
+aether:quicksoil_glass		11	torch
+aether:quicksoil_glass_pane		11	torch
+aether:sentry_stone		11	torch
+aether:trapped_light_angelic_stone		11	torch
+aether:trapped_light_hellfire_stone		11	torch
+aether:trapped_sentry_stone		11	torch
+aether:treasure_doorway_light_angelic_stone		11	torch
+aether:treasure_doorway_light_hellfire_stone		11	torch
+aether:treasure_doorway_sentry_stone		11	torch
+alpinewhispers:arolla_pine_smoker	lit=true	13	torch
+alpinewhispers:candle_wreath		15	torch
+alpinewhispers:fairy_lights		9	yellow
+alpinewhispers:garland		4	orange
+alpinewhispers:star_topper		14	yellow
+alpinewhispers:tree_baubles		4	yellow
+amendments:candlelight/wall_lamp		15	torch
+amendments:carpet_slab	light_level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+amendments:carpet_stairs	light_level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+amendments:chipped/wall_blue_paper_lantern		15	blue
+amendments:chipped/wall_blue_paper_soul_lantern		15	soul
+amendments:chipped/wall_blue_tube_soul_lantern		15	soul
+amendments:chipped/wall_burning_coal_lantern		15	torch
+amendments:chipped/wall_checkered_iron_lantern		15	torch
+amendments:chipped/wall_checkered_iron_soul_lantern		15	soul
+amendments:chipped/wall_dark_blue_paper_lantern		15	blue
+amendments:chipped/wall_ender_lantern		15	purple
+amendments:chipped/wall_golden_paper_soul_lantern		15	soul
+amendments:chipped/wall_gray_paper_soul_lantern		15	soul
+amendments:chipped/wall_green_paper_lantern		15	green
+amendments:chipped/wall_iron_bowl_lantern		15	torch
+amendments:chipped/wall_iron_bowl_soul_lantern		15	soul
+amendments:chipped/wall_lime_paper_soul_lantern		15	soul
+amendments:chipped/wall_orange_paper_soul_lantern		15	soul
+amendments:chipped/wall_purple_paper_lantern		15	purple
+amendments:chipped/wall_red_paper_lantern		15	red
+amendments:chipped/wall_small_green_lantern		15	green
+amendments:chipped/wall_small_red_soul_lantern		15	soul
+amendments:chipped/wall_white_paper_lantern		15	torch
+amendments:chipped/wall_wooden_cage_lantern		15	torch
+amendments:chipped/wall_wooden_cage_soul_lantern		15	soul
+amendments:chipped/wall_wrought_iron_lantern		15	torch
+amendments:chipped/wall_yellow_paper_soul_lantern		15	soul
+amendments:chipped/wall_yellow_tube_lantern		15	yellow
+amendments:hanging_flower_pot	light_level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+amendments:hexalia/wall_salt_lamp		15	orange
+amendments:liquid_cauldron	light_level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+amendments:mcwlights/wall_bell_lantern		15	torch
+amendments:mcwlights/wall_chain_lantern		15	torch
+amendments:mcwlights/wall_covered_lantern		15	torch
+amendments:mcwlights/wall_cross_lantern		15	torch
+amendments:mcwlights/wall_festive_lantern		15	torch
+amendments:mcwlights/wall_striped_lantern		15	torch
+amendments:mcwlights/wall_tavern_lantern		15	torch
+amendments:meadow/wall_oil_lantern		15	torch
+amendments:occultism/wall_spirit_lantern		15	torch
+amendments:skull_candle	lit=true	12	torch
+amendments:skull_candle_soul	lit=true	12	soul
+amendments:skull_candle_soul_wall	lit=true	12	soul
+amendments:skull_candle_wall	lit=true	12	torch
+amendments:suppsquared/wall_brass_lantern		15	torch
+amendments:suppsquared/wall_copper_lantern		15	torch
+amendments:suppsquared/wall_crimson_lantern		15	red
+amendments:wall_lantern		15	torch
+amendments:wall_soul_lantern		15	soul
+another_furniture:black_lamp	lit=true	15	purple
+another_furniture:blue_lamp	lit=true	15	blue
+another_furniture:brown_lamp	lit=true	15	brown
+another_furniture:cyan_lamp	lit=true	15	cyan
+another_furniture:gray_lamp	lit=true	15	white
+another_furniture:green_lamp	lit=true	15	green
+another_furniture:light_blue_lamp	lit=true	15	light_blue
+another_furniture:light_gray_lamp	lit=true	15	white
+another_furniture:lime_lamp	lit=true	15	lime
+another_furniture:magenta_lamp	lit=true	15	magenta
+another_furniture:orange_lamp	lit=true	15	orange
+another_furniture:pink_lamp	lit=true	15	pink
+another_furniture:purple_lamp	lit=true	15	purple
+another_furniture:red_lamp	lit=true	15	red
+another_furniture:white_lamp	lit=true	15	white
+another_furniture:yellow_lamp	lit=true	15	yellow
+apothic_enchanting:apothic_enchanting_table		7	blue
+apothic_enchanting:raven_enchanting_table		7	orange
+ars_nouveau:arcane_core		15	torch
+ars_nouveau:archwood_sconce	level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+ars_nouveau:bastion_pod	level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+ars_nouveau:bombegranate_pod	level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+ars_nouveau:brazier_relay	lit=true	15	torch
+ars_nouveau:drygmy_stone		8	torch
+ars_nouveau:falseweave	level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+ars_nouveau:frostaya_pod	level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+ars_nouveau:ghostweave	level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+ars_nouveau:light_block		15	torch
+ars_nouveau:mage_block		7	torch
+ars_nouveau:magelight_torch	level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+ars_nouveau:magic_fire		15	lava
+ars_nouveau:mendosteen_pod	level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+ars_nouveau:mirrorweave	level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+ars_nouveau:mob_jar	level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+ars_nouveau:polished_sconce	level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+ars_nouveau:relay		8	torch
+ars_nouveau:relay_collector		8	torch
+ars_nouveau:relay_deposit		8	torch
+ars_nouveau:relay_splitter		8	torch
+ars_nouveau:relay_warp		8	torch
+ars_nouveau:ritual_brazier	lit=true	15	torch
+ars_nouveau:sconce	level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+ars_nouveau:sky_block	level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+ars_nouveau:source_gem_block		6	torch
+ars_nouveau:source_lamp		15	torch
+ars_nouveau:sourcestone_sconce	level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+ars_nouveau:temporary_block	level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+ars_nouveau:temporary_light_block		15	torch
+ars_nouveau:volcanic_sourcelink		15	torch
+arts_and_crafts:black_chalk_dust	glow=true	7	white
+arts_and_crafts:bleached_chalk_dust	glow=true	7	white
+arts_and_crafts:blue_chalk_dust	glow=true	7	blue
+arts_and_crafts:brown_chalk_dust	glow=true	7	brown
+arts_and_crafts:cyan_chalk_dust	glow=true	7	cyan
+arts_and_crafts:gray_chalk_dust	glow=true	7	white
+arts_and_crafts:green_chalk_dust	glow=true	7	green
+arts_and_crafts:light_blue_chalk_dust	glow=true	7	light_blue
+arts_and_crafts:light_gray_chalk_dust	glow=true	7	white
+arts_and_crafts:lime_chalk_dust	glow=true	7	lime
+arts_and_crafts:lotus_flower		10	torch
+arts_and_crafts:magenta_chalk_dust	glow=true	7	magenta
+arts_and_crafts:orange_chalk_dust	glow=true	7	orange
+arts_and_crafts:pink_chalk_dust	glow=true	7	pink
+arts_and_crafts:purple_chalk_dust	glow=true	7	purple
+arts_and_crafts:red_chalk_dust	glow=true	7	red
+arts_and_crafts:white_chalk_dust	glow=true	7	white
+arts_and_crafts:yellow_chalk_dust	glow=true	7	yellow
+bakery:apple_pie		12	torch
+bakery:bundt_cake		12	torch
+bakery:chocolate_cake		12	torch
+bakery:chocolate_gateau		12	torch
+bakery:chocolate_tart		12	torch
+bakery:glowberry_tart		12	torch
+bakery:linzer_tart		12	torch
+bakery:pudding		12	torch
+bakery:strawberry_cake		12	torch
+bakery:sweetberry_cake		12	torch
+beautify:hanging_pot	potflower=15,22	14	glow_berries
+beautify:lamp_bamboo	on=true	14	torch
+beautify:lamp_candelabra	on=true	14	torch
+beautify:lamp_candelabra_black	on=true	14	purple
+beautify:lamp_candelabra_blue	on=true	14	blue
+beautify:lamp_candelabra_brown	on=true	14	brown
+beautify:lamp_candelabra_cyan	on=true	14	cyan
+beautify:lamp_candelabra_gray	on=true	14	white
+beautify:lamp_candelabra_green	on=true	14	green
+beautify:lamp_candelabra_light_blue	on=true	14	light_blue
+beautify:lamp_candelabra_light_gray	on=true	14	white
+beautify:lamp_candelabra_lime	on=true	14	lime
+beautify:lamp_candelabra_magenta	on=true	14	magenta
+beautify:lamp_candelabra_orange	on=true	14	orange
+beautify:lamp_candelabra_pink	on=true	14	pink
+beautify:lamp_candelabra_purple	on=true	14	purple
+beautify:lamp_candelabra_red	on=true	14	red
+beautify:lamp_candelabra_white	on=true	14	white
+beautify:lamp_candelabra_yellow	on=true	14	yellow
+beautify:lamp_jar	fill_level=5,10,15	14	torch
+beautify:lamp_light_bulb	on=true	14	torch
+betterfishtanks:fish_tank_block		14	cyan
+betterfishtanks:translucent_lava_block		15	lava
+biomesoplenty:anomaly		5	torch
+biomesoplenty:blackstone_bulb		2	torch
+biomesoplenty:burning_blossom		7	torch
+biomesoplenty:glowflower		9	torch
+biomesoplenty:glowing_moss_block		6	torch
+biomesoplenty:glowing_moss_carpet		6	torch
+biomesoplenty:glowshroom		6	torch
+biomesoplenty:glowshroom_block		10	torch
+biomesoplenty:glowworm_silk		2	torch
+biomesoplenty:glowworm_silk_strand		2	torch
+biomesoplenty:large_rose_quartz_bud		7	torch
+biomesoplenty:lumaloop	lit=true	10	torch
+biomesoplenty:lumaloop_plant	lit=true	10	torch
+biomesoplenty:medium_rose_quartz_bud		6	torch
+biomesoplenty:potted_burning_blossom		7	torch
+biomesoplenty:potted_glowflower		9	torch
+biomesoplenty:potted_glowshroom		6	torch
+biomesoplenty:potted_rainbow_birch_sapling		5	torch
+biomesoplenty:rainbow_birch_leaves		8	torch
+biomesoplenty:rainbow_birch_sapling		5	torch
+biomesoplenty:rose_quartz_block		10	torch
+biomesoplenty:rose_quartz_cluster		8	torch
+biomesoplenty:small_rose_quartz_bud		5	torch
+biomesoplenty:spider_egg		5	torch
+biomesoplenty:wispjelly		1	torch
+candlelight:bamboo_stove	lit=true	10	torch
+candlelight:basalt_stove	lit=true	12	torch
+candlelight:cobblestone_stove	lit=true	12	torch
+candlelight:deepslate_stove	lit=true	12	torch
+candlelight:end_stove	lit=true	12	torch
+candlelight:granite_stove	lit=true	12	torch
+candlelight:lamp	luminance=true	15	torch
+candlelight:mud_stove	lit=true	12	torch
+candlelight:quartz_stove	lit=true	12	torch
+candlelight:red_nether_bricks_stove	lit=true	12	red
+candlelight:sandstone_stove	lit=true	12	torch
+candlelight:side_table		15	torch
+candlelight:stone_bricks_stove	lit=true	12	torch
+cataclysm:abyssal_egg		1	blue
+cataclysm:altar_of_abyss		7	blue
+cataclysm:altar_of_amethyst		7	purple
+cataclysm:altar_of_fire		7	orange
+cataclysm:altar_of_void		7	purple
+cataclysm:emp		7	light_blue
+cataclysm:end_stone_teleport_trap_bricks	lit=true	7	purple
+cataclysm:ignitium_block		15	orange
+cataclysm:obsidian_explosion_trap_bricks	lit=true	7	purple
+cataclysm:purpur_void_rune_trap_block	lit=true	7	purple
+cataclysm:void_crystal		7	purple
+cataclysm:void_infused_end_stone_bricks		7	purple
+cataclysm:void_lantern_block		15	purple
+cataclysm:void_stone		7	purple
+chimes:amethyst_chimes		8	purple
+chipped:acacia_torch		14	torch
+chipped:acacia_wall_torch		14	torch
+chipped:ad_astra_ochre_froglight		15	ochre
+chipped:ad_astra_pearlescent_froglight		15	pearlescent
+chipped:ad_astra_verdant_froglight		15	verdant
+chipped:ancient_ochre_froglight		15	ochre
+chipped:ancient_pearlescent_froglight		15	pearlescent
+chipped:ancient_verdant_froglight		15	verdant
+chipped:angry_crying_obsidian		10	crying_obsidian
+chipped:angry_magma_block		3	magma
+chipped:anguished_jack_o_lantern		15	torch
+chipped:bad_time_jack_o_lantern		15	torch
+chipped:barred_ochre_froglight		15	ochre
+chipped:barred_pearlescent_froglight		15	pearlescent
+chipped:barred_verdant_froglight		15	verdant
+chipped:big_lantern		15	torch
+chipped:big_soul_lantern		15	soul
+chipped:birch_torch		14	torch
+chipped:birch_wall_torch		14	torch
+chipped:blank_crying_obsidian_carving		10	crying_obsidian
+chipped:blank_magma_block_carving		3	magma
+chipped:blue_paper_lantern		15	blue
+chipped:blue_paper_soul_lantern		10	soul
+chipped:blue_redstone_torch	lit=true	7	blue
+chipped:blue_redstone_wall_torch	lit=true	7	blue
+chipped:blue_tube_soul_lantern		10	soul
+chipped:boo_jack_o_lantern		15	torch
+chipped:bordered_crying_obsidian		10	crying_obsidian
+chipped:bordered_magma_block		3	magma
+chipped:brick_bordered_crying_obsidian		10	crying_obsidian
+chipped:brick_bordered_magma_block		3	magma
+chipped:broken_glowstone		15	glowstone
+chipped:broken_sea_lantern		15	sea_lantern
+chipped:broken_shroomlight		15	shroomlight
+chipped:brown_mushroom_bulb		1	brown
+chipped:brown_mushroom_bushel		1	brown
+chipped:brown_mushroom_cluster		1	brown
+chipped:brown_mushroom_trio		1	brown
+chipped:bulbed_brown_mushroom		1	brown
+chipped:bulbed_glowstone		15	glowstone
+chipped:bulbed_sea_lantern		15	sea_lantern
+chipped:burning_coal_lantern		15	torch
+chipped:button_brown_mushroom		1	brown
+chipped:carved_crying_obsidian		10	crying_obsidian
+chipped:carved_magma_block		3	magma
+chipped:checkered_crying_obsidian_tiles		10	crying_obsidian
+chipped:checkered_iron_lantern		15	torch
+chipped:checkered_iron_soul_lantern		10	soul
+chipped:checkered_magma_block_tiles		3	magma
+chipped:clustered_brown_mushroom		1	brown
+chipped:cobbled_crying_obsidian		10	crying_obsidian
+chipped:cobbled_magma_block		3	magma
+chipped:cracked_crying_obsidian_bricks		10	crying_obsidian
+chipped:cracked_disordered_crying_obsidian_bricks		10	crying_obsidian
+chipped:cracked_disordered_magma_block_bricks		3	magma
+chipped:cracked_flat_crying_obsidian_tiles		10	crying_obsidian
+chipped:cracked_flat_magma_block_tiles		3	magma
+chipped:cracked_glowstone		15	glowstone
+chipped:cracked_magma_block_bricks		3	magma
+chipped:cracked_sea_lantern		15	sea_lantern
+chipped:cracked_shroomlight		15	shroomlight
+chipped:creeper_crying_obsidian_carving		10	crying_obsidian
+chipped:creeper_magma_block_carving		3	magma
+chipped:creepy_jack_o_lantern		15	torch
+chipped:crimson_redstone_torch	lit=true	7	redstone
+chipped:crimson_redstone_wall_torch	lit=true	7	redstone
+chipped:crimson_torch		14	torch
+chipped:crimson_wall_torch		14	torch
+chipped:crying_crying_obsidian		10	crying_obsidian
+chipped:crying_magma_block		3	magma
+chipped:crying_obsidian_bricks		10	crying_obsidian
+chipped:crying_obsidian_mini_tiles		10	crying_obsidian
+chipped:crying_obsidian_pillar		10	crying_obsidian
+chipped:crying_obsidian_pillar_top		10	crying_obsidian
+chipped:crying_obsidian_scales		10	crying_obsidian
+chipped:curly_crying_obsidian_pillar		10	crying_obsidian
+chipped:curly_magma_block_pillar		3	magma
+chipped:cut_blank_crying_obsidian		10	crying_obsidian
+chipped:cut_blank_magma_block		3	magma
+chipped:cut_crying_obsidian_column		10	crying_obsidian
+chipped:cut_magma_block_column		3	magma
+chipped:dark_blue_paper_lantern		15	blue
+chipped:dark_oak_torch		14	torch
+chipped:dark_oak_wall_torch		14	torch
+chipped:devious_jack_o_lantern		15	torch
+chipped:donut_lantern		15	torch
+chipped:donut_soul_lantern		15	soul
+chipped:double_brown_mushroom		1	brown
+chipped:double_inlayed_glowstone		15	glowstone
+chipped:double_inlayed_sea_lantern		15	sea_lantern
+chipped:double_inlayed_shroomlight		15	shroomlight
+chipped:duh_crying_obsidian		10	crying_obsidian
+chipped:duh_magma_block		3	magma
+chipped:edged_crying_obsidian_bricks		10	crying_obsidian
+chipped:edged_glowstone_lantern		15	glowstone
+chipped:edged_magma_block_bricks		3	magma
+chipped:edged_redstone_lamp	lit=true	15	redstone
+chipped:edged_shroomlight_lantern		15	shroomlight
+chipped:edged_white_redstone_lamp	lit=true	15	white
+chipped:elemental_ochre_froglight		15	ochre
+chipped:elemental_pearlescent_froglight		15	pearlescent
+chipped:elemental_verdant_froglight		15	verdant
+chipped:end_jack_o_lantern		15	torch
+chipped:end_purple_jack_o_lantern		15	purple
+chipped:ender_lantern		15	torch
+chipped:engraved_crying_obsidian		10	crying_obsidian
+chipped:engraved_magma_block		3	magma
+chipped:eroded_crying_obsidian		10	crying_obsidian
+chipped:eroded_magma_block		3	magma
+chipped:etched_crying_obsidian_bricks		10	crying_obsidian
+chipped:etched_magma_block_bricks		3	magma
+chipped:exposed_ochre_froglight		15	ochre
+chipped:exposed_pearlescent_froglight		15	pearlescent
+chipped:exposed_verdant_froglight		15	verdant
+chipped:fancy_glowstone_lantern		15	glowstone
+chipped:fancy_redstone_lamp	lit=true	15	redstone
+chipped:fancy_sea_lantern		15	sea_lantern
+chipped:fancy_shroomlight_lantern		15	shroomlight
+chipped:fancy_white_redstone_lamp	lit=true	15	white
+chipped:fine_crying_obsidian_pillar		10	crying_obsidian
+chipped:fine_magma_block_pillar		3	magma
+chipped:flat_crying_obsidian_tiles		10	crying_obsidian
+chipped:flat_magma_block_tiles		3	magma
+chipped:framed_glowstone_lantern		15	glowstone
+chipped:framed_sea_lantern		15	sea_lantern
+chipped:framed_shroomlight_lantern		15	shroomlight
+chipped:franken_brown_mushroom		1	brown
+chipped:glad_crying_obsidian		10	crying_obsidian
+chipped:glad_magma_block		3	magma
+chipped:glass_ochre_froglight		15	ochre
+chipped:glass_pearlescent_froglight		15	pearlescent
+chipped:glass_verdant_froglight		15	verdant
+chipped:glow_torch		14	torch
+chipped:glow_wall_torch		14	torch
+chipped:glowing_lodestone_side		15	torch
+chipped:glowstone_lantern		15	glowstone
+chipped:golden_paper_soul_lantern		10	soul
+chipped:gray_paper_soul_lantern		10	soul
+chipped:green_paper_lantern		15	green
+chipped:green_redstone_torch	lit=true	7	green
+chipped:green_redstone_wall_torch	lit=true	7	green
+chipped:hived_glowstone		15	glowstone
+chipped:hived_redstone_lamp	lit=true	15	redstone
+chipped:hived_sea_lantern		15	sea_lantern
+chipped:hived_shroomlight		15	shroomlight
+chipped:hived_white_redstone_lamp	lit=true	15	white
+chipped:hooded_brown_mushroom		1	brown
+chipped:horrified_jack_o_lantern		15	torch
+chipped:inlayed_crying_obsidian		10	crying_obsidian
+chipped:inlayed_glowstone		15	glowstone
+chipped:inlayed_magma_block		3	magma
+chipped:inlayed_redstone_lamp	lit=true	15	redstone
+chipped:inlayed_sea_lantern		15	sea_lantern
+chipped:inlayed_shroomlight		15	shroomlight
+chipped:inlayed_white_redstone_lamp	lit=true	15	white
+chipped:inscribed_crying_obsidian		10	crying_obsidian
+chipped:inscribed_magma_block		3	magma
+chipped:iron_bowl_lantern		15	torch
+chipped:iron_bowl_soul_lantern		10	soul
+chipped:iron_torch		14	torch
+chipped:iron_wall_torch		14	torch
+chipped:jungle_torch		14	torch
+chipped:jungle_wall_torch		14	torch
+chipped:kitty_faced_jack_o_lantern		15	torch
+chipped:layed_crying_obsidian_bricks		10	crying_obsidian
+chipped:layed_magma_block_bricks		3	magma
+chipped:lightstick_redstone_torch	lit=true	7	redstone
+chipped:lightstick_redstone_wall_torch	lit=true	7	redstone
+chipped:lime_paper_soul_lantern		10	soul
+chipped:loded_crying_obsidian		10	crying_obsidian
+chipped:loded_magma_block		3	magma
+chipped:magma_block_bricks		3	magma
+chipped:magma_block_mini_tiles		3	magma
+chipped:magma_block_pillar		3	magma
+chipped:magma_block_pillar_top		3	magma
+chipped:magma_block_scales		3	magma
+chipped:massive_crying_obsidian_bricks		10	crying_obsidian
+chipped:massive_magma_block_bricks		3	magma
+chipped:micro_brown_mushroom		1	brown
+chipped:mini_brown_mushroom		1	brown
+chipped:nether_engraved_glowstone		15	glowstone
+chipped:nether_jack_o_lantern		15	torch
+chipped:nice_redstone_lamp	lit=true	15	redstone
+chipped:nice_white_redstone_lamp	lit=true	15	white
+chipped:offset_crying_obsidian_bricks		10	crying_obsidian
+chipped:offset_magma_block_bricks		3	magma
+chipped:orange_paper_soul_lantern		10	soul
+chipped:ornate_crying_obsidian_pillar		10	crying_obsidian
+chipped:ornate_glowstone_lantern		15	glowstone
+chipped:ornate_magma_block_pillar		3	magma
+chipped:ornate_redstone_lamp	lit=true	15	redstone
+chipped:ornate_sea_lantern		15	sea_lantern
+chipped:ornate_shroomlight_lantern		15	shroomlight
+chipped:ornate_white_redstone_lamp	lit=true	15	white
+chipped:overjoyed_jack_o_lantern		15	torch
+chipped:overlapping_crying_obsidian_tiles		10	crying_obsidian
+chipped:overlapping_magma_block_tiles		3	magma
+chipped:owo_jack_o_lantern		15	torch
+chipped:patterned_glowstone		15	glowstone
+chipped:pillar_crying_obsidian_bricks		10	crying_obsidian
+chipped:pillar_magma_block_bricks		3	magma
+chipped:polished_crying_obsidian		10	crying_obsidian
+chipped:polished_glowstone		15	glowstone
+chipped:polished_magma_block		3	magma
+chipped:polished_sea_lantern		15	sea_lantern
+chipped:polished_shroomlight		15	shroomlight
+chipped:prismal_crying_obsidian_remnants		10	crying_obsidian
+chipped:prismal_magma_block_remnants		3	magma
+chipped:purple_paper_lantern		15	purple
+chipped:red_paper_lantern		15	red
+chipped:reinforced_ochre_froglight		15	ochre
+chipped:reinforced_pearlescent_froglight		15	pearlescent
+chipped:reinforced_redstone_lamp	lit=true	15	redstone
+chipped:reinforced_sea_lantern		15	sea_lantern
+chipped:reinforced_shroomlight		15	shroomlight
+chipped:reinforced_verdant_froglight		15	verdant
+chipped:reinforced_white_redstone_lamp	lit=true	15	white
+chipped:rough_crying_obsidian		10	crying_obsidian
+chipped:rough_magma_block		3	magma
+chipped:round_ochre_froglight		15	ochre
+chipped:round_pearlescent_froglight		15	pearlescent
+chipped:round_verdant_froglight		15	verdant
+chipped:rounded_crying_obsidian_bricks		10	crying_obsidian
+chipped:rounded_magma_block_bricks		3	magma
+chipped:runic_carved_crying_obsidian		10	crying_obsidian
+chipped:runic_carved_magma_block		3	magma
+chipped:sad_crying_obsidian		10	crying_obsidian
+chipped:sad_magma_block		3	magma
+chipped:sanded_crying_obsidian		10	crying_obsidian
+chipped:sanded_magma_block		3	magma
+chipped:sea_lodestone_side		15	torch
+chipped:shimmering_glowstone		15	glowstone
+chipped:shimmering_sea_lantern		15	sea_lantern
+chipped:shimmering_shroomlight		15	shroomlight
+chipped:shroomlight_lantern		15	shroomlight
+chipped:shroomlight_lodestone_side		15	shroomlight
+chipped:silly_jack_o_lantern		15	torch
+chipped:simple_crying_obsidian_pillar		10	crying_obsidian
+chipped:simple_magma_block_pillar		3	magma
+chipped:slight_smile_jack_o_lantern		15	torch
+chipped:small_crying_obsidian_bricks		10	crying_obsidian
+chipped:small_green_lantern		15	green
+chipped:small_magma_block_bricks		3	magma
+chipped:small_red_soul_lantern		10	soul
+chipped:smiling_jack_o_lantern		15	torch
+chipped:smooth_crying_obsidian_column		10	crying_obsidian
+chipped:smooth_glowstone		15	glowstone
+chipped:smooth_inlayed_crying_obsidian		10	crying_obsidian
+chipped:smooth_inlayed_magma_block		3	magma
+chipped:smooth_magma_block_column		3	magma
+chipped:smooth_redstone_lamp	lit=true	15	redstone
+chipped:smooth_ringed_crying_obsidian		10	crying_obsidian
+chipped:smooth_ringed_magma_block		3	magma
+chipped:smooth_sea_lantern		15	sea_lantern
+chipped:smooth_shroomlight		15	shroomlight
+chipped:smooth_white_redstone_lamp	lit=true	15	white
+chipped:smoothed_double_inlayed_crying_obsidian		10	crying_obsidian
+chipped:smoothed_double_inlayed_magma_block		3	magma
+chipped:special_sea_lantern		15	sea_lantern
+chipped:spider_crying_obsidian_carving		10	crying_obsidian
+chipped:spider_magma_block_carving		3	magma
+chipped:spiraled_crying_obsidian		10	crying_obsidian
+chipped:spiraled_magma_block		3	magma
+chipped:spooky_jack_o_lantern		15	torch
+chipped:spruce_torch		14	torch
+chipped:spruce_wall_torch		14	torch
+chipped:squished_cute_jack_o_lantern		15	torch
+chipped:stacked_crying_obsidian_bricks		10	crying_obsidian
+chipped:stacked_magma_block_bricks		3	magma
+chipped:suspicious_jack_o_lantern		15	torch
+chipped:tall_lantern		15	torch
+chipped:tall_soul_lantern		15	soul
+chipped:thick_inlayed_crying_obsidian		10	crying_obsidian
+chipped:thick_inlayed_glowstone		15	glowstone
+chipped:thick_inlayed_magma_block		3	magma
+chipped:thick_inlayed_redstone_lamp	lit=true	15	redstone
+chipped:thick_inlayed_sea_lantern		15	sea_lantern
+chipped:thick_inlayed_shroomlight		15	shroomlight
+chipped:thick_white_inlayed_redstone_lamp	lit=true	15	white
+chipped:tiled_bordered_crying_obsidian		10	crying_obsidian
+chipped:tiled_bordered_magma_block		3	magma
+chipped:tiled_crying_obsidian		10	crying_obsidian
+chipped:tiled_crying_obsidian_column		10	crying_obsidian
+chipped:tiled_glowstone_pillar		15	glowstone
+chipped:tiled_magma_block		3	magma
+chipped:tiled_magma_block_column		3	magma
+chipped:tiled_sea_lantern_pillar		15	sea_lantern
+chipped:tiled_shroomlight_pillar		15	shroomlight
+chipped:tiny_brick_bordered_crying_obsidian		10	crying_obsidian
+chipped:tiny_brick_bordered_magma_block		3	magma
+chipped:tiny_crying_obsidian_bricks		10	crying_obsidian
+chipped:tiny_layered_crying_obsidian_bricks		10	crying_obsidian
+chipped:tiny_layered_crying_obsidian_slabs		10	crying_obsidian
+chipped:tiny_layered_magma_block_bricks		3	magma
+chipped:tiny_layered_magma_block_slabs		3	magma
+chipped:tiny_magma_block_bricks		3	magma
+chipped:tiny_smug_jack_o_lantern		15	torch
+chipped:traditional_jack_o_lantern		15	torch
+chipped:trodden_crying_obsidian		10	crying_obsidian
+chipped:trodden_magma_block		3	magma
+chipped:umbrella_brown_mushroom		1	brown
+chipped:unamused_crying_obsidian		10	crying_obsidian
+chipped:unamused_magma_block		3	magma
+chipped:upside_down_jack_o_lantern		15	torch
+chipped:vertical_cut_crying_obsidian		10	crying_obsidian
+chipped:vertical_cut_magma_block		3	magma
+chipped:vertical_disordered_crying_obsidian_bricks		10	crying_obsidian
+chipped:vertical_disordered_magma_block_bricks		3	magma
+chipped:warped_torch		14	torch
+chipped:warped_wall_torch		14	torch
+chipped:weathered_crying_obsidian		10	crying_obsidian
+chipped:weathered_magma_block		3	magma
+chipped:white_paper_lantern		15	white
+chipped:wicked_brown_mushroom		1	brown
+chipped:wide_eyed_jack_o_lantern		15	torch
+chipped:wide_lantern		15	torch
+chipped:wide_soul_lantern		15	soul
+chipped:wither_engraved_glowstone		15	glowstone
+chipped:wooden_cage_lantern		15	torch
+chipped:wooden_cage_soul_lantern		10	soul
+chipped:wrought_iron_lantern		15	torch
+chipped:yellow_paper_soul_lantern		10	soul
+chipped:yellow_redstone_torch	lit=true	7	yellow
+chipped:yellow_redstone_wall_torch	lit=true	7	yellow
+chipped:yellow_tube_lantern		15	yellow
+cluttered:caged_bulb		15	torch
+cluttered:chalcedony_pillar_starry		5	yellow
+cluttered:chalcedony_pillar_starry_base		5	yellow
+cluttered:chalcedony_pillar_starry_doric		5	yellow
+cluttered:chalcedony_pillar_starry_ionic		5	yellow
+cluttered:chalcedony_sun_block		10	yellow
+cluttered:colosseo_wall_lantern		15	torch
+cluttered:deep_chalcedony_pillar_starry		5	white
+cluttered:deep_chalcedony_pillar_starry_base		5	white
+cluttered:deep_chalcedony_pillar_starry_doric		5	white
+cluttered:deep_chalcedony_pillar_starry_ionic		5	white
+cluttered:deep_chalcedony_sun_block		10	yellow
+cluttered:flower_carpet_crabapple		7	pink
+cluttered:flower_carpet_poplar		7	white
+cluttered:flower_carpet_willow		7	purple
+cluttered:flowering_fluorescent_maple_leaves		12	green
+cluttered:fluorescent_maple_bookshelf		4	green
+cluttered:fluorescent_maple_button		4	green
+cluttered:fluorescent_maple_door		4	green
+cluttered:fluorescent_maple_fence		4	green
+cluttered:fluorescent_maple_fence_gate		4	green
+cluttered:fluorescent_maple_hanging_sign		4	green
+cluttered:fluorescent_maple_leaves		4	green
+cluttered:fluorescent_maple_log		4	green
+cluttered:fluorescent_maple_planks		4	green
+cluttered:fluorescent_maple_pressure_plate		4	green
+cluttered:fluorescent_maple_sapling		6	green
+cluttered:fluorescent_maple_sign		4	green
+cluttered:fluorescent_maple_slab		4	green
+cluttered:fluorescent_maple_stairs		4	green
+cluttered:fluorescent_maple_trapdoor		4	green
+cluttered:fluorescent_maple_wainscoting		4	green
+cluttered:fluorescent_maple_wall_hanging_sign		4	green
+cluttered:fluorescent_maple_wall_sign		4	green
+cluttered:fluorescent_maple_window		4	green
+cluttered:fluorescent_maple_window_pane		4	green
+cluttered:fluorescent_maple_wood		4	green
+cluttered:garland_starry		5	yellow
+cluttered:hoppin_park_lantern		15	torch
+cluttered:lunar_observatory_jar		8	cyan
+cluttered:marble_sun_block		10	yellow
+cluttered:moon_decoration		10	yellow
+cluttered:osson_pendant_black		15	white
+cluttered:osson_pendant_brown		15	brown
+cluttered:osson_pendant_orange		15	orange
+cluttered:osson_pendant_racing_green		15	green
+cluttered:osson_pendant_red		15	red
+cluttered:osson_pendant_sage_green		15	green
+cluttered:osson_pendant_white		15	white
+cluttered:osson_pendant_yellow		15	yellow
+cluttered:potted_fluorescent_maple_sapling		6	green
+cluttered:sea_gem_lantern		15	cyan
+cluttered:starry_wallpaper		4	white
+cluttered:starry_wallpaper_lower_trim		4	yellow
+cluttered:starry_wallpaper_upper_trim		4	yellow
+cluttered:stripped_fluorescent_maple_log		4	green
+cluttered:stripped_fluorescent_maple_wood		4	green
+cluttered:tarrey_town_planter_fluorescent		4	green
+create:black_nixie_tube		5	purple
+create:blaze_burner	blaze=smouldering,fading,kindled,seething	15	torch
+create:blue_nixie_tube		5	blue
+create:brown_nixie_tube		5	brown
+create:cyan_nixie_tube		5	cyan
+create:elevator_contact	powering=true	10	torch
+create:experience_block		15	torch
+create:gray_nixie_tube		5	white
+create:green_nixie_tube		5	green
+create:light_blue_nixie_tube		5	light_blue
+create:light_gray_nixie_tube		5	white
+create:lime_nixie_tube		5	lime
+create:lit_blaze_burner		12	torch
+create:magenta_nixie_tube		5	magenta
+create:nixie_tube		5	torch
+create:pink_nixie_tube		5	pink
+create:purple_nixie_tube		5	purple
+create:red_nixie_tube		5	red
+create:refined_radiance_casing		12	torch
+create:rose_quartz_lamp	powering=true	15	torch
+create:white_nixie_tube		5	white
+create:yellow_nixie_tube		5	yellow
+decocraft:adventsljusstake_blue_flipbook		15	blue
+decocraft:adventsljusstake_green_flipbook		15	green
+decocraft:adventsljusstake_red_flipbook		15	red
+decocraft:adventsljusstake_white_flipbook		15	torch
+decocraft:arcade_machine_dk		15	light_blue
+decocraft:arcade_machine_pacman		15	light_blue
+decocraft:arcade_machine_pong		15	light_blue
+decocraft:arcade_machine_race		15	light_blue
+decocraft:arcade_machine_snake		15	light_blue
+decocraft:arcade_machine_space_invaders		15	light_blue
+decocraft:arcade_machine_tetris		15	light_blue
+decocraft:bamboo_torch_green_flipbook		15	torch
+decocraft:bamboo_torch_yellow_flipbook		15	torch
+decocraft:cake_birthday_chocolate_flipbook		15	torch
+decocraft:cake_birthday_strawberry_flipbook		15	torch
+decocraft:cake_birthday_vanilla_flipbook		15	torch
+decocraft:candle_holder_1_black_flipbook		15	torch
+decocraft:candle_holder_1_gold_flipbook		15	torch
+decocraft:candle_holder_1_silver_flipbook		15	torch
+decocraft:candle_holder_2_black_flipbook		15	torch
+decocraft:candle_holder_2_gold_flipbook		15	torch
+decocraft:candle_holder_2_silver_flipbook		15	torch
+decocraft:candle_holder_3_black_flipbook		15	torch
+decocraft:candle_holder_3_gold_flipbook		15	torch
+decocraft:candle_holder_3_silver_flipbook		15	torch
+decocraft:candle_holder_4_black_flipbook		15	torch
+decocraft:candle_holder_4_gold_flipbook		15	torch
+decocraft:candle_holder_4_silver_flipbook		15	torch
+decocraft:candle_holder_5_black_flipbook		15	torch
+decocraft:candle_holder_5_gold_flipbook		15	torch
+decocraft:candle_holder_5_silver_flipbook		15	torch
+decocraft:candle_holder_6_black_flipbook		15	torch
+decocraft:candle_holder_6_gold_flipbook		15	torch
+decocraft:candle_holder_6_silver_flipbook		15	torch
+decocraft:candle_holder_7_black_flipbook		15	torch
+decocraft:candle_holder_7_gold_flipbook		15	torch
+decocraft:candle_holder_7_silver_flipbook		15	torch
+decocraft:candle_holder_wall_1_black_flipbook		15	torch
+decocraft:candle_holder_wall_1_gold_flipbook		15	torch
+decocraft:candle_holder_wall_1_silver_flipbook		15	torch
+decocraft:candle_holder_wall_2_black_flipbook		15	torch
+decocraft:candle_holder_wall_2_gold_flipbook		15	torch
+decocraft:candle_holder_wall_2_silver_flipbook		15	torch
+decocraft:candle_holder_wall_3_black_flipbook		15	torch
+decocraft:candle_holder_wall_3_gold_flipbook		15	torch
+decocraft:candle_holder_wall_3_silver_flipbook		15	torch
+decocraft:ceiling_fan_birch_on		15	torch
+decocraft:ceiling_fan_black_on		15	torch
+decocraft:ceiling_fan_cherry_on		15	torch
+decocraft:ceiling_fan_ebony_on		15	torch
+decocraft:ceiling_fan_oak_on		15	torch
+decocraft:ceiling_fan_palm_on		15	torch
+decocraft:ceiling_fan_spruce_on		15	torch
+decocraft:ceiling_fan_white_on		15	torch
+decocraft:chandelier_1_black_flipbook		15	torch
+decocraft:chandelier_1_gold_flipbook		15	torch
+decocraft:chandelier_1_silver_flipbook		15	torch
+decocraft:chandelier_2_black_flipbook		15	torch
+decocraft:chandelier_2_gold_flipbook		15	torch
+decocraft:chandelier_2_silver_flipbook		15	torch
+decocraft:chandelier_medieval		15	torch
+decocraft:chemistry_set_flipbook		15	green
+decocraft:christmas_lights_1_color_flipbook		15	white
+decocraft:christmas_lights_1_rainbow_2_flipbook		15	white
+decocraft:christmas_lights_1_rainbow_flipbook		15	white
+decocraft:christmas_lights_1_white_flipbook		15	white
+decocraft:christmas_lights_2_color_flipbook		15	white
+decocraft:christmas_lights_2_rainbow_2_flipbook		15	white
+decocraft:christmas_lights_2_rainbow_flipbook		15	white
+decocraft:christmas_lights_2_white_flipbook		15	white
+decocraft:christmas_tree_1_rainbow_flipbook		15	white
+decocraft:christmas_tree_1_white_flipbook		15	white
+decocraft:christmas_tree_antique_flipbook		15	white
+decocraft:crt_tv_beach_flipbook		15	light_blue
+decocraft:crt_tv_concert_2_flipbook		15	light_blue
+decocraft:crt_tv_concert_flipbook		15	light_blue
+decocraft:crt_tv_game_1_flipbook		15	light_blue
+decocraft:crt_tv_game_2_flipbook		15	light_blue
+decocraft:crt_tv_static_flipbook		15	light_blue
+decocraft:curved_floor_lamp_black_on		15	torch
+decocraft:curved_floor_lamp_brass_on		15	torch
+decocraft:curved_floor_lamp_gold_on		15	torch
+decocraft:curved_floor_lamp_rose_gold_on		15	torch
+decocraft:curved_floor_lamp_silver_on		15	torch
+decocraft:curved_pendant_lamp_black_on		15	torch
+decocraft:curved_pendant_lamp_brass_on		15	torch
+decocraft:curved_pendant_lamp_gold_on		15	torch
+decocraft:curved_pendant_lamp_rose_gold_on		15	torch
+decocraft:curved_pendant_lamp_silver_on		15	torch
+decocraft:deer_lights_buck_flipbook		15	white
+decocraft:deer_lights_doe_flipbook		15	white
+decocraft:deer_lights_fawn_flipbook		15	white
+decocraft:fairy_lights_bats		13	purple
+decocraft:fairy_lights_clovers		13	green
+decocraft:fairy_lights_clownfish		13	cyan
+decocraft:fairy_lights_ghosts		13	white
+decocraft:fairy_lights_hearts_pink		13	pink
+decocraft:fairy_lights_hearts_red		13	red
+decocraft:fairy_lights_hearts_red_pink		13	pink
+decocraft:fairy_lights_hearts_white_pink		13	pink
+decocraft:fairy_lights_hearts_white_red		13	red
+decocraft:fairy_lights_ocean		13	cyan
+decocraft:fairy_lights_pufferfish		13	cyan
+decocraft:fairy_lights_pumpkins		13	orange
+decocraft:fairy_lights_seahorse		13	cyan
+decocraft:floor_lamp_black_on		15	torch
+decocraft:floor_lamp_brass_on		15	torch
+decocraft:floor_lamp_gold_on		15	torch
+decocraft:floor_lamp_rose_gold_on		15	torch
+decocraft:floor_lamp_silver_on		15	torch
+decocraft:hanging_lamp_1_black_on		15	torch
+decocraft:hanging_lamp_1_brass_on		15	torch
+decocraft:hanging_lamp_1_gold_on		15	torch
+decocraft:hanging_lamp_1_rose_gold_on		15	torch
+decocraft:hanging_lamp_1_silver_on		15	torch
+decocraft:hanging_lamp_2_black_on		15	torch
+decocraft:hanging_lamp_2_brass_on		15	torch
+decocraft:hanging_lamp_2_gold_on		15	torch
+decocraft:hanging_lamp_2_rose_gold_on		15	torch
+decocraft:hanging_lamp_2_silver_on		15	torch
+decocraft:hanging_lamp_3_black_on		15	torch
+decocraft:hanging_lamp_3_brass_on		15	torch
+decocraft:hanging_lamp_3_gold_on		15	torch
+decocraft:hanging_lamp_3_rose_gold_on		15	torch
+decocraft:hanging_lamp_3_silver_on		15	torch
+decocraft:jack_o_lantern_1_on		15	torch
+decocraft:jack_o_lantern_2_on		15	torch
+decocraft:jack_o_lantern_3_on		15	torch
+decocraft:jack_o_lantern_4_on		15	torch
+decocraft:jack_o_lantern_trio_on		15	torch
+decocraft:lava_lamp_blue		15	blue
+decocraft:lava_lamp_cyan		15	cyan
+decocraft:lava_lamp_green		15	green
+decocraft:lava_lamp_light_blue		15	light_blue
+decocraft:lava_lamp_lime		15	lime
+decocraft:lava_lamp_magenta		15	magenta
+decocraft:lava_lamp_orange		15	orange
+decocraft:lava_lamp_pink		15	pink
+decocraft:lava_lamp_purple		15	purple
+decocraft:lava_lamp_red		15	red
+decocraft:lava_lamp_yellow		15	yellow
+decocraft:light_tree_rainbow_flipbook		15	white
+decocraft:light_tree_white_flipbook		15	white
+decocraft:lights_ground		15	white
+decocraft:lights_ground_edge		15	white
+decocraft:lights_ground_edge_rainbow		15	white
+decocraft:lights_ground_edge_white		15	white
+decocraft:lights_ground_rainbow		15	white
+decocraft:lights_ground_white		15	white
+decocraft:mantel_christmas_flipbook		15	white
+decocraft:meteor_lights_rainbow_2_flipbook		15	white
+decocraft:meteor_lights_rainbow_flipbook		15	white
+decocraft:meteor_lights_white_2_flipbook		15	white
+decocraft:meteor_lights_white_flipbook		15	white
+decocraft:meteor_lights_yellow_2_flipbook		15	yellow
+decocraft:meteor_lights_yellow_flipbook		15	yellow
+decocraft:neon_lamp_boba		15	pink
+decocraft:neon_lamp_cactus		15	lime
+decocraft:neon_lamp_dog_and_cat		15	pink
+decocraft:neon_lamp_flamingo		15	pink
+decocraft:neon_lamp_ice_pop		15	pink
+decocraft:neon_lamp_music		15	red
+decocraft:neon_lamp_open		15	red
+decocraft:neon_lamp_rainbow		15	white
+decocraft:neon_lamp_unicorn		15	pink
+decocraft:ofrenda_flipbook		15	torch
+decocraft:ornament_large_flipbook		15	white
+decocraft:ornament_pair_flipbook		15	white
+decocraft:ornament_small_flipbook		15	white
+decocraft:paper_lantern_1_black		15	torch
+decocraft:paper_lantern_1_blue		15	blue
+decocraft:paper_lantern_1_cream		15	white
+decocraft:paper_lantern_1_cyan		15	cyan
+decocraft:paper_lantern_1_gray		15	torch
+decocraft:paper_lantern_1_green		15	green
+decocraft:paper_lantern_1_lavender		15	purple
+decocraft:paper_lantern_1_light_blue		15	light_blue
+decocraft:paper_lantern_1_light_yellow		15	yellow
+decocraft:paper_lantern_1_lime		15	lime
+decocraft:paper_lantern_1_magenta		15	magenta
+decocraft:paper_lantern_1_mint		15	lime
+decocraft:paper_lantern_1_orange		15	orange
+decocraft:paper_lantern_1_pink		15	pink
+decocraft:paper_lantern_1_purple		15	purple
+decocraft:paper_lantern_1_red		15	red
+decocraft:paper_lantern_1_white		15	torch
+decocraft:paper_lantern_1_yellow		15	yellow
+decocraft:paper_lantern_bats		15	purple
+decocraft:paper_lantern_cherry_blossom		15	pink
+decocraft:paper_lantern_chinese_new_year		15	orange
+decocraft:paper_lantern_ghost		15	purple
+decocraft:paper_lantern_pumpkin		15	orange
+decocraft:paper_lantern_skeleton		15	purple
+decocraft:pendant_lamp_black_on		15	torch
+decocraft:pendant_lamp_blue_on		15	blue
+decocraft:pendant_lamp_brass_on		15	torch
+decocraft:pendant_lamp_cyan_on		15	cyan
+decocraft:pendant_lamp_gold_on		15	torch
+decocraft:pendant_lamp_green_on		15	green
+decocraft:pendant_lamp_light_blue_on		15	light_blue
+decocraft:pendant_lamp_lime_on		15	lime
+decocraft:pendant_lamp_magenta_on		15	magenta
+decocraft:pendant_lamp_orange_on		15	orange
+decocraft:pendant_lamp_pink_on		15	pink
+decocraft:pendant_lamp_purple_on		15	purple
+decocraft:pendant_lamp_red_on		15	red
+decocraft:pendant_lamp_rose_gold_on		15	torch
+decocraft:pendant_lamp_silver_on		15	torch
+decocraft:pendant_lamp_white_on		15	torch
+decocraft:pendant_lamp_yellow_on		15	yellow
+decocraft:potted_christmas_tree_flipbook		15	white
+decocraft:potted_christmas_tree_white_flipbook		15	white
+decocraft:sconce_1_black_on		15	torch
+decocraft:sconce_1_brass_on		15	torch
+decocraft:sconce_1_gold_on		15	torch
+decocraft:sconce_1_rose_gold_on		15	torch
+decocraft:sconce_1_silver_on		15	torch
+decocraft:sconce_2_black_on		15	torch
+decocraft:sconce_2_brass_on		15	torch
+decocraft:sconce_2_gold_on		15	torch
+decocraft:sconce_2_rose_gold_on		15	torch
+decocraft:sconce_2_silver_on		15	torch
+decocraft:spellbook_flipbook		15	purple
+decocraft:stained_glass_chandelier_dusk_on		15	purple
+decocraft:stained_glass_chandelier_embers_on		15	orange
+decocraft:stained_glass_chandelier_emerald_on		15	green
+decocraft:stained_glass_chandelier_flamingo_on		15	pink
+decocraft:stained_glass_chandelier_meadow_on		15	green
+decocraft:stained_glass_chandelier_monarch_on		15	orange
+decocraft:stained_glass_chandelier_peacock_on		15	cyan
+decocraft:stained_glass_chandelier_popsicle_on		15	pink
+decocraft:stained_glass_chandelier_raspberry_on		15	red
+decocraft:stained_glass_chandelier_sea_on		15	cyan
+decocraft:stained_glass_chandelier_sunrise_on		15	orange
+decocraft:stained_glass_chandelier_vineyard_on		15	purple
+decocraft:stained_glass_hanging_lamp_dusk_on		15	purple
+decocraft:stained_glass_hanging_lamp_embers_on		15	orange
+decocraft:stained_glass_hanging_lamp_emerald_on		15	green
+decocraft:stained_glass_hanging_lamp_flamingo_on		15	pink
+decocraft:stained_glass_hanging_lamp_meadow_on		15	green
+decocraft:stained_glass_hanging_lamp_monarch_on		15	orange
+decocraft:stained_glass_hanging_lamp_peacock_on		15	cyan
+decocraft:stained_glass_hanging_lamp_popsicle_on		15	pink
+decocraft:stained_glass_hanging_lamp_raspberry_on		15	red
+decocraft:stained_glass_hanging_lamp_sea_on		15	cyan
+decocraft:stained_glass_hanging_lamp_sunrise_on		15	orange
+decocraft:stained_glass_hanging_lamp_vineyard_on		15	purple
+decocraft:stained_glass_sconce_dusk_on		15	purple
+decocraft:stained_glass_sconce_embers_on		15	orange
+decocraft:stained_glass_sconce_emerald_on		15	green
+decocraft:stained_glass_sconce_flamingo_on		15	pink
+decocraft:stained_glass_sconce_meadow_on		15	green
+decocraft:stained_glass_sconce_monarch_on		15	orange
+decocraft:stained_glass_sconce_peacock_on		15	cyan
+decocraft:stained_glass_sconce_popsicle_on		15	pink
+decocraft:stained_glass_sconce_raspberry_on		15	red
+decocraft:stained_glass_sconce_sea_on		15	cyan
+decocraft:stained_glass_sconce_sunrise_on		15	orange
+decocraft:stained_glass_sconce_vineyard_on		15	purple
+decocraft:stained_glass_table_lamp_dusk_on		15	purple
+decocraft:stained_glass_table_lamp_embers_on		15	orange
+decocraft:stained_glass_table_lamp_emerald_on		15	green
+decocraft:stained_glass_table_lamp_flamingo_on		15	pink
+decocraft:stained_glass_table_lamp_meadow_on		15	green
+decocraft:stained_glass_table_lamp_monarch_on		15	orange
+decocraft:stained_glass_table_lamp_peacock_on		15	cyan
+decocraft:stained_glass_table_lamp_popsicle_on		15	pink
+decocraft:stained_glass_table_lamp_raspberry_on		15	red
+decocraft:stained_glass_table_lamp_sea_on		15	cyan
+decocraft:stained_glass_table_lamp_sunrise_on		15	orange
+decocraft:stained_glass_table_lamp_vineyard_on		15	purple
+decocraft:string_light_stars_flipbook		15	white
+decocraft:string_light_stars_rainbow_flipbook		15	white
+decocraft:string_light_stars_white_flipbook		15	white
+decocraft:table_lamp_black_on		15	torch
+decocraft:table_lamp_clay_on		15	torch
+decocraft:table_lamp_cyan_on		15	cyan
+decocraft:table_lamp_gray_on		15	torch
+decocraft:table_lamp_pink_on		15	pink
+decocraft:table_lamp_tall_black_on		15	torch
+decocraft:table_lamp_tall_clay_on		15	torch
+decocraft:table_lamp_tall_cyan_on		15	cyan
+decocraft:table_lamp_tall_gray_on		15	torch
+decocraft:table_lamp_tall_pink_on		15	pink
+decocraft:table_lamp_tall_white_on		15	torch
+decocraft:table_lamp_white_on		15	torch
+decocraft:tinsel_1_rainbow		15	white
+decocraft:tinsel_1_white		15	white
+decocraft:tv_large_blossom_flipbook		15	light_blue
+decocraft:tv_large_cooking_flipbook		15	light_blue
+decocraft:tv_large_horror_flipbook		15	light_blue
+decocraft:tv_large_news_flipbook		15	light_blue
+decocraft:tv_large_pirate_flipbook		15	light_blue
+decocraft:tv_large_sports_flipbook		15	light_blue
+decocraft:tv_large_static_flipbook		15	light_blue
+decocraft:tv_old_boxing_flipbook		15	light_blue
+decocraft:tv_old_detective_flipbook		15	light_blue
+decocraft:tv_old_news_flipbook		15	light_blue
+decocraft:tv_old_static_flipbook		15	light_blue
+decocraft:tv_old_warplane_flipbook		15	light_blue
+decocraft:tv_small_dinosaur_flipbook		15	light_blue
+decocraft:tv_small_nature_flipbook		15	light_blue
+decocraft:tv_small_shark_flipbook		15	light_blue
+decocraft:tv_small_space_flipbook		15	light_blue
+decocraft:tv_small_static_flipbook		15	light_blue
+decocraft:tv_wall_large_blossom_flipbook		15	light_blue
+decocraft:tv_wall_large_cooking_flipbook		15	light_blue
+decocraft:tv_wall_large_horror_flipbook		15	light_blue
+decocraft:tv_wall_large_news_flipbook		15	light_blue
+decocraft:tv_wall_large_pirate_flipbook		15	light_blue
+decocraft:tv_wall_large_sports_flipbook		15	light_blue
+decocraft:tv_wall_large_static_flipbook		15	light_blue
+decocraft:tv_wall_small_dinosaur_flipbook		15	light_blue
+decocraft:tv_wall_small_nature_flipbook		15	light_blue
+decocraft:tv_wall_small_shark_flipbook		15	light_blue
+decocraft:tv_wall_small_space_flipbook		15	light_blue
+decocraft:tv_wall_small_static_flipbook		15	light_blue
+decocraft:witch_cauldron_flipbook		10	green
+decocraft:wreath_2		15	white
+decocraft:wreath_3		15	white
+decorative_blocks:bonfire		15	torch
+decorative_blocks:brazier	lit=true	15	torch
+decorative_blocks:chandelier		15	torch
+decorative_blocks:soul_bonfire		14	soul
+decorative_blocks:soul_brazier	lit=true	10	soul
+decorative_blocks:soul_chandelier		11	soul
+diagonalfences:cluttered/fluorescent_maple_fence		4	green
+diagonalfences:everycomp/mcf/cluttered/fluorescent_maple_horse_fence		4	green
+diagonalfences:everycomp/mcf/cluttered/fluorescent_maple_picket_fence		4	green
+diagonalfences:everycomp/mcf/cluttered/fluorescent_maple_stockade_fence		4	green
+dustydecorations:beet_o_lantern		15	torch
+dustydecorations:big_nautilus_lantern		15	torch
+dustydecorations:cerulean_seaglass_lamp	lit=true	13	light_blue
+dustydecorations:chicken_jockey_paper_lantern		12	torch
+dustydecorations:copper_light	lit=true	15	orange
+dustydecorations:cream_seaglass_lamp	lit=true	13	white
+dustydecorations:creeper_paper_lantern		12	torch
+dustydecorations:fairy_lights		6	orange
+dustydecorations:hazel_seaglass_lamp	lit=true	13	orange
+dustydecorations:honey_seaglass_lamp	lit=true	13	orange
+dustydecorations:liquorice_seaglass_lamp	lit=true	13	white
+dustydecorations:mint_seaglass_lamp	lit=true	13	lime
+dustydecorations:mocha_seaglass_lamp	lit=true	13	orange
+dustydecorations:orchid_paper_lantern		12	torch
+dustydecorations:panda_paper_lantern		12	torch
+dustydecorations:paper_lantern		12	torch
+dustydecorations:pillager_paper_lantern		12	torch
+dustydecorations:sakura_paper_lantern		12	torch
+dustydecorations:scarlet_seaglass_lamp	lit=true	13	red
+dustydecorations:shoddy_copper_light	lit=true	15	orange
+dustydecorations:taiga_paper_lantern		12	torch
+dustydecorations:taupe_seaglass_lamp	lit=true	13	orange
+dustydecorations:teal_seaglass_lamp	lit=true	13	cyan
+dustydecorations:villager_paper_lantern		12	torch
+dustydecorations:warden_paper_lantern		12	torch
+dustydecorations:waxed_copper_light	lit=true	15	orange
+dustydecorations:waxed_shoddy_copper_light	lit=true	15	orange
+eidolon_repraised:candle		15	torch
+eidolon_repraised:candlestick		15	torch
+eidolon_repraised:censer	lit=true	10	orange
+eidolon_repraised:ghost_light		12	white
+eidolon_repraised:magic_candle		15	torch
+eidolon_repraised:magic_candlestick		15	torch
+eidolon_repraised:mirecap		1	white
+eidolon_repraised:soul_enchanter		7	orange
+eidolon_repraised:wooden_brewing_stand		1	white
+enchanted:candelabra		14	torch
+enchanted:distillery	lit=true	13	orange
+enchanted:ember_moss		6	orange
+enchanted:glint_weed		14	yellow
+enchanted:infinity_egg		1	white
+enchanted:poppet_shelf		7	purple
+environmental:dwarf_spruce_cupric_torch		10	copper
+environmental:dwarf_spruce_ender_torch		14	end_rod
+environmental:dwarf_spruce_plant_cupric_torch		10	copper
+environmental:dwarf_spruce_plant_ender_torch		14	end_rod
+environmental:dwarf_spruce_plant_redstone_torch	lit=true	7	redstone
+environmental:dwarf_spruce_plant_soul_torch		10	soul
+environmental:dwarf_spruce_plant_torch		14	torch
+environmental:dwarf_spruce_redstone_torch	lit=true	7	redstone
+environmental:dwarf_spruce_soul_torch		10	soul
+environmental:dwarf_spruce_torch		14	torch
+everycomp:af/cluttered/fluorescent_maple_bench		4	green
+everycomp:af/cluttered/fluorescent_maple_chair		4	green
+everycomp:af/cluttered/fluorescent_maple_drawer		4	green
+everycomp:af/cluttered/fluorescent_maple_flower_box		4	green
+everycomp:af/cluttered/fluorescent_maple_shelf		4	green
+everycomp:af/cluttered/fluorescent_maple_shutter		4	green
+everycomp:af/cluttered/fluorescent_maple_table		4	green
+everycomp:bd/cluttered/fluorescent_maple_blinds		4	green
+everycomp:bd/cluttered/fluorescent_maple_picture_frame		4	green
+everycomp:bd/cluttered/fluorescent_maple_trellis		4	green
+everycomp:ch/aether/skyroot_torch		14	torch
+everycomp:ch/aether/skyroot_wall_torch		14	torch
+everycomp:ch/alpinewhispers/arolla_pine_torch		14	torch
+everycomp:ch/alpinewhispers/arolla_pine_wall_torch		14	torch
+everycomp:ch/ars_nouveau/archwood_torch		14	torch
+everycomp:ch/ars_nouveau/archwood_wall_torch		14	torch
+everycomp:ch/arts_and_crafts/cork_torch		14	torch
+everycomp:ch/arts_and_crafts/cork_wall_torch		14	torch
+everycomp:ch/biomesoplenty/apple_rainbow_birch_leaves		8	white
+everycomp:ch/biomesoplenty/cherry_rainbow_birch_leaves		8	white
+everycomp:ch/biomesoplenty/dead_rainbow_birch_leaves		8	white
+everycomp:ch/biomesoplenty/dead_torch		14	torch
+everycomp:ch/biomesoplenty/dead_wall_torch		14	torch
+everycomp:ch/biomesoplenty/empyreal_torch		14	torch
+everycomp:ch/biomesoplenty/empyreal_wall_torch		14	torch
+everycomp:ch/biomesoplenty/fir_torch		14	torch
+everycomp:ch/biomesoplenty/fir_wall_torch		14	torch
+everycomp:ch/biomesoplenty/frosted_rainbow_birch_leaves		8	white
+everycomp:ch/biomesoplenty/golden_apple_rainbow_birch_leaves		8	white
+everycomp:ch/biomesoplenty/golden_cherry_rainbow_birch_leaves		8	white
+everycomp:ch/biomesoplenty/golden_rainbow_birch_leaves		8	white
+everycomp:ch/biomesoplenty/hellbark_torch		14	torch
+everycomp:ch/biomesoplenty/hellbark_wall_torch		14	torch
+everycomp:ch/biomesoplenty/jacaranda_torch		14	torch
+everycomp:ch/biomesoplenty/jacaranda_wall_torch		14	torch
+everycomp:ch/biomesoplenty/magenta_flower_rainbow_birch_leaves		8	white
+everycomp:ch/biomesoplenty/magic_torch		14	torch
+everycomp:ch/biomesoplenty/magic_wall_torch		14	torch
+everycomp:ch/biomesoplenty/mahogany_torch		14	torch
+everycomp:ch/biomesoplenty/mahogany_wall_torch		14	torch
+everycomp:ch/biomesoplenty/maple_torch		14	torch
+everycomp:ch/biomesoplenty/maple_wall_torch		14	torch
+everycomp:ch/biomesoplenty/orange_rainbow_birch_leaves		8	white
+everycomp:ch/biomesoplenty/palm_torch		14	torch
+everycomp:ch/biomesoplenty/palm_wall_torch		14	torch
+everycomp:ch/biomesoplenty/pine_torch		14	torch
+everycomp:ch/biomesoplenty/pine_wall_torch		14	torch
+everycomp:ch/biomesoplenty/red_rainbow_birch_leaves		8	white
+everycomp:ch/biomesoplenty/redwood_torch		14	torch
+everycomp:ch/biomesoplenty/redwood_wall_torch		14	torch
+everycomp:ch/biomesoplenty/umbran_torch		14	torch
+everycomp:ch/biomesoplenty/umbran_wall_torch		14	torch
+everycomp:ch/biomesoplenty/white_flower_rainbow_birch_leaves		8	white
+everycomp:ch/biomesoplenty/willow_torch		14	torch
+everycomp:ch/biomesoplenty/willow_wall_torch		14	torch
+everycomp:ch/cataclysm/chorus_torch		14	torch
+everycomp:ch/cataclysm/chorus_wall_torch		14	torch
+everycomp:ch/cluttered/airy_fluorescent_maple_trapdoor		4	green
+everycomp:ch/cluttered/apple_flowering_fluorescent_maple_leaves		12	green
+everycomp:ch/cluttered/apple_fluorescent_maple_leaves		4	green
+everycomp:ch/cluttered/barred_fluorescent_maple_door		4	green
+everycomp:ch/cluttered/barred_fluorescent_maple_trapdoor		4	green
+everycomp:ch/cluttered/basket_woven_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/beach_fluorescent_maple_door		4	green
+everycomp:ch/cluttered/blue_mushroom_torch		14	torch
+everycomp:ch/cluttered/blue_mushroom_wall_torch		14	torch
+everycomp:ch/cluttered/boarded_fluorescent_maple_door		4	green
+everycomp:ch/cluttered/boxed_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/brick_bond_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/bricky_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/bundled_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/carved_stripped_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/center_cut_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/checkered_fluorescent_maple_trapdoor		4	green
+everycomp:ch/cluttered/cherry_flowering_fluorescent_maple_leaves		12	green
+everycomp:ch/cluttered/cherry_fluorescent_maple_leaves		4	green
+everycomp:ch/cluttered/chipped_stripped_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/circle_fluorescent_maple_glass		4	green
+everycomp:ch/cluttered/circle_fluorescent_maple_glass_pane		4	green
+everycomp:ch/cluttered/classic_fluorescent_maple_trapdoor		4	green
+everycomp:ch/cluttered/classic_windowed_fluorescent_maple_trapdoor		4	green
+everycomp:ch/cluttered/cobweb_fluorescent_maple_trapdoor		4	green
+everycomp:ch/cluttered/cornered_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/crabapple_torch		14	torch
+everycomp:ch/cluttered/crabapple_wall_torch		14	torch
+everycomp:ch/cluttered/crated_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/cross_laced_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/crossed_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/d_sign_stripped_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/damaged_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/dead_flowering_fluorescent_maple_leaves		12	green
+everycomp:ch/cluttered/dead_fluorescent_maple_leaves		4	green
+everycomp:ch/cluttered/detailed_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/diagonal_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/diamond_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/distorted_fluorescent_maple_trapdoor		4	green
+everycomp:ch/cluttered/double_herringbone_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/dual_paneled_fluorescent_maple_door		4	green
+everycomp:ch/cluttered/edge_cut_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/edged_stripped_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/enclosed_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/f_sign_stripped_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/fancy_fluorescent_maple_trapdoor		4	green
+everycomp:ch/cluttered/fine_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/fine_vertical_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/firewood_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/flowering_crabapple_torch		14	torch
+everycomp:ch/cluttered/flowering_crabapple_wall_torch		14	torch
+everycomp:ch/cluttered/flowering_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/flowering_poplar_torch		14	torch
+everycomp:ch/cluttered/flowering_poplar_wall_torch		14	torch
+everycomp:ch/cluttered/flowering_willow_torch		14	torch
+everycomp:ch/cluttered/flowering_willow_wall_torch		14	torch
+everycomp:ch/cluttered/fluorescent_maple_bared_glass		4	green
+everycomp:ch/cluttered/fluorescent_maple_bared_glass_pane		4	green
+everycomp:ch/cluttered/fluorescent_maple_barrel		4	green
+everycomp:ch/cluttered/fluorescent_maple_bordered_glass		4	green
+everycomp:ch/cluttered/fluorescent_maple_bordered_glass_pane		4	green
+everycomp:ch/cluttered/fluorescent_maple_crate		4	green
+everycomp:ch/cluttered/fluorescent_maple_diamond_bordered_glass		4	green
+everycomp:ch/cluttered/fluorescent_maple_diamond_bordered_glass_pane		4	green
+everycomp:ch/cluttered/fluorescent_maple_horizontal_lined_glass		4	green
+everycomp:ch/cluttered/fluorescent_maple_horizontal_lined_glass_pane		4	green
+everycomp:ch/cluttered/fluorescent_maple_large_diamond_glass		4	green
+everycomp:ch/cluttered/fluorescent_maple_large_diamond_glass_pane		4	green
+everycomp:ch/cluttered/fluorescent_maple_line_bared_glass		4	green
+everycomp:ch/cluttered/fluorescent_maple_line_bared_glass_pane		4	green
+everycomp:ch/cluttered/fluorescent_maple_ornate_bared_glass		4	green
+everycomp:ch/cluttered/fluorescent_maple_ornate_bared_glass_pane		4	green
+everycomp:ch/cluttered/fluorescent_maple_planks_mosaic		4	green
+everycomp:ch/cluttered/fluorescent_maple_planks_panel		4	green
+everycomp:ch/cluttered/fluorescent_maple_planks_shavings		4	green
+everycomp:ch/cluttered/fluorescent_maple_snowflake_glass		4	green
+everycomp:ch/cluttered/fluorescent_maple_snowflake_glass_pane		4	green
+everycomp:ch/cluttered/fluorescent_maple_torch		14	green
+everycomp:ch/cluttered/fluorescent_maple_wall_torch		14	green
+everycomp:ch/cluttered/fluorescent_maple_woven_glass		4	green
+everycomp:ch/cluttered/fluorescent_maple_woven_glass_pane		4	green
+everycomp:ch/cluttered/fortified_fluorescent_maple_door		4	green
+everycomp:ch/cluttered/framed_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/frosted_flowering_fluorescent_maple_leaves		12	green
+everycomp:ch/cluttered/frosted_fluorescent_maple_leaves		4	green
+everycomp:ch/cluttered/gated_fluorescent_maple_door		4	green
+everycomp:ch/cluttered/glass_fluorescent_maple_door		4	green
+everycomp:ch/cluttered/golden_apple_flowering_fluorescent_maple_leaves		12	green
+everycomp:ch/cluttered/golden_apple_fluorescent_maple_leaves		4	green
+everycomp:ch/cluttered/golden_barred_fluorescent_maple_trapdoor		4	green
+everycomp:ch/cluttered/golden_cherry_flowering_fluorescent_maple_leaves		12	green
+everycomp:ch/cluttered/golden_cherry_fluorescent_maple_leaves		4	green
+everycomp:ch/cluttered/golden_flowering_fluorescent_maple_leaves		12	green
+everycomp:ch/cluttered/golden_fluorescent_maple_leaves		4	green
+everycomp:ch/cluttered/heavy_fluorescent_maple_door		4	green
+everycomp:ch/cluttered/heavy_fluorescent_maple_trapdoor		4	green
+everycomp:ch/cluttered/herringbone_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/hewn_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/i_sign_stripped_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/iron_barred_fluorescent_maple_trapdoor		4	green
+everycomp:ch/cluttered/k_sign_stripped_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/knotted_stripped_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/l_sign_stripped_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/laced_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/layered_stripped_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/leafy_fluorescent_maple_trapdoor		4	green
+everycomp:ch/cluttered/lumpy_stripped_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/magenta_flower_flowering_fluorescent_maple_leaves		12	green
+everycomp:ch/cluttered/magenta_flower_fluorescent_maple_leaves		4	green
+everycomp:ch/cluttered/meshed_fluorescent_maple_trapdoor		4	green
+everycomp:ch/cluttered/mixed_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/nailed_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/nailed_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/natural_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/orange_flowering_fluorescent_maple_leaves		12	green
+everycomp:ch/cluttered/orange_fluorescent_maple_leaves		4	green
+everycomp:ch/cluttered/overgrown_fluorescent_maple_door		4	green
+everycomp:ch/cluttered/overgrown_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/overgrown_fluorescent_maple_trapdoor		4	green
+everycomp:ch/cluttered/paneled_fluorescent_maple_door		4	green
+everycomp:ch/cluttered/paper_fluorescent_maple_door		4	green
+everycomp:ch/cluttered/patient_stripped_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/pegged_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/planked_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/pointless_fluorescent_maple_trapdoor		4	green
+everycomp:ch/cluttered/polished_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/poplar_torch		14	torch
+everycomp:ch/cluttered/poplar_wall_torch		14	torch
+everycomp:ch/cluttered/pressed_fluorescent_maple_door		4	green
+everycomp:ch/cluttered/railed_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/red_flowering_fluorescent_maple_leaves		12	green
+everycomp:ch/cluttered/red_fluorescent_maple_leaves		4	green
+everycomp:ch/cluttered/red_mushroom_torch		14	torch
+everycomp:ch/cluttered/red_mushroom_wall_torch		14	torch
+everycomp:ch/cluttered/reinforced_fluorescent_maple_crate		4	green
+everycomp:ch/cluttered/reinforced_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/reinforced_stripped_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/screen_fluorescent_maple_door		4	green
+everycomp:ch/cluttered/secret_fluorescent_maple_door		4	green
+everycomp:ch/cluttered/shack_fluorescent_maple_door		4	green
+everycomp:ch/cluttered/shifted_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/sign_stripped_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/slanted_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/sliding_fluorescent_maple_door		4	green
+everycomp:ch/cluttered/slotted_fluorescent_maple_trapdoor		4	green
+everycomp:ch/cluttered/smooth_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/solid_fluorescent_maple_trapdoor		4	green
+everycomp:ch/cluttered/square_fluorescent_maple_glass		4	green
+everycomp:ch/cluttered/square_fluorescent_maple_glass_pane		4	green
+everycomp:ch/cluttered/stacked_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/stern_stripped_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/supported_fluorescent_maple_door		4	green
+everycomp:ch/cluttered/suspicious_fluorescent_maple_trapdoor		4	green
+everycomp:ch/cluttered/sycamore_torch		14	torch
+everycomp:ch/cluttered/sycamore_wall_torch		14	torch
+everycomp:ch/cluttered/thin_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/tile_windowed_fluorescent_maple_door		4	green
+everycomp:ch/cluttered/tiled_fluorescent_maple_door		4	green
+everycomp:ch/cluttered/tiled_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/twisted_fluorescent_maple_trapdoor		4	green
+everycomp:ch/cluttered/versailles_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/vertical_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/vertically_railed_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/vined_fluorescent_maple_trapdoor		4	green
+everycomp:ch/cluttered/warted_fluorescent_maple_trapdoor		4	green
+everycomp:ch/cluttered/whirlwind_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/white_flower_flowering_fluorescent_maple_leaves		12	green
+everycomp:ch/cluttered/white_flower_fluorescent_maple_leaves		4	green
+everycomp:ch/cluttered/wickered_fluorescent_maple_planks		4	green
+everycomp:ch/cluttered/willow_torch		14	torch
+everycomp:ch/cluttered/willow_wall_torch		14	torch
+everycomp:ch/cluttered/windowed_fluorescent_maple_door		4	green
+everycomp:ch/cluttered/windowed_fluorescent_maple_trapdoor		4	green
+everycomp:ch/cluttered/wise_stripped_fluorescent_maple_log		4	green
+everycomp:ch/cluttered/woven_fluorescent_maple_trapdoor		4	green
+everycomp:ch/crabbersdelight/palm_torch		14	torch
+everycomp:ch/crabbersdelight/palm_wall_torch		14	torch
+everycomp:ch/ecologics/azalea_torch		14	torch
+everycomp:ch/ecologics/azalea_wall_torch		14	torch
+everycomp:ch/ecologics/coconut_torch		14	torch
+everycomp:ch/ecologics/coconut_wall_torch		14	torch
+everycomp:ch/ecologics/flowering_azalea_torch		14	torch
+everycomp:ch/ecologics/flowering_azalea_wall_torch		14	torch
+everycomp:ch/ecologics/walnut_torch		14	torch
+everycomp:ch/ecologics/walnut_wall_torch		14	torch
+everycomp:ch/eidolon_repraised/illwood_torch		14	torch
+everycomp:ch/eidolon_repraised/illwood_wall_torch		14	torch
+everycomp:ch/enchanted/alder_torch		14	torch
+everycomp:ch/enchanted/alder_wall_torch		14	torch
+everycomp:ch/enchanted/hawthorn_torch		14	torch
+everycomp:ch/enchanted/hawthorn_wall_torch		14	torch
+everycomp:ch/enchanted/rowan_torch		14	torch
+everycomp:ch/enchanted/rowan_wall_torch		14	torch
+everycomp:ch/environmental/pine_torch		14	torch
+everycomp:ch/environmental/pine_wall_torch		14	torch
+everycomp:ch/environmental/plum_torch		14	torch
+everycomp:ch/environmental/plum_wall_torch		14	torch
+everycomp:ch/environmental/willow_torch		14	torch
+everycomp:ch/environmental/willow_wall_torch		14	torch
+everycomp:ch/environmental/wisteria_torch		14	torch
+everycomp:ch/environmental/wisteria_wall_torch		14	torch
+everycomp:ch/fishofthieves/coconut_torch		14	torch
+everycomp:ch/fishofthieves/coconut_wall_torch		14	torch
+everycomp:ch/hexalia/cottonwood_torch		14	torch
+everycomp:ch/hexalia/cottonwood_wall_torch		14	torch
+everycomp:ch/hexalia/willow_torch		14	torch
+everycomp:ch/hexalia/willow_wall_torch		14	torch
+everycomp:ch/hexerei/mahogany_torch		14	torch
+everycomp:ch/hexerei/mahogany_wall_torch		14	torch
+everycomp:ch/hexerei/willow_torch		14	torch
+everycomp:ch/hexerei/willow_wall_torch		14	torch
+everycomp:ch/hexerei/witch_hazel_torch		14	torch
+everycomp:ch/hexerei/witch_hazel_wall_torch		14	torch
+everycomp:ch/meadow/pine_torch		14	torch
+everycomp:ch/meadow/pine_wall_torch		14	torch
+everycomp:ch/undergarden/ancient_root_torch		14	torch
+everycomp:ch/undergarden/ancient_root_wall_torch		14	torch
+everycomp:ch/undergarden/grongle_torch		14	torch
+everycomp:ch/undergarden/grongle_wall_torch		14	torch
+everycomp:ch/undergarden/smogstem_torch		14	torch
+everycomp:ch/undergarden/smogstem_wall_torch		14	torch
+everycomp:ch/undergarden/wigglewood_torch		14	torch
+everycomp:ch/undergarden/wigglewood_wall_torch		14	torch
+everycomp:ch/vinery/dark_cherry_torch		14	torch
+everycomp:ch/vinery/dark_cherry_wall_torch		14	torch
+everycomp:dd/cluttered/short_fluorescent_maple_door		4	green
+everycomp:dd/cluttered/tall_fluorescent_maple_door		4	green
+everycomp:fd/cluttered/fluorescent_maple_cabinet		4	green
+everycomp:hc/cluttered/fluorescent_maple_bench		4	green
+everycomp:hc/cluttered/fluorescent_maple_chair		4	green
+everycomp:hc/cluttered/fluorescent_maple_corner_trim		4	green
+everycomp:hc/cluttered/fluorescent_maple_couch		4	green
+everycomp:hc/cluttered/fluorescent_maple_counter		4	green
+everycomp:hc/cluttered/fluorescent_maple_cupboard		4	green
+everycomp:hc/cluttered/fluorescent_maple_desk		4	green
+everycomp:hc/cluttered/fluorescent_maple_dining_bench		4	green
+everycomp:hc/cluttered/fluorescent_maple_drawer		4	green
+everycomp:hc/cluttered/fluorescent_maple_nightstand		4	green
+everycomp:hc/cluttered/fluorescent_maple_pillar_trim		4	green
+everycomp:hc/cluttered/fluorescent_maple_shelf		4	green
+everycomp:hc/cluttered/fluorescent_maple_side_table		4	green
+everycomp:hc/cluttered/fluorescent_maple_table		4	green
+everycomp:mcb/cluttered/fluorescent_maple_bridge_pier		4	green
+everycomp:mcb/cluttered/fluorescent_maple_log_bridge_middle		4	green
+everycomp:mcb/cluttered/fluorescent_maple_log_bridge_stair		4	green
+everycomp:mcb/cluttered/fluorescent_maple_rail_bridge		4	green
+everycomp:mcb/cluttered/fluorescent_maple_rope_bridge_stair		4	green
+everycomp:mcb/cluttered/rope_fluorescent_maple_bridge		4	green
+everycomp:mcf/cluttered/fluorescent_maple_highley_gate		4	green
+everycomp:mcf/cluttered/fluorescent_maple_horse_fence		4	green
+everycomp:mcf/cluttered/fluorescent_maple_picket_fence		4	green
+everycomp:mcf/cluttered/fluorescent_maple_pyramid_gate		4	green
+everycomp:mcf/cluttered/fluorescent_maple_stockade_fence		4	green
+everycomp:mcl/aether/skyroot_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/aether/skyroot_tiki_torch	lit=true	15	torch
+everycomp:mcl/aether/soul_skyroot_tiki_torch	lit=true	15	soul
+everycomp:mcl/alpinewhispers/arolla_pine_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/alpinewhispers/arolla_pine_tiki_torch	lit=true	15	torch
+everycomp:mcl/alpinewhispers/soul_arolla_pine_tiki_torch	lit=true	15	soul
+everycomp:mcl/ars_nouveau/archwood_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/ars_nouveau/archwood_tiki_torch	lit=true	15	torch
+everycomp:mcl/ars_nouveau/soul_archwood_tiki_torch	lit=true	15	soul
+everycomp:mcl/arts_and_crafts/cork_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/arts_and_crafts/cork_tiki_torch	lit=true	15	torch
+everycomp:mcl/arts_and_crafts/soul_cork_tiki_torch	lit=true	15	soul
+everycomp:mcl/biomesoplenty/dead_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/biomesoplenty/dead_tiki_torch	lit=true	15	torch
+everycomp:mcl/biomesoplenty/empyreal_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/biomesoplenty/empyreal_tiki_torch	lit=true	15	torch
+everycomp:mcl/biomesoplenty/fir_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/biomesoplenty/fir_tiki_torch	lit=true	15	torch
+everycomp:mcl/biomesoplenty/hellbark_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/biomesoplenty/hellbark_tiki_torch	lit=true	15	torch
+everycomp:mcl/biomesoplenty/jacaranda_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/biomesoplenty/jacaranda_tiki_torch	lit=true	15	torch
+everycomp:mcl/biomesoplenty/magic_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/biomesoplenty/magic_tiki_torch	lit=true	15	torch
+everycomp:mcl/biomesoplenty/mahogany_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/biomesoplenty/mahogany_tiki_torch	lit=true	15	torch
+everycomp:mcl/biomesoplenty/maple_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/biomesoplenty/maple_tiki_torch	lit=true	15	torch
+everycomp:mcl/biomesoplenty/palm_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/biomesoplenty/palm_tiki_torch	lit=true	15	torch
+everycomp:mcl/biomesoplenty/pine_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/biomesoplenty/pine_tiki_torch	lit=true	15	torch
+everycomp:mcl/biomesoplenty/redwood_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/biomesoplenty/redwood_tiki_torch	lit=true	15	torch
+everycomp:mcl/biomesoplenty/soul_dead_tiki_torch	lit=true	15	soul
+everycomp:mcl/biomesoplenty/soul_empyreal_tiki_torch	lit=true	15	soul
+everycomp:mcl/biomesoplenty/soul_fir_tiki_torch	lit=true	15	soul
+everycomp:mcl/biomesoplenty/soul_hellbark_tiki_torch	lit=true	15	soul
+everycomp:mcl/biomesoplenty/soul_jacaranda_tiki_torch	lit=true	15	soul
+everycomp:mcl/biomesoplenty/soul_magic_tiki_torch	lit=true	15	soul
+everycomp:mcl/biomesoplenty/soul_mahogany_tiki_torch	lit=true	15	soul
+everycomp:mcl/biomesoplenty/soul_maple_tiki_torch	lit=true	15	soul
+everycomp:mcl/biomesoplenty/soul_palm_tiki_torch	lit=true	15	soul
+everycomp:mcl/biomesoplenty/soul_pine_tiki_torch	lit=true	15	soul
+everycomp:mcl/biomesoplenty/soul_redwood_tiki_torch	lit=true	15	soul
+everycomp:mcl/biomesoplenty/soul_umbran_tiki_torch	lit=true	15	soul
+everycomp:mcl/biomesoplenty/soul_willow_tiki_torch	lit=true	15	soul
+everycomp:mcl/biomesoplenty/umbran_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/biomesoplenty/umbran_tiki_torch	lit=true	15	torch
+everycomp:mcl/biomesoplenty/willow_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/biomesoplenty/willow_tiki_torch	lit=true	15	torch
+everycomp:mcl/cataclysm/chorus_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/cataclysm/chorus_tiki_torch	lit=true	15	torch
+everycomp:mcl/cataclysm/soul_chorus_tiki_torch	lit=true	15	soul
+everycomp:mcl/cluttered/blue_mushroom_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/cluttered/blue_mushroom_tiki_torch	lit=true	15	torch
+everycomp:mcl/cluttered/crabapple_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/cluttered/crabapple_tiki_torch	lit=true	15	torch
+everycomp:mcl/cluttered/flowering_crabapple_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/cluttered/flowering_crabapple_tiki_torch	lit=true	15	torch
+everycomp:mcl/cluttered/flowering_poplar_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/cluttered/flowering_poplar_tiki_torch	lit=true	15	torch
+everycomp:mcl/cluttered/flowering_willow_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/cluttered/flowering_willow_tiki_torch	lit=true	15	torch
+everycomp:mcl/cluttered/fluorescent_maple_ceiling_fan_light	lit=true	15	green
+everycomp:mcl/cluttered/fluorescent_maple_tiki_torch	lit=true	15	green
+everycomp:mcl/cluttered/poplar_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/cluttered/poplar_tiki_torch	lit=true	15	torch
+everycomp:mcl/cluttered/red_mushroom_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/cluttered/red_mushroom_tiki_torch	lit=true	15	torch
+everycomp:mcl/cluttered/soul_blue_mushroom_tiki_torch	lit=true	15	soul
+everycomp:mcl/cluttered/soul_crabapple_tiki_torch	lit=true	15	soul
+everycomp:mcl/cluttered/soul_flowering_crabapple_tiki_torch	lit=true	15	soul
+everycomp:mcl/cluttered/soul_flowering_poplar_tiki_torch	lit=true	15	soul
+everycomp:mcl/cluttered/soul_flowering_willow_tiki_torch	lit=true	15	soul
+everycomp:mcl/cluttered/soul_fluorescent_maple_tiki_torch	lit=true	15	green
+everycomp:mcl/cluttered/soul_poplar_tiki_torch	lit=true	15	soul
+everycomp:mcl/cluttered/soul_red_mushroom_tiki_torch	lit=true	15	soul
+everycomp:mcl/cluttered/soul_sycamore_tiki_torch	lit=true	15	soul
+everycomp:mcl/cluttered/soul_willow_tiki_torch	lit=true	15	soul
+everycomp:mcl/cluttered/sycamore_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/cluttered/sycamore_tiki_torch	lit=true	15	torch
+everycomp:mcl/cluttered/willow_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/cluttered/willow_tiki_torch	lit=true	15	torch
+everycomp:mcl/crabbersdelight/palm_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/crabbersdelight/palm_tiki_torch	lit=true	15	torch
+everycomp:mcl/crabbersdelight/soul_palm_tiki_torch	lit=true	15	soul
+everycomp:mcl/ecologics/azalea_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/ecologics/azalea_tiki_torch	lit=true	15	torch
+everycomp:mcl/ecologics/coconut_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/ecologics/coconut_tiki_torch	lit=true	15	torch
+everycomp:mcl/ecologics/flowering_azalea_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/ecologics/flowering_azalea_tiki_torch	lit=true	15	torch
+everycomp:mcl/ecologics/soul_azalea_tiki_torch	lit=true	15	soul
+everycomp:mcl/ecologics/soul_coconut_tiki_torch	lit=true	15	soul
+everycomp:mcl/ecologics/soul_flowering_azalea_tiki_torch	lit=true	15	soul
+everycomp:mcl/ecologics/soul_walnut_tiki_torch	lit=true	15	soul
+everycomp:mcl/ecologics/walnut_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/ecologics/walnut_tiki_torch	lit=true	15	torch
+everycomp:mcl/eidolon_repraised/illwood_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/eidolon_repraised/illwood_tiki_torch	lit=true	15	torch
+everycomp:mcl/eidolon_repraised/soul_illwood_tiki_torch	lit=true	15	soul
+everycomp:mcl/enchanted/alder_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/enchanted/alder_tiki_torch	lit=true	15	torch
+everycomp:mcl/enchanted/hawthorn_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/enchanted/hawthorn_tiki_torch	lit=true	15	torch
+everycomp:mcl/enchanted/rowan_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/enchanted/rowan_tiki_torch	lit=true	15	torch
+everycomp:mcl/enchanted/soul_alder_tiki_torch	lit=true	15	soul
+everycomp:mcl/enchanted/soul_hawthorn_tiki_torch	lit=true	15	soul
+everycomp:mcl/enchanted/soul_rowan_tiki_torch	lit=true	15	soul
+everycomp:mcl/environmental/pine_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/environmental/pine_tiki_torch	lit=true	15	torch
+everycomp:mcl/environmental/plum_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/environmental/plum_tiki_torch	lit=true	15	torch
+everycomp:mcl/environmental/soul_pine_tiki_torch	lit=true	15	soul
+everycomp:mcl/environmental/soul_plum_tiki_torch	lit=true	15	soul
+everycomp:mcl/environmental/soul_willow_tiki_torch	lit=true	15	soul
+everycomp:mcl/environmental/soul_wisteria_tiki_torch	lit=true	15	soul
+everycomp:mcl/environmental/willow_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/environmental/willow_tiki_torch	lit=true	15	torch
+everycomp:mcl/environmental/wisteria_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/environmental/wisteria_tiki_torch	lit=true	15	torch
+everycomp:mcl/fishofthieves/coconut_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/fishofthieves/coconut_tiki_torch	lit=true	15	torch
+everycomp:mcl/fishofthieves/soul_coconut_tiki_torch	lit=true	15	soul
+everycomp:mcl/hexalia/cottonwood_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/hexalia/cottonwood_tiki_torch	lit=true	15	torch
+everycomp:mcl/hexalia/soul_cottonwood_tiki_torch	lit=true	15	soul
+everycomp:mcl/hexalia/soul_willow_tiki_torch	lit=true	15	soul
+everycomp:mcl/hexalia/willow_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/hexalia/willow_tiki_torch	lit=true	15	torch
+everycomp:mcl/hexerei/mahogany_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/hexerei/mahogany_tiki_torch	lit=true	15	torch
+everycomp:mcl/hexerei/soul_mahogany_tiki_torch	lit=true	15	soul
+everycomp:mcl/hexerei/soul_willow_tiki_torch	lit=true	15	soul
+everycomp:mcl/hexerei/soul_witch_hazel_tiki_torch	lit=true	15	soul
+everycomp:mcl/hexerei/willow_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/hexerei/willow_tiki_torch	lit=true	15	torch
+everycomp:mcl/hexerei/witch_hazel_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/hexerei/witch_hazel_tiki_torch	lit=true	15	torch
+everycomp:mcl/meadow/pine_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/meadow/pine_tiki_torch	lit=true	15	torch
+everycomp:mcl/meadow/soul_pine_tiki_torch	lit=true	15	soul
+everycomp:mcl/undergarden/ancient_root_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/undergarden/ancient_root_tiki_torch	lit=true	15	torch
+everycomp:mcl/undergarden/grongle_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/undergarden/grongle_tiki_torch	lit=true	15	torch
+everycomp:mcl/undergarden/smogstem_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/undergarden/smogstem_tiki_torch	lit=true	15	torch
+everycomp:mcl/undergarden/soul_ancient_root_tiki_torch	lit=true	15	soul
+everycomp:mcl/undergarden/soul_grongle_tiki_torch	lit=true	15	soul
+everycomp:mcl/undergarden/soul_smogstem_tiki_torch	lit=true	15	soul
+everycomp:mcl/undergarden/soul_wigglewood_tiki_torch	lit=true	15	soul
+everycomp:mcl/undergarden/wigglewood_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/undergarden/wigglewood_tiki_torch	lit=true	15	torch
+everycomp:mcl/vinery/dark_cherry_ceiling_fan_light	lit=true	15	white
+everycomp:mcl/vinery/dark_cherry_tiki_torch	lit=true	15	torch
+everycomp:mcl/vinery/soul_dark_cherry_tiki_torch	lit=true	15	soul
+everycomp:mct/cluttered/fluorescent_maple_bamboo_trapdoor		4	green
+everycomp:mct/cluttered/fluorescent_maple_bark_trapdoor		4	green
+everycomp:mct/cluttered/fluorescent_maple_barn_trapdoor		4	green
+everycomp:mct/cluttered/fluorescent_maple_barred_trapdoor		4	green
+everycomp:mct/cluttered/fluorescent_maple_barrel_trapdoor		4	green
+everycomp:mct/cluttered/fluorescent_maple_beach_trapdoor		4	green
+everycomp:mct/cluttered/fluorescent_maple_blossom_trapdoor		4	green
+everycomp:mct/cluttered/fluorescent_maple_classic_trapdoor		4	green
+everycomp:mct/cluttered/fluorescent_maple_cottage_trapdoor		4	green
+everycomp:mct/cluttered/fluorescent_maple_four_panel_trapdoor		4	green
+everycomp:mct/cluttered/fluorescent_maple_glass_trapdoor		4	green
+everycomp:mct/cluttered/fluorescent_maple_mystic_trapdoor		4	green
+everycomp:mct/cluttered/fluorescent_maple_paper_trapdoor		4	green
+everycomp:mct/cluttered/fluorescent_maple_ranch_trapdoor		4	green
+everycomp:mct/cluttered/fluorescent_maple_swamp_trapdoor		4	green
+everycomp:mct/cluttered/fluorescent_maple_tropical_trapdoor		4	green
+everycomp:mct/cluttered/fluorescent_maple_whispering_trapdoor		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_beams		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_beams_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_beams_slab		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_beams_slab_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_beams_stairs		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_beams_stairs_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_brick_pattern		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_brick_pattern_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_brick_pattern_slab		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_brick_pattern_slab_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_brick_pattern_stairs		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_brick_pattern_stairs_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_brick_paving		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_brick_paving_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_brick_paving_slab		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_brick_paving_slab_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_brick_paving_stairs		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_brick_paving_stairs_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_bricks		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_bricks_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_bricks_slab		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_bricks_slab_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_bricks_stairs		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_bricks_stairs_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_crate		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_crate_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_crate_slab		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_crate_slab_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_crate_stairs		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_crate_stairs_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_diagonal_stripes		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_diagonal_stripes_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_diagonal_stripes_slab		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_diagonal_stripes_slab_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_diagonal_stripes_stairs		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_diagonal_stripes_stairs_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_diagonal_tiles		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_diagonal_tiles_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_diagonal_tiles_slab		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_diagonal_tiles_slab_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_diagonal_tiles_stairs		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_diagonal_tiles_stairs_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_dotted		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_dotted_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_dotted_slab		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_dotted_slab_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_dotted_stairs		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_dotted_stairs_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_flooring		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_flooring_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_flooring_slab		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_flooring_slab_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_flooring_stairs		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_flooring_stairs_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_large_tiles		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_large_tiles_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_large_tiles_slab		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_large_tiles_slab_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_large_tiles_stairs		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_large_tiles_stairs_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_mosaic		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_mosaic_slab		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_mosaic_stairs		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_pattern		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_pattern_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_pattern_slab		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_pattern_slab_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_pattern_stairs		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_pattern_stairs_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_rotated_bricks		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_rotated_bricks_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_rotated_bricks_slab		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_rotated_bricks_slab_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_rotated_bricks_stairs		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_rotated_bricks_stairs_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_small_bricks		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_small_bricks_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_small_bricks_slab		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_small_bricks_slab_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_small_bricks_stairs		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_small_bricks_stairs_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_small_tiles		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_small_tiles_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_small_tiles_slab		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_small_tiles_slab_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_small_tiles_stairs		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_small_tiles_stairs_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_squares		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_squares_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_squares_slab		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_squares_slab_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_squares_stairs		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_squares_stairs_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_tiles		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_tiles_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_tiles_slab		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_tiles_slab_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_tiles_stairs		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_tiles_stairs_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_wavy		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_wavy_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_wavy_slab		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_wavy_slab_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_wavy_stairs		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_wavy_stairs_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_woven		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_woven_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_woven_slab		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_woven_slab_connecting		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_woven_stairs		4	green
+everycomp:rcd/cluttered/fluorescent_maple_planks_woven_stairs_connecting		4	green
+everycomp:sd/cluttered/fluorescent_maple_bookshelf_with_door		4	green
+everycomp:sd/cluttered/fluorescent_maple_cabinet_with_glass_doors		4	green
+everycomp:sd/cluttered/fluorescent_maple_cabinet_with_polished_andesite_countertop		4	green
+everycomp:sd/cluttered/fluorescent_maple_cabinet_with_polished_blackstone_countertop		4	green
+everycomp:sd/cluttered/fluorescent_maple_cabinet_with_polished_deepslate_countertop		4	green
+everycomp:sd/cluttered/fluorescent_maple_cabinet_with_polished_diorite_countertop		4	green
+everycomp:sd/cluttered/fluorescent_maple_cabinet_with_polished_tuff_countertop		4	green
+everycomp:sd/cluttered/fluorescent_maple_cabinet_with_stone_bricks_countertop		4	green
+everycomp:sd/cluttered/fluorescent_maple_drawer		4	green
+everycomp:sd/cluttered/fluorescent_maple_drawer_with_books		4	green
+everycomp:sd/cluttered/fluorescent_maple_drawer_with_door		4	green
+everycomp:sd/cluttered/fluorescent_maple_single_door_cabinet		4	green
+everycomp:sd/cluttered/glass_fluorescent_maple_cabinet		4	green
+everycomp:sd/cluttered/small_fluorescent_maple_drawers		4	green
+exposure:flash		15	white
+fairylights:candle_lantern	lit=true	15	torch
+fairylights:candle_lantern_light	lit=true	15	torch
+fairylights:fairy_light	lit=true	15	white
+fairylights:flower_light	lit=true	15	white
+fairylights:ghost_light	lit=true	15	white
+fairylights:heart_light	lit=true	15	white
+fairylights:icicle_lights	lit=true	15	light_blue
+fairylights:incandescent_light	lit=true	15	white
+fairylights:jack_o_lantern	lit=true	15	torch
+fairylights:meteor_light	lit=true	15	white
+fairylights:moon_light	lit=true	15	white
+fairylights:oil_lantern	lit=true	15	torch
+fairylights:orb_lantern	lit=true	15	torch
+fairylights:paper_lantern	lit=true	15	torch
+fairylights:skull_light	lit=true	15	white
+fairylights:snowflake_light	lit=true	15	white
+fairylights:spider_light	lit=true	15	white
+fairylights:star_light	lit=true	15	white
+fairylights:witch_light	lit=true	15	white
+farm_and_charm:stove	lit=true	13	torch
+farmersdelight:brown_mushroom_colony		1	brown
+farmersdelight:gleaming_salad_block	servings=1,2,3,4	12	orange
+farmersdelight:stove	lit=true	13	torch
+farmhouse_decorations:ceiling_lamp		15	torch
+farmhouse_decorations:chained_kerosene_lantern		15	torch
+farmhouse_decorations:chandelier		15	torch
+farmhouse_decorations:kerosene_lantern		15	torch
+farmhouse_decorations:lamp		15	torch
+farmhouse_decorations:standing_lamp		15	torch
+farmhouse_decorations:wall_lamp_candle		15	torch
+farmhouse_decorations:wall_shade		15	torch
+fintastic:green_dwarf_froglight		15	green
+fintastic:pink_dwarf_froglight		15	pink
+fintastic:red_dwarf_froglight		15	red
+fintastic:yellow_dwarf_froglight		15	yellow
+fishofthieves:budding_prismarized_log		3	cyan
+fishofthieves:guardian_fruit		3	light_blue
+fishofthieves:prismarized_log		3	cyan
+furniture:lamp_black	lit=true	15	white
+furniture:lamp_blue	lit=true	15	blue
+furniture:lamp_brown	lit=true	15	brown
+furniture:lamp_chambray	lit=true	15	torch
+furniture:lamp_cyan	lit=true	15	cyan
+furniture:lamp_gray	lit=true	15	white
+furniture:lamp_green	lit=true	15	green
+furniture:lamp_homespun	lit=true	15	torch
+furniture:lamp_jacquard	lit=true	15	torch
+furniture:lamp_light_blue	lit=true	15	light_blue
+furniture:lamp_light_gray	lit=true	15	white
+furniture:lamp_lime	lit=true	15	lime
+furniture:lamp_linen	lit=true	15	torch
+furniture:lamp_magenta	lit=true	15	magenta
+furniture:lamp_orange	lit=true	15	orange
+furniture:lamp_pink	lit=true	15	pink
+furniture:lamp_plaid	lit=true	15	torch
+furniture:lamp_purple	lit=true	15	purple
+furniture:lamp_red	lit=true	15	red
+furniture:lamp_rustic	lit=true	15	torch
+furniture:lamp_tweed	lit=true	15	torch
+furniture:lamp_wall_black	lit=true	15	white
+furniture:lamp_wall_blue	lit=true	15	blue
+furniture:lamp_wall_brown	lit=true	15	brown
+furniture:lamp_wall_chambray	lit=true	15	torch
+furniture:lamp_wall_cyan	lit=true	15	cyan
+furniture:lamp_wall_gray	lit=true	15	white
+furniture:lamp_wall_green	lit=true	15	green
+furniture:lamp_wall_homespun	lit=true	15	torch
+furniture:lamp_wall_jacquard	lit=true	15	torch
+furniture:lamp_wall_light_blue	lit=true	15	light_blue
+furniture:lamp_wall_light_gray	lit=true	15	white
+furniture:lamp_wall_lime	lit=true	15	lime
+furniture:lamp_wall_linen	lit=true	15	torch
+furniture:lamp_wall_magenta	lit=true	15	magenta
+furniture:lamp_wall_orange	lit=true	15	orange
+furniture:lamp_wall_pink	lit=true	15	pink
+furniture:lamp_wall_plaid	lit=true	15	torch
+furniture:lamp_wall_purple	lit=true	15	purple
+furniture:lamp_wall_red	lit=true	15	red
+furniture:lamp_wall_rustic	lit=true	15	torch
+furniture:lamp_wall_tweed	lit=true	15	torch
+furniture:lamp_wall_warped	lit=true	15	torch
+furniture:lamp_wall_white	lit=true	15	white
+furniture:lamp_wall_yellow	lit=true	15	yellow
+furniture:lamp_warped	lit=true	15	torch
+furniture:lamp_white	lit=true	15	white
+furniture:lamp_yellow	lit=true	15	yellow
+furniture:plated_street_lantern	lit=true	15	torch
+furniture:plated_street_lantern_wall	lit=true	15	torch
+furniture:street_lantern	lit=true	15	torch
+furniture:street_lantern_wall	lit=true	15	torch
+handcrafted:oven	lit=true	13	torch
+herbalbrews:cauldron		11	orange
+herbalbrews:stove	lit=true	13	torch
+hexalia:candle_skull	lit=true	12	torch
+hexalia:celestial_bloom	open=true	7	light_blue
+hexalia:celestial_crystal_block		6	light_blue
+hexalia:censer	lit=true	12	orange
+hexalia:dreamshroom		4	pink
+hexalia:galeberries_vine	berries=true	14	white
+hexalia:galeberries_vine_plant	berries=true	14	white
+hexalia:lotus_flower		6	pink
+hexalia:pale_mushroom		4	purple
+hexalia:potted_dreamshroom		4	pink
+hexalia:ritual_table	active=true	7	red
+hexalia:rustic_oven		10	torch
+hexalia:salt_lamp		12	orange
+hexalia:small_cauldron	lit=true	12	orange
+hexalia:wild_sunfire_tomato		4	orange
+hexalia:wither_candle_skull	lit=true	12	torch
+hexalia:withered_celestial_bloom	open=true	4	light_blue
+hexerei:candelabra	lit=true	15	torch
+hexerei:candle	candles_lit=1,2,3,4	15	torch
+hexerei:crystal_ball		9	white
+hexerei:large_selenite_bud		4	white
+hexerei:medium_selenite_bud		2	white
+hexerei:mixing_cauldron		12	orange
+hexerei:quicksilver		15	white
+hexerei:selenite_cluster		5	white
+hexerei:small_selenite_bud		1	white
+hotkettles:cup_of_lava		12	orange
+hotkettles:kettle	kettle_type=6	12	orange
+immersive_furniture:furniture_entity	light=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+immersive_furniture:furniture_light	light=1,2,3,4,5	15	white
+irons_spellbooks:alchemist_cauldron		3	orange
+irons_spellbooks:arcane_anvil		7	blue
+irons_spellbooks:bone_vault		12	orange
+irons_spellbooks:brazier	lit=true	15	torch
+irons_spellbooks:brazier_soul	lit=true	15	soul
+irons_spellbooks:cinderous_soul_rune		15	cyan
+irons_spellbooks:cinderous_vault		12	orange
+irons_spellbooks:deepslate_mithril_ore		9	cyan
+irons_spellbooks:firefly_jar		8	yellow
+irons_spellbooks:mithril_ore		9	cyan
+irons_spellbooks:scroll_forge		7	purple
+irons_spellbooks:voidstone		9	crying_obsidian
+kaleidoscope_tavern:bell_pendant_lamp	half=lower	13	torch
+kaleidoscope_tavern:blue_pendant_lamp	half=lower	13	blue
+kaleidoscope_tavern:circular_rack		14	white
+kaleidoscope_tavern:glassware_holder		8	yellow
+kaleidoscope_tavern:molotov		14	orange
+kaleidoscope_tavern:string_lights_black		15	purple
+kaleidoscope_tavern:string_lights_blue		15	blue
+kaleidoscope_tavern:string_lights_brown		15	brown
+kaleidoscope_tavern:string_lights_colorless		15	torch
+kaleidoscope_tavern:string_lights_cyan		15	cyan
+kaleidoscope_tavern:string_lights_gray		15	white
+kaleidoscope_tavern:string_lights_green		15	green
+kaleidoscope_tavern:string_lights_light_blue		15	light_blue
+kaleidoscope_tavern:string_lights_light_gray		15	white
+kaleidoscope_tavern:string_lights_lime		15	lime
+kaleidoscope_tavern:string_lights_magenta		15	magenta
+kaleidoscope_tavern:string_lights_orange		15	orange
+kaleidoscope_tavern:string_lights_pink		15	pink
+kaleidoscope_tavern:string_lights_purple		15	purple
+kaleidoscope_tavern:string_lights_red		15	red
+kaleidoscope_tavern:string_lights_white		15	white
+kaleidoscope_tavern:string_lights_yellow		15	yellow
+kaleidoscope_tavern:yellow_pendant_lamp	half=lower	13	yellow
+lilis_pottery:kiln	lit=true	13	torch
+magic_vibe_decorations:air_rune		14	light_blue
+magic_vibe_decorations:ametrine_crystal		10	purple
+magic_vibe_decorations:ametrine_crystal_columns		5	purple
+magic_vibe_decorations:ametrine_crystal_lamp		14	purple
+magic_vibe_decorations:ametrine_druze		5	purple
+magic_vibe_decorations:ametrine_fairy_lights		14	purple
+magic_vibe_decorations:ametrine_star_ball		12	purple
+magic_vibe_decorations:aquamarine_crystal		10	cyan
+magic_vibe_decorations:aquamarine_crystal_columns		5	cyan
+magic_vibe_decorations:aquamarine_crystal_lamp		14	cyan
+magic_vibe_decorations:aquamarine_druze		5	cyan
+magic_vibe_decorations:aquamarine_star_ball		12	cyan
+magic_vibe_decorations:blue_crystal_fairy_lights		14	blue
+magic_vibe_decorations:bluepumpkin		15	blue
+magic_vibe_decorations:bones		5	white
+magic_vibe_decorations:cat_plushie_calico		5	orange
+magic_vibe_decorations:cat_plushie_red		5	red
+magic_vibe_decorations:cat_plushie_tabby		5	white
+magic_vibe_decorations:cat_plushie_white		5	white
+magic_vibe_decorations:catplushie		5	white
+magic_vibe_decorations:citrine_columns		5	yellow
+magic_vibe_decorations:citrine_crystal		8	yellow
+magic_vibe_decorations:citrine_crystal_lamp		14	yellow
+magic_vibe_decorations:citrine_druze		5	yellow
+magic_vibe_decorations:citrine_fairy_lights		14	yellow
+magic_vibe_decorations:citrine_star_ball		12	yellow
+magic_vibe_decorations:clear_quartz_crystal		10	white
+magic_vibe_decorations:cluster_1		14	purple
+magic_vibe_decorations:cluster_2		14	cyan
+magic_vibe_decorations:cluster_3		14	blue
+magic_vibe_decorations:cluster_4		14	light_blue
+magic_vibe_decorations:cluster_5		14	orange
+magic_vibe_decorations:cluster_6		14	white
+magic_vibe_decorations:cluster_7		14	white
+magic_vibe_decorations:cluster_8		14	magenta
+magic_vibe_decorations:cluster_9		14	green
+magic_vibe_decorations:crystal_ball		12	light_blue
+magic_vibe_decorations:crystal_block		10	white
+magic_vibe_decorations:crystallised_ender_amethyst		14	purple
+magic_vibe_decorations:crystallised_nether_crystal		14	orange
+magic_vibe_decorations:crystallised_obsidian		10	purple
+magic_vibe_decorations:crystallised_overworld_secrets_crystal		14	green
+magic_vibe_decorations:diamond_crystal		8	light_blue
+magic_vibe_decorations:diamond_crystal_columns		5	light_blue
+magic_vibe_decorations:diamond_crystal_lamp		14	light_blue
+magic_vibe_decorations:diamond_crystal_star_ball		12	light_blue
+magic_vibe_decorations:diamond_druze		5	light_blue
+magic_vibe_decorations:emerald_columns		5	green
+magic_vibe_decorations:emerald_crystal		8	green
+magic_vibe_decorations:emerald_crystal_lamp		14	green
+magic_vibe_decorations:emerald_crystal_star_ball		12	green
+magic_vibe_decorations:emerald_druze		5	green
+magic_vibe_decorations:emerald_fairy_lights		14	green
+magic_vibe_decorations:ender_amethyst_columns		12	purple
+magic_vibe_decorations:ender_amethyst_crystal		12	purple
+magic_vibe_decorations:ender_amethyst_crystal_lamp		14	purple
+magic_vibe_decorations:ender_amethyst_druze		12	purple
+magic_vibe_decorations:ender_amethyst_fairy_lights		14	purple
+magic_vibe_decorations:ender_amethyst_star_ball		12	purple
+magic_vibe_decorations:fairylights		14	orange
+magic_vibe_decorations:fire_rune		14	orange
+magic_vibe_decorations:galaxy_rune		14	purple
+magic_vibe_decorations:ghost_wallpaint		5	white
+magic_vibe_decorations:greenpumpkin		15	green
+magic_vibe_decorations:grow_1		10	white
+magic_vibe_decorations:grow_10		12	white
+magic_vibe_decorations:grow_11		12	magenta
+magic_vibe_decorations:grow_12		12	green
+magic_vibe_decorations:grow_2		12	orange
+magic_vibe_decorations:grow_3		12	green
+magic_vibe_decorations:grow_4		12	magenta
+magic_vibe_decorations:grow_5		12	light_blue
+magic_vibe_decorations:grow_6		12	light_blue
+magic_vibe_decorations:grow_7		12	light_blue
+magic_vibe_decorations:grow_8		12	green
+magic_vibe_decorations:grow_9		12	white
+magic_vibe_decorations:grow_ender		12	purple
+magic_vibe_decorations:grow_nether		12	orange
+magic_vibe_decorations:hibernating_crystal_ball		12	light_blue
+magic_vibe_decorations:jewellery_chest		5	light_blue
+magic_vibe_decorations:lapis_crystal_columns		5	blue
+magic_vibe_decorations:lapis_crystal_lamp		14	blue
+magic_vibe_decorations:lapis_crystal_star_ball		12	blue
+magic_vibe_decorations:lapis_lazuli_crystal		8	blue
+magic_vibe_decorations:lapis_lazuli_druze		5	blue
+magic_vibe_decorations:nature_rune		14	green
+magic_vibe_decorations:nether_columns		12	orange
+magic_vibe_decorations:nether_crystal_star_ball		12	purple
+magic_vibe_decorations:nether_fire_crystal		12	orange
+magic_vibe_decorations:nether_fire_crystal_lamp		14	orange
+magic_vibe_decorations:nether_fire_druze		12	orange
+magic_vibe_decorations:nether_fire_fairy_lights		14	orange
+magic_vibe_decorations:obsidian_columns		5	purple
+magic_vibe_decorations:obsidian_crystal_lamp		14	purple
+magic_vibe_decorations:obsidian_crystal_star_ball		12	purple
+magic_vibe_decorations:obsidian_druze		5	purple
+magic_vibe_decorations:overworld_crystal_columns		12	yellow
+magic_vibe_decorations:overworld_crystal_lamp		14	yellow
+magic_vibe_decorations:overworld_crystal_star_ball		12	yellow
+magic_vibe_decorations:overworld_secret_crystal		12	yellow
+magic_vibe_decorations:overworld_secrets_crystal_druze		12	yellow
+magic_vibe_decorations:pinkpumpkin		15	pink
+magic_vibe_decorations:placeablepotions		13	red
+magic_vibe_decorations:quartz_columns		5	white
+magic_vibe_decorations:quartz_crystal_lamp		14	white
+magic_vibe_decorations:quartz_crystal_star_ball		12	white
+magic_vibe_decorations:quartz_druze		5	white
+magic_vibe_decorations:redpumpkin		15	red
+magic_vibe_decorations:rubellite_crystal		8	red
+magic_vibe_decorations:rubellite_crystal_columns		5	red
+magic_vibe_decorations:rubellite_crystal_lamp		14	red
+magic_vibe_decorations:rubellite_druze		5	red
+magic_vibe_decorations:rubellite_fairy_lights		14	red
+magic_vibe_decorations:rubellite_star_ball		12	red
+magic_vibe_decorations:small_magic_pot		10	blue
+magic_vibe_decorations:small_magic_pot_awake		10	blue
+magic_vibe_decorations:spider_plushie		4	red
+magic_vibe_decorations:spider_plushie_purple		4	purple
+magic_vibe_decorations:stage_10		10	white
+magic_vibe_decorations:stage_11		10	white
+magic_vibe_decorations:stage_12		10	white
+magic_vibe_decorations:stage_2		10	white
+magic_vibe_decorations:stage_3		10	white
+magic_vibe_decorations:stage_4		10	white
+magic_vibe_decorations:stage_5		10	white
+magic_vibe_decorations:stage_6		10	white
+magic_vibe_decorations:stage_7		10	white
+magic_vibe_decorations:stage_8		10	white
+magic_vibe_decorations:stage_9		10	white
+magic_vibe_decorations:water_rune		14	cyan
+magic_vibe_decorations:witchy_altar		7	orange
+magic_vibe_decorations:yellowpumpkin		15	yellow
+mca:infernal_flame		10	torch
+mcwlights:acacia_ceiling_fan_light	lit=true	15	torch
+mcwlights:acacia_tiki_torch	lit=true	15	torch
+mcwlights:bamboo_tiki_torch	lit=true	15	torch
+mcwlights:bell_lantern		15	torch
+mcwlights:bell_wall_lantern		15	torch
+mcwlights:birch_ceiling_fan_light	lit=true	15	torch
+mcwlights:birch_tiki_torch	lit=true	15	torch
+mcwlights:black_ceiling_light	lit=true	15	purple
+mcwlights:black_lamp	lit=true	15	purple
+mcwlights:black_paper_lamp	lit=true	15	purple
+mcwlights:blue_ceiling_light	lit=true	15	blue
+mcwlights:blue_lamp	lit=true	15	blue
+mcwlights:blue_paper_lamp	lit=true	15	blue
+mcwlights:brown_ceiling_light	lit=true	15	brown
+mcwlights:brown_lamp	lit=true	15	brown
+mcwlights:brown_paper_lamp	lit=true	15	brown
+mcwlights:chain_lantern		15	torch
+mcwlights:chain_wall_lantern		15	torch
+mcwlights:cherry_ceiling_fan_light	lit=true	15	torch
+mcwlights:cherry_tiki_torch	lit=true	15	torch
+mcwlights:classic_street_lamp	lit=true	15	torch
+mcwlights:copper_candle_holder	lit=true	15	torch
+mcwlights:copper_chandelier	lit=true	15	torch
+mcwlights:copper_double_candle_holder	lit=true	15	torch
+mcwlights:copper_low_candle_holder	lit=true	15	torch
+mcwlights:copper_small_chandelier	lit=true	15	torch
+mcwlights:copper_triple_candle_holder	lit=true	15	torch
+mcwlights:copper_wall_candle_holder	lit=true	15	torch
+mcwlights:covered_garden_light	lit=true	15	torch
+mcwlights:covered_lantern		15	torch
+mcwlights:covered_wall_lantern		15	torch
+mcwlights:crimson_ceiling_fan_light	lit=true	15	torch
+mcwlights:crimson_tiki_torch	lit=true	15	torch
+mcwlights:cross_lantern		15	torch
+mcwlights:cross_wall_lantern		15	torch
+mcwlights:cyan_ceiling_light	lit=true	15	cyan
+mcwlights:cyan_lamp	lit=true	15	cyan
+mcwlights:cyan_paper_lamp	lit=true	15	cyan
+mcwlights:dark_oak_ceiling_fan_light	lit=true	15	torch
+mcwlights:dark_oak_tiki_torch	lit=true	15	torch
+mcwlights:double_street_lamp	lit=true	15	torch
+mcwlights:festive_lantern		15	torch
+mcwlights:festive_wall_lantern		15	torch
+mcwlights:framed_torch		15	torch
+mcwlights:garden_light	lit=true	15	torch
+mcwlights:glowstone_slab		15	glowstone
+mcwlights:golden_candle_holder	lit=true	15	torch
+mcwlights:golden_chandelier	lit=true	15	torch
+mcwlights:golden_double_candle_holder	lit=true	15	torch
+mcwlights:golden_low_candle_holder	lit=true	15	torch
+mcwlights:golden_small_chandelier	lit=true	15	torch
+mcwlights:golden_triple_candle_holder	lit=true	15	torch
+mcwlights:golden_wall_candle_holder	lit=true	15	torch
+mcwlights:gray_ceiling_light	lit=true	15	white
+mcwlights:gray_lamp	lit=true	15	white
+mcwlights:gray_paper_lamp	lit=true	15	white
+mcwlights:green_ceiling_light	lit=true	15	green
+mcwlights:green_lamp	lit=true	15	green
+mcwlights:green_paper_lamp	lit=true	15	green
+mcwlights:iron_candle_holder	lit=true	15	torch
+mcwlights:iron_chandelier	lit=true	15	torch
+mcwlights:iron_double_candle_holder	lit=true	15	torch
+mcwlights:iron_framed_torch		15	torch
+mcwlights:iron_low_candle_holder	lit=true	15	torch
+mcwlights:iron_small_chandelier	lit=true	15	torch
+mcwlights:iron_triple_candle_holder	lit=true	15	torch
+mcwlights:iron_wall_candle_holder	lit=true	15	torch
+mcwlights:jungle_ceiling_fan_light	lit=true	15	torch
+mcwlights:jungle_tiki_torch	lit=true	15	torch
+mcwlights:lava_lamp	lit=true	15	lava
+mcwlights:light_blue_ceiling_light	lit=true	15	light_blue
+mcwlights:light_blue_lamp	lit=true	15	light_blue
+mcwlights:light_blue_paper_lamp	lit=true	15	light_blue
+mcwlights:light_gray_ceiling_light	lit=true	15	white
+mcwlights:light_gray_lamp	lit=true	15	white
+mcwlights:light_gray_paper_lamp	lit=true	15	white
+mcwlights:lime_ceiling_light	lit=true	15	lime
+mcwlights:lime_lamp	lit=true	15	lime
+mcwlights:lime_paper_lamp	lit=true	15	lime
+mcwlights:magenta_ceiling_light	lit=true	15	magenta
+mcwlights:magenta_lamp	lit=true	15	magenta
+mcwlights:magenta_paper_lamp	lit=true	15	magenta
+mcwlights:mangrove_ceiling_fan_light	lit=true	15	torch
+mcwlights:mangrove_tiki_torch	lit=true	15	torch
+mcwlights:oak_ceiling_fan_light	lit=true	15	torch
+mcwlights:oak_tiki_torch	lit=true	15	torch
+mcwlights:orange_ceiling_light	lit=true	15	orange
+mcwlights:orange_lamp	lit=true	15	orange
+mcwlights:orange_paper_lamp	lit=true	15	orange
+mcwlights:pink_ceiling_light	lit=true	15	pink
+mcwlights:pink_lamp	lit=true	15	pink
+mcwlights:pink_paper_lamp	lit=true	15	pink
+mcwlights:purple_ceiling_light	lit=true	15	purple
+mcwlights:purple_lamp	lit=true	15	purple
+mcwlights:purple_paper_lamp	lit=true	15	purple
+mcwlights:red_ceiling_light	lit=true	15	red
+mcwlights:red_lamp	lit=true	15	red
+mcwlights:red_paper_lamp	lit=true	15	red
+mcwlights:redstone_lamp_slab		15	redstone
+mcwlights:reinforced_torch		15	torch
+mcwlights:round_garden_light	lit=true	15	torch
+mcwlights:rustic_torch		15	torch
+mcwlights:sea_lantern_slab		15	sea_lantern
+mcwlights:shroomlight_slab		15	shroomlight
+mcwlights:soul_acacia_tiki_torch	lit=true	10	soul
+mcwlights:soul_bamboo_tiki_torch	lit=true	10	soul
+mcwlights:soul_birch_tiki_torch	lit=true	10	soul
+mcwlights:soul_cherry_tiki_torch	lit=true	10	soul
+mcwlights:soul_classic_street_lamp	lit=true	10	soul
+mcwlights:soul_crimson_tiki_torch	lit=true	10	soul
+mcwlights:soul_dark_oak_tiki_torch	lit=true	10	soul
+mcwlights:soul_double_street_lamp	lit=true	10	soul
+mcwlights:soul_jungle_tiki_torch	lit=true	10	soul
+mcwlights:soul_mangrove_tiki_torch	lit=true	10	soul
+mcwlights:soul_oak_tiki_torch	lit=true	10	soul
+mcwlights:soul_spruce_tiki_torch	lit=true	10	soul
+mcwlights:soul_warped_tiki_torch	lit=true	10	soul
+mcwlights:spruce_ceiling_fan_light	lit=true	15	torch
+mcwlights:spruce_tiki_torch	lit=true	15	torch
+mcwlights:square_wall_lamp	lit=true	15	torch
+mcwlights:striped_garden_light	lit=true	15	torch
+mcwlights:striped_lantern		15	torch
+mcwlights:striped_wall_lantern		15	torch
+mcwlights:tavern_lantern		15	torch
+mcwlights:tavern_wall_lantern		15	torch
+mcwlights:thin_garden_light	lit=true	15	torch
+mcwlights:tower_garden_light	lit=true	15	torch
+mcwlights:upgraded_torch		15	torch
+mcwlights:wall_lamp	lit=true	15	torch
+mcwlights:wall_lantern		15	torch
+mcwlights:warped_ceiling_fan_light	lit=true	15	torch
+mcwlights:warped_tiki_torch	lit=true	15	torch
+mcwlights:white_ceiling_light	lit=true	15	white
+mcwlights:white_lamp	lit=true	15	white
+mcwlights:white_paper_lamp	lit=true	15	white
+mcwlights:yellow_ceiling_light	lit=true	15	yellow
+mcwlights:yellow_lamp	lit=true	15	yellow
+mcwlights:yellow_paper_lamp	lit=true	15	yellow
+meadow:cooking_frame		13	torch
+meadow:oil_lantern		14	torch
+meadow:stove_tiles_lid	lit=true	13	torch
+meadow:stove_tiles_wood	lit=true	13	torch
+mushroomquest:artist_conk_block		1	white
+mushroomquest:birch_trunk		1	yellow
+mushroomquest:blue_glowshroom		8	blue
+mushroomquest:bouncystool		2	magenta
+mushroomquest:common_puffball		1	white
+mushroomquest:field_trunk		1	orange
+mushroomquest:green_glowshroom		8	green
+mushroomquest:jungle_trunk		1	red
+mushroomquest:lantern_shroom_block		6	torch
+mushroomquest:magenta_glowshroom		8	magenta
+mushroomquest:mega_mushies		2	yellow
+mushroomquest:mini_mushies		1	yellow
+mushroomquest:miso_soup_block		1	orange
+mushroomquest:mossy_maze_polypore_block		1	lime
+mushroomquest:oak_stump		1	orange
+mushroomquest:portobellos_block		1	orange
+mushroomquest:shaggy_mane_block		1	white
+mushroomquest:spruce_stump		1	orange
+mushroomquest:tall_crimson_fungi		3	red
+mushroomquest:tall_warped_fungi		3	green
+naturalist:glow_goop		15	torch
+occultism:large_candle	lit=true	15	torch
+occultism:large_candle_black	lit=true	15	torch
+occultism:large_candle_blue	lit=true	15	blue
+occultism:large_candle_brown	lit=true	15	torch
+occultism:large_candle_cyan	lit=true	15	cyan
+occultism:large_candle_gray	lit=true	15	torch
+occultism:large_candle_green	lit=true	15	green
+occultism:large_candle_light_blue	lit=true	15	light_blue
+occultism:large_candle_light_gray	lit=true	15	torch
+occultism:large_candle_lime	lit=true	15	lime
+occultism:large_candle_magenta	lit=true	15	magenta
+occultism:large_candle_orange	lit=true	15	orange
+occultism:large_candle_pink	lit=true	15	pink
+occultism:large_candle_purple	lit=true	15	purple
+occultism:large_candle_red	lit=true	15	red
+occultism:large_candle_white	lit=true	15	torch
+occultism:large_candle_yellow	lit=true	15	yellow
+occultism:lighted_air		15	light_blue
+occultism:spirit_attuned_crystal		8	white
+occultism:spirit_campfire	lit=true	10	green
+occultism:spirit_fire		12	green
+occultism:spirit_lantern		10	green
+occultism:spirit_torch		10	green
+occultism:spirit_wall_torch		10	green
+rechiseled:glowstone_brick_pattern		15	glowstone
+rechiseled:glowstone_brick_pattern_connecting		15	glowstone
+rechiseled:glowstone_brick_pattern_slab		15	glowstone
+rechiseled:glowstone_brick_pattern_slab_connecting		15	glowstone
+rechiseled:glowstone_brick_pattern_stairs		15	glowstone
+rechiseled:glowstone_brick_pattern_stairs_connecting		15	glowstone
+rechiseled:glowstone_brick_paving		15	glowstone
+rechiseled:glowstone_brick_paving_connecting		15	glowstone
+rechiseled:glowstone_brick_paving_slab		15	glowstone
+rechiseled:glowstone_brick_paving_slab_connecting		15	glowstone
+rechiseled:glowstone_brick_paving_stairs		15	glowstone
+rechiseled:glowstone_brick_paving_stairs_connecting		15	glowstone
+rechiseled:glowstone_bricks		15	glowstone
+rechiseled:glowstone_bricks_connecting		15	glowstone
+rechiseled:glowstone_bricks_slab		15	glowstone
+rechiseled:glowstone_bricks_slab_connecting		15	glowstone
+rechiseled:glowstone_bricks_stairs		15	glowstone
+rechiseled:glowstone_bricks_stairs_connecting		15	glowstone
+rechiseled:glowstone_crushed		15	glowstone
+rechiseled:glowstone_crushed_connecting		15	glowstone
+rechiseled:glowstone_crushed_slab		15	glowstone
+rechiseled:glowstone_crushed_slab_connecting		15	glowstone
+rechiseled:glowstone_crushed_stairs		15	glowstone
+rechiseled:glowstone_crushed_stairs_connecting		15	glowstone
+rechiseled:glowstone_large_tiles		15	glowstone
+rechiseled:glowstone_large_tiles_connecting		15	glowstone
+rechiseled:glowstone_large_tiles_slab		15	glowstone
+rechiseled:glowstone_large_tiles_slab_connecting		15	glowstone
+rechiseled:glowstone_large_tiles_stairs		15	glowstone
+rechiseled:glowstone_large_tiles_stairs_connecting		15	glowstone
+rechiseled:glowstone_rotated_bricks		15	glowstone
+rechiseled:glowstone_rotated_bricks_connecting		15	glowstone
+rechiseled:glowstone_rotated_bricks_slab		15	glowstone
+rechiseled:glowstone_rotated_bricks_slab_connecting		15	glowstone
+rechiseled:glowstone_rotated_bricks_stairs		15	glowstone
+rechiseled:glowstone_rotated_bricks_stairs_connecting		15	glowstone
+rechiseled:glowstone_small_tiles		15	glowstone
+rechiseled:glowstone_small_tiles_connecting		15	glowstone
+rechiseled:glowstone_small_tiles_slab		15	glowstone
+rechiseled:glowstone_small_tiles_slab_connecting		15	glowstone
+rechiseled:glowstone_small_tiles_stairs		15	glowstone
+rechiseled:glowstone_small_tiles_stairs_connecting		15	glowstone
+rechiseled:glowstone_smooth		15	glowstone
+rechiseled:glowstone_smooth_connecting		15	glowstone
+rechiseled:glowstone_smooth_slab		15	glowstone
+rechiseled:glowstone_smooth_slab_connecting		15	glowstone
+rechiseled:glowstone_smooth_stairs		15	glowstone
+rechiseled:glowstone_smooth_stairs_connecting		15	glowstone
+rechiseled:glowstone_tiles		15	glowstone
+rechiseled:glowstone_tiles_connecting		15	glowstone
+rechiseled:glowstone_tiles_slab		15	glowstone
+rechiseled:glowstone_tiles_slab_connecting		15	glowstone
+rechiseled:glowstone_tiles_stairs		15	glowstone
+rechiseled:glowstone_tiles_stairs_connecting		15	glowstone
+redomesticate:wayward_lantern		13	torch
+ribbits:swamp_lantern		15	torch
+simplyswords:runic_forge		7	lime
+supplementaries:blackstone_lamp		15	torch
+supplementaries:blaze_rod		12	torch
+supplementaries:block_generator		14	torch
+supplementaries:cage	light_level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+supplementaries:candle_holder	lit=true	15	torch
+supplementaries:candle_holder_black	lit=true	15	purple
+supplementaries:candle_holder_blue	lit=true	15	blue
+supplementaries:candle_holder_brown	lit=true	15	brown
+supplementaries:candle_holder_cyan	lit=true	15	cyan
+supplementaries:candle_holder_gray	lit=true	15	white
+supplementaries:candle_holder_green	lit=true	15	green
+supplementaries:candle_holder_light_blue	lit=true	15	light_blue
+supplementaries:candle_holder_light_gray	lit=true	15	white
+supplementaries:candle_holder_lime	lit=true	15	lime
+supplementaries:candle_holder_magenta	lit=true	15	magenta
+supplementaries:candle_holder_orange	lit=true	15	orange
+supplementaries:candle_holder_pink	lit=true	15	pink
+supplementaries:candle_holder_purple	lit=true	15	purple
+supplementaries:candle_holder_red	lit=true	15	red
+supplementaries:candle_holder_white	lit=true	15	white
+supplementaries:candle_holder_yellow	lit=true	15	yellow
+supplementaries:clock_block		1	torch
+supplementaries:crystal_display	power=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	6	torch
+supplementaries:deepslate_lamp		15	torch
+supplementaries:end_stone_lamp		15	torch
+supplementaries:faucet	light_level=1,2,3,4,5,6,7	7	torch
+supplementaries:fire_pit	lit=true	15	lava
+supplementaries:flower_box	light_level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+supplementaries:goblet	light_level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+supplementaries:grouper	match=partial,full	5	cyan
+supplementaries:hourglass	light_level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+supplementaries:jar	light_level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+supplementaries:lumisene	age=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+supplementaries:netherite_trapdoor	lavalogged=true	15	torch
+supplementaries:redstone_illuminator	power=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14	15	redstone
+supplementaries:rope_chandelier		15	orange
+supplementaries:rope_soul_chandelier		11	soul
+supplementaries:safe	lavalogged=true	15	torch
+supplementaries:sconce	lit=true	14	torch
+supplementaries:sconce_green	lit=true	14	green
+supplementaries:sconce_lever	lit=true	14	torch
+supplementaries:sconce_soul	lit=true	10	soul
+supplementaries:sconce_wall	lit=true	14	torch
+supplementaries:sconce_wall_green	lit=true	14	green
+supplementaries:sconce_wall_soul	lit=true	10	soul
+supplementaries:statue	lit=true	7	torch
+supplementaries:stone_lamp		15	torch
+supplementaries:timber_brace	light_level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+supplementaries:timber_cross_brace	light_level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+supplementaries:timber_frame	light_level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+suppsquared:brass_lantern	lit=true	15	torch
+suppsquared:copper_lantern	lit=true	15	torch
+suppsquared:crimson_lantern		15	torch
+suppsquared:gold_candle_holder	lit=true	15	torch
+suppsquared:gold_candle_holder_black	lit=true	15	purple
+suppsquared:gold_candle_holder_blue	lit=true	15	blue
+suppsquared:gold_candle_holder_brown	lit=true	15	brown
+suppsquared:gold_candle_holder_cyan	lit=true	15	cyan
+suppsquared:gold_candle_holder_gray	lit=true	15	white
+suppsquared:gold_candle_holder_green	lit=true	15	green
+suppsquared:gold_candle_holder_light_blue	lit=true	15	light_blue
+suppsquared:gold_candle_holder_light_gray	lit=true	15	white
+suppsquared:gold_candle_holder_lime	lit=true	15	lime
+suppsquared:gold_candle_holder_magenta	lit=true	15	magenta
+suppsquared:gold_candle_holder_orange	lit=true	15	orange
+suppsquared:gold_candle_holder_pink	lit=true	15	pink
+suppsquared:gold_candle_holder_purple	lit=true	15	purple
+suppsquared:gold_candle_holder_red	lit=true	15	red
+suppsquared:gold_candle_holder_white	lit=true	15	white
+suppsquared:gold_candle_holder_yellow	lit=true	15	yellow
+suppsquared:metal_brace	light_level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+suppsquared:metal_cross_brace	light_level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+suppsquared:metal_frame	light_level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+thatskyinteractions:candle_cluster	level=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15	15	torch
+thatskyinteractions:huge_candle_cluster	lit=true	15	torch
+thatskyinteractions:wing_of_light		15	blue
+toms_storage:crafting_terminal		6	white
+toms_storage:storage_terminal		6	white
+undergarden:blisterberry_bush		6	orange
+undergarden:cloggrum_lantern		15	torch
+undergarden:denizen_totem	active=true	15	white
+undergarden:ditchbulb_plant	age=1	6	orange
+undergarden:droopvine	glowy=true	10	light_blue
+undergarden:droopvine_plant	glowy=true	10	white
+undergarden:glitterkelp		10	orange
+undergarden:glitterkelp_plant		10	orange
+undergarden:gloom_o_lantern		15	torch
+undergarden:gronglet		12	yellow
+undergarden:infuser	state=infusing_utherium,infusing_rogdorium	10	lime
+undergarden:potted_shimmerweed		12	white
+undergarden:rogdoric_ancient_root		10	white
+undergarden:rogdoric_gronglet		12	cyan
+undergarden:shard_o_lantern		6	torch
+undergarden:shard_torch		6	red
+undergarden:shard_wall_torch		6	red
+undergarden:shimmerweed		12	white
+undergarden:smog_vent		10	white
+undergarden:tall_shimmerweed		14	white
+undergarden:undergarden_portal		10	cyan
+undergarden:utheric_gronglet		12	red
+undergarden:utherium_growth		15	red
+undergarden:virulent_mix		10	purple
+undergarden:virulent_mix_cauldron		10	purple
+vinery:stackable_log	fired=true	13	torch
+waystones:fleeting_memorial		6	white
+waystones:warp_portal		10	blue
