@@ -49,7 +49,8 @@ public final class DhCompositeHooks {
                 gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
             }
             """;
-    // proj: A, B, 1/P00, 1/P11 of DH's projection; fog: start, end, haze at the start, strength;
+    // proj: A, B, 1/P00, 1/P11 of DH's projection; fog: start (Minecraft's farthest chunk corner), end,
+    // haze (reached 128 blocks past the start), strength; distances are horizontal, as Minecraft's are;
     // depth: ndc = depth * x + y, z = the empty (cleared) DH depth; edge: A, B of Minecraft's projection and the
     // distances over which Minecraft's own chunks fade into DH's (0 to 1), so the render distance shows no hard edge;
     // up: the world's up direction in view space
@@ -67,11 +68,11 @@ public final class DhCompositeHooks {
             out vec4 outColor;
             ivec2 at(sampler2D s) { return ivec2(uv * vec2(textureSize(s, 0))); }
             vec3 view(float z) { return vec3((uv * 2.0 - 1.0) * proj.zw, -1.0) * abs(z); }
-            float ray(float z) { return length(view(z)); }
             void main() {
                 float d = texelFetch(dhDepth, at(dhDepth), 0).r;
                 if (d == depth.z) discard;                                     // no LOD here: the pack's own picture
-                float dist = ray(proj.y / (d * depth.x + depth.y + proj.x));   // distance to the LOD
+                vec3 lod = view(proj.y / (d * depth.x + depth.y + proj.x));
+                float dist = length(lod - up * dot(lod, up));   // distance to the LOD
                 float keep = 1.0;                                              // how much of the LOD to show
                 float s = texelFetch(sceneDepth, at(sceneDepth), 0).r;
                 if (s < 1.0) {                                                 // Minecraft's own terrain is here
@@ -81,8 +82,11 @@ public final class DhCompositeHooks {
                     if (keep <= 0.0) discard;
                 }
                 vec3 c = texelFetch(dhColor, at(dhColor), 0).rgb;
+                // the fog only starts past Minecraft's farthest chunk corner: nearer, the picture behind a LOD can be
+                // Minecraft's own terrain rather than sky, and any see-through fog would show its chunk border
                 float f = clamp((dist - fog.x) / max(fog.y - fog.x, 1.0), 0.0, 1.0);
-                f = clamp(mix(fog.z, 1.0, f * f * (3.0 - 2.0 * f)) * fog.w, 0.0, 1.0);
+                f = max(f * f * (3.0 - 2.0 * f), fog.z * clamp((dist - fog.x) / 128.0, 0.0, 1.0));
+                f = clamp(f * fog.w, 0.0, 1.0);
                 outColor = vec4(c, keep * (1.0 - f));                          // blended over the pack's picture
             }
             """;
@@ -228,8 +232,9 @@ public final class DhCompositeHooks {
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, scene);
             GL20.glUniform4f(dhUProj, dhV[0], dhV[1], dhV[2], dhV[3]);
             // fog from the edge of Minecraft's own terrain out to DH's LOD radius (DH's far clip is that + 512, times sqrt 2)
-            float start = mc.options.getEffectiveRenderDistance() * 16f, end = Math.max(start + 64f, dhV[5] * 0.7071f - 512f);
-            GL20.glUniform4f(dhUFog, start, end, 0.15f, dhFog);
+            float start = mc.options.getEffectiveRenderDistance() * 16f, corner = start * 1.4143f + 16f;
+            float end = Math.max(corner + 128f, dhV[5] * 0.7071f - 512f);
+            GL20.glUniform4f(dhUFog, corner, end, 0.15f, dhFog);
             // Minecraft's chunks fade into DH's over the last quarter of the render distance, all DH by the last
             // chunk (the jagged chunk outline), none if MCMETAL_DH_EDGE=0 or Minecraft's projection is unknown
             float edgeTo = Math.max(16f, start - 16f), edgeFrom = dhEdge <= 0f || dhV[10] == 0f ? 1e9f : edgeTo * (1f - dhEdge);
