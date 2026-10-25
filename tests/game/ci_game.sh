@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
-#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary sound sound-off sound-apple water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-gi-fine ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-water ours-water-full ours-underwater ours-vista ours-vista-STYLE-TIME ours-season-SEASON[-STYLE]
+#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary sound sound-off sound-apple water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-gi-fine ours-pan ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-water ours-water-full ours-underwater ours-vista ours-vista-STYLE-TIME ours-season-SEASON[-STYLE]
 #   pbr-VIEW[+RP] (material gallery for resource packs: VIEW ours comp comp-pom comp-ipbr plain, RP as GAME_RP)
 #   menu menu-noif menu-shaders creative creative-shaders creative-scroll particles ab-menu ab-menu-noif ab-menu-shaders ab-creative ab-creative-shaders ab-particles (JEI, ImmediatelyFast, Particle Rain)
 #   pack-NAME packnight-NAME packshadow-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
@@ -575,6 +575,7 @@ for p in $PHASES; do
     ours-shadow|ours-ao|ours-gi) scene 1500; v=${p#ours-}; v=$( [ $v = shadow ] && echo 1 || ([ $v = ao ] && echo 2 || echo 3))
         PACK_OPTS="DEBUG_VIEW=$v ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase $p 180 metal true ;;  # debug views of the rays
     ours-gi-fine) scene 1500; PACK_OPTS="DEBUG_VIEW=3 GI_COARSE_RAYS=false ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase $p 180 metal true ;;  # GI view with exact leaves (vs ours-gi: coarse rays)
+    ours-pan) GAME_TP="${PAN_TP:-~ ~ ~ ~2 7}" scene ${PAN_TIME:-noon}; PACK=mcmetal-rt-pack run_phase $p 180 metal true ;;  # turning 2 degrees a tick: noise in newly seen areas
     ours-room) scene noon clear room; PACK=mcmetal-rt-pack run_phase ours-room 180 metal true ;;  # GI test room
     ours-room-gi) scene noon clear room; PACK_OPTS="DEBUG_VIEW=3 ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-room-gi 180 metal true ;;
     ours-room-off) scene noon clear room; PACK_OPTS="RT_GI=false ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-room-off 180 metal true ;;  # GI off
