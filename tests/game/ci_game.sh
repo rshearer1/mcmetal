@@ -385,11 +385,12 @@ gui_phase() { # kind (menu, menu-noif, menu-shaders, creative, creative-shaders,
     case $kind in
     menu*|creative*)
         fetch_mod "$JEI" mcm-jei.jar || return
-        local screen=inventory stage=menu
+        local screen=inventory stage=menu shaders=false
         case $kind in creative-scroll) screen=creative-scroll stage=creative ;; creative*) screen=creative stage=creative ;; esac
+        case $kind in *-shaders) shaders=true ;; esac
         scene noon clear $stage
         cp "$G/options.txt" "$G/options.txt.gui"; sed -i.bak 's/^guiScale:.*/guiScale:2/' "$G/options.txt"
-        run_phase "$out" 240 metal "$(case $kind in *-shaders) echo true ;; *) echo false ;; esac)" MCMETAL_TEST_SCREEN=$screen "$@"
+        run_phase "$out" 240 metal $shaders MCMETAL_TEST_SCREEN=$screen "$@"
         mv "$G/options.txt.gui" "$G/options.txt" ;;
     particles)
         fetch_mod "$PARTICLE_RAIN" mcm-particlerain.jar || return
