@@ -40,8 +40,14 @@ static int cenc_concurrent; /* cenc lets its dispatches overlap (geometry-shader
 
 /* Smoothness options (STEP1.md "Smoothness 2/3"), all off unless set:
    MGL_BINARY_ARCHIVE=1   keep finished GPU pipelines in MGL_CACHE_DIR/pipelines.metallib across launches
-   MGL_ASYNC_PIPELINES=1  build a new pipeline in the background and skip its draws until ready (no hitch,
-                          an object may be missing for a frame or two the first time it is seen)
+   MGL_ASYNC_PIPELINES=0  ON BY DEFAULT (full Hearth & Hex pack on the M3: the render thread spent ~75% of its time
+                          in Apple's pipeline compiler after a shader-pack switch). A new pipeline is built in the
+                          background; its draws wait for it up to MGL_PIPELINE_WAIT_MS per frame (default 4: a
+                          pipeline Apple already has in its own cache is back in ~1 ms) and are skipped after
+                          that, so an object can be missing for a frame or two the first time it is seen.
+                          Small full-screen draws (a shader pack's composite passes, blits) and draws that
+                          write images or storage buffers always wait.
+                          =0 builds every pipeline on the render thread as before.
    MGL_FRAME_PACING=0     ON BY DEFAULT (M3: SEUS 47 fps with ~75% judder -> an even 40, plain world even 120);
                           =0 turns it off. Waits on completion signals instead of polling, and presents at an even rate
                           (120/60/40/30/24/20/15 fps, 12 with interpolation, whichever the last frames' cost sustains, only rates that divide the screen's
@@ -268,7 +274,7 @@ static void read_options(void)
     if (opt_archive >= 0)
         return;
     opt_archive = opt("MGL_BINARY_ARCHIVE") && getenv("MGL_CACHE_DIR");
-    opt_async_pipes = opt("MGL_ASYNC_PIPELINES");
+    opt_async_pipes = getenv("MGL_ASYNC_PIPELINES") ? opt("MGL_ASYNC_PIPELINES") : 1; /* on unless =0 */
     opt_pacing = getenv("MGL_FRAME_PACING") ? opt("MGL_FRAME_PACING") : 1; /* on unless MGL_FRAME_PACING=0 */
     opt_profile = getenv("MGL_PROFILE") ? atoi(getenv("MGL_PROFILE")) : 0;
     if (opt_archive || opt_async_pipes || opt_pacing)
@@ -2624,6 +2630,98 @@ static void log_probe_draw(const mgl_draw *d)
     }
 }
 
+/* MGL_ASYNC_PIPELINES: a pipeline still building in the background sits in the dictionary as one of these until
+   it is done (and stays there if Apple's compiler failed it: its draws are skipped, as a failed sync build's) */
+@interface MGLPendingPipe : NSObject
+@property(nonatomic, strong) dispatch_group_t done;
+@end
+@implementation MGLPendingPipe
+@end
+
+static uint64_t pipe_wait_frame_ns; /* render-thread time spent waiting for pipelines this frame */
+static struct {
+    unsigned long made, skipped;      /* since the last report: pipelines built, draws skipped for a pending one */
+    uint64_t wait_ns, built_ns;       /* render thread waiting for them; their build time (wall, overlapping) */
+} pipe_stats;
+static _Atomic unsigned long pipes_building, pipes_made_async;
+static _Atomic uint64_t pipes_built_ns;
+
+static uint64_t pipe_wait_budget_ns(void)
+{
+    static long long ns = -1;
+    if (ns < 0) {
+        const char *e = getenv("MGL_PIPELINE_WAIT_MS");
+        ns = (long long)((e && *e ? atof(e) : 4.0) * 1e6);
+    }
+    return (uint64_t)ns;
+}
+
+/* Called once per presented frame: every ~5 s with news, one log line on new pipelines, so a player's log says
+   whether compiling is still going on (and what it cost the render thread). */
+static void pipe_frame_end(void)
+{
+    pipe_wait_frame_ns = 0;
+    static uint64_t last;
+    uint64_t now = now_ns();
+    if (!last)
+        last = now;
+    if (now - last < 5000000000ull)
+        return;
+    unsigned long made = pipe_stats.made + atomic_exchange(&pipes_made_async, 0);
+    uint64_t built = pipe_stats.built_ns + atomic_exchange(&pipes_built_ns, 0);
+    if (made || pipe_stats.skipped || pipe_stats.wait_ns)
+        mgl_log("pipelines: %lu new in %.1f s (%.0f ms average build), %lu still building; the render thread waited "
+                "%.0f ms for them and skipped %lu draws",
+                made, (now - last) / 1e9, made ? built / 1e6 / made : 0.0, (unsigned long)atomic_load(&pipes_building),
+                pipe_stats.wait_ns / 1e6, pipe_stats.skipped);
+    memset(&pipe_stats, 0, sizeof pipe_stats);
+    last = now;
+}
+
+/* A draw found its pipeline still building: wait for it while this frame's budget lasts (always, up to 2 s, for
+   the draws draw_must_wait picks), else skip the draw. */
+static id<MTLRenderPipelineState> wait_pending_pipe(MGLPendingPipe *pp, NSData *key, int must)
+{
+    uint64_t budget = pipe_wait_budget_ns();
+    if (!must && pipe_wait_frame_ns >= budget) {
+        pipe_stats.skipped++;
+        return nil;
+    }
+    uint64_t t0 = now_ns();
+    long r = dispatch_group_wait(pp.done, dispatch_time(DISPATCH_TIME_NOW, must ? 2000000000ll : (int64_t)(budget - pipe_wait_frame_ns)));
+    uint64_t dt = now_ns() - t0;
+    pipe_wait_frame_ns += dt;
+    pipe_stats.wait_ns += dt;
+    if (r) {
+        pipe_stats.skipped++;
+        return nil;
+    }
+    id got;
+    @synchronized(pipelines) {
+        got = pipelines[key];
+    }
+    if ([got isKindOfClass:[MGLPendingPipe class]]) /* the build failed */
+        return nil;
+    return got;
+}
+
+/* Draws that wait for their pipeline however long it takes: full-screen passes and blits (a quad or a triangle,
+   which may be drawn only once), and draws that write images or storage buffers (a voxel volume, say: what they
+   write can't be made up for by drawing again next frame) */
+static int draw_must_wait(const mgl_draw *d)
+{
+    if (d->multi_n == 0 && d->count <= 6 && d->instances <= 1 && !d->gs_sec_n)
+        return 1;
+    for (int i = 0; i < 8; i++)
+        if (d->ssbo[i])
+            return 1;
+    for (int st = 0; st < 2; st++)
+        for (int i = 0; i < d->num_textures[st] && i < MGL_MAX_TEXTURES; i++)
+            if (d->textures[st][i].is_image && d->textures[st][i].tex)
+                return 1;
+    return 0;
+}
+
 static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_target *t)
 {
     pipe_key k;
@@ -2678,8 +2776,15 @@ static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_targ
     @synchronized(pipelines) {
         ps_or_pending = pipelines[key];
     }
-    if (ps_or_pending == (id)[NSNull null]) /* still building in the background (MGL_ASYNC_PIPELINES) */
-        return nil;
+    int must = draw_must_wait(d);
+    if ([ps_or_pending isKindOfClass:[MGLPendingPipe class]]) { /* still building in the background */
+        id<MTLRenderPipelineState> got = wait_pending_pipe(ps_or_pending, key, must);
+        if (got) {
+            last_key = k;
+            last_ps = got;
+        }
+        return got;
+    }
     id<MTLRenderPipelineState> ps = ps_or_pending;
     if (ps) {
         last_key = k;
@@ -2695,6 +2800,10 @@ static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_targ
     }
     MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
     pd.vertexFunction = OBJ(id<MTLFunction>, d->program->vfn);
+    /* async: the vertex function specialised for scaled inputs, if it still has to be made (in the background) */
+    MTLFunctionConstantValues *later_cv = nil;
+    NSMutableDictionary *later_cache = nil;
+    NSString *later_mask = nil;
     if (d->program->vlib) {
         NSMutableString *mask = [NSMutableString string];
         for (int i = 0; i < MGL_MAX_VERTEX_ATTRIBS; i++)
@@ -2713,15 +2822,21 @@ static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_targ
                         float sc = (float)k.attr[i].scale;
                         [cv setConstantValue:&sc type:MTLDataTypeFloat atIndex:MGL_VSCALE_FC + i];
                     }
-                NSError *e = nil;
-                fn = [OBJ(id<MTLLibrary>, d->program->vlib) newFunctionWithName:@"main0" constantValues:cv error:&e];
-                if (!fn)
-                    mgl_log("%s: scaled vertex inputs (%s) failed: %s", d->program->label, mask.UTF8String,
-                            e.localizedDescription.UTF8String);
-                else
-                    @synchronized(cache) {
-                        cache[mask] = fn;
-                    }
+                if (opt_async_pipes > 0) {
+                    later_cv = cv;
+                    later_cache = cache;
+                    later_mask = mask;
+                } else {
+                    NSError *e = nil;
+                    fn = [OBJ(id<MTLLibrary>, d->program->vlib) newFunctionWithName:@"main0" constantValues:cv error:&e];
+                    if (!fn)
+                        mgl_log("%s: scaled vertex inputs (%s) failed: %s", d->program->label, mask.UTF8String,
+                                e.localizedDescription.UTF8String);
+                    else
+                        @synchronized(cache) {
+                            cache[mask] = fn;
+                        }
+                }
             }
             if (fn)
                 pd.vertexFunction = fn;
@@ -2780,29 +2895,57 @@ static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_targ
     if (get_archive())
         pd.binaryArchives = @[ archive ];
     if (opt_async_pipes > 0) {
+        MGLPendingPipe *pp = [[MGLPendingPipe alloc] init];
+        pp.done = dispatch_group_create();
+        dispatch_group_enter(pp.done);
         @synchronized(pipelines) {
-            pipelines[key] = (id)[NSNull null];
+            pipelines[key] = (id)pp;
         }
-        static _Atomic int building;
-        int n = atomic_fetch_add(&building, 1) + 1;
-        if (n % 64 == 0)
-            mgl_log("%d pipelines building in the background", n);
-        [dev newRenderPipelineStateWithDescriptor:pd
-                                completionHandler:^(id<MTLRenderPipelineState> made, NSError *err) {
-                                  atomic_fetch_sub(&building, 1);
-                                  if (!made) {
-                                      mgl_log("pipeline creation failed: %s", err.localizedDescription.UTF8String);
-                                      return; /* stays pending: its draws are skipped, as a failed sync build would */
-                                  }
-                                  archive_add_render(pd);
-                                  @synchronized(pipelines) {
-                                      pipelines[key] = made;
-                                  }
-                                }];
-        return nil; /* this draw is skipped; a later one finds the pipeline */
+        atomic_fetch_add(&pipes_building, 1);
+        uint64_t t0 = now_ns();
+        dispatch_group_t done = pp.done;
+        NSString *label = @(d->program->label); /* the program can be deleted before the build is done */
+        void (^build)(void) = ^{
+          [dev newRenderPipelineStateWithDescriptor:pd
+                                  completionHandler:^(id<MTLRenderPipelineState> made, NSError *err) {
+                                    if (made) {
+                                        archive_add_render(pd);
+                                        @synchronized(pipelines) {
+                                            pipelines[key] = made;
+                                        }
+                                    } else /* stays pending: its draws are skipped, as a failed sync build's would be */
+                                        mgl_log("pipeline creation failed: %s", err.localizedDescription.UTF8String);
+                                    atomic_fetch_sub(&pipes_building, 1);
+                                    atomic_fetch_add(&pipes_made_async, 1);
+                                    atomic_fetch_add(&pipes_built_ns, now_ns() - t0);
+                                    dispatch_group_leave(done);
+                                  }];
+        };
+        if (later_cv) {
+            [OBJ(id<MTLLibrary>, d->program->vlib)
+                newFunctionWithName:@"main0"
+                     constantValues:later_cv
+                  completionHandler:^(id<MTLFunction> fn, NSError *err) {
+                    if (fn) {
+                        @synchronized(later_cache) {
+                            later_cache[later_mask] = fn;
+                        }
+                        pd.vertexFunction = fn;
+                    } else
+                        mgl_log("%s: scaled vertex inputs (%s) failed: %s", label.UTF8String, later_mask.UTF8String,
+                                err.localizedDescription.UTF8String);
+                    build();
+                  }];
+        } else
+            build();
+        return wait_pending_pipe(pp, key, must); /* within the frame's budget; else a later draw finds it */
     }
     NSError *e = nil;
+    uint64_t t0 = now_ns();
     ps = [dev newRenderPipelineStateWithDescriptor:pd error:&e];
+    pipe_stats.wait_ns += now_ns() - t0;
+    pipe_stats.built_ns += now_ns() - t0;
+    pipe_stats.made++;
     if (!ps) {
         mgl_log("pipeline creation failed: %s", e.localizedDescription.UTF8String);
         return nil;
@@ -7015,6 +7158,7 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
         present_stats_report();
     fg_timing_report();
     frame_draws = frame_sections = frame_dispatches = frame_probes = 0;
+    pipe_frame_end();
     /* keep at most ~2 frames in flight: wait for the frame before last (by frame, not command buffer, since an
        interpolated frame commits several) */
     static uint64_t frame_end_serial[2];
