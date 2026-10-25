@@ -131,11 +131,11 @@ segments() { # phase
         [ -n "$wx" ] && lines+="cmd weather $wx 100000"$'\n'
         [ -n "$look" ] && { echo "tp @s ~ ~ ~ $look" > "$look_f"; lines+="cmd reload"$'\n'; }
         if [ -n "$pack" ]; then
-            local found=
+            local found= want; want=$(tr '[:upper:]' '[:lower:]' <<< "$pack") # macOS /bin/bash 3.2: no ${x,,}
             for f in "$G/shaderpacks"/*; do
                 local b; b=$(basename "$f")
                 case $b in *.txt) continue ;; esac
-                [[ ${b,,} == "${pack,,}"* ]] && { found=$b; break; }
+                [[ $(tr '[:upper:]' '[:lower:]' <<< "$b") == "$want"* ]] && { found=$b; break; }
             done
             if [ -z "$found" ]; then
                 echo "segment $seg: no shader pack matching \"$pack\" in shaderpacks/, not measured" | tee -a "$OUT/fps.txt"
