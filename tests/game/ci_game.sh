@@ -1,6 +1,7 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
 #   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary sound sound-off sound-apple water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-gi-fine ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-water ours-water-full ours-underwater ours-vista ours-vista-STYLE-TIME ours-season-SEASON[-STYLE]
+#   pbr-VIEW[+RP] (material gallery for resource packs: VIEW ours comp comp-pom comp-ipbr plain, RP as GAME_RP)
 #   menu menu-noif menu-shaders creative creative-shaders creative-scroll particles ab-menu ab-menu-noif ab-menu-shaders ab-creative ab-creative-shaders ab-particles (JEI, ImmediatelyFast, Particle Rain)
 #   pack-NAME packnight-NAME packshadow-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
 #   herd-NAME (the pack over a busy farm: 240 mobs and 64 chests, for entity costs; ab-herd-NAME for A/B)
@@ -36,12 +37,44 @@ if [ "${GAME_BENCH:-}" = true ]; then
     sed -i.bak 's/^enableVsync:.*/enableVsync:false/; s/^maxFps:.*/maxFps:260/; s/^renderDistance:.*/renderDistance:12/' "$G/options.txt"
     export MCMETAL_FPS_LOG=1 MCMETAL_FPS_EVERY=1 MGL_SHOT_EVERY=0 # screenshots only after measuring: each one stalls the GPU
 fi
-# GAME_RP=labpbr-test: our own LabPBR test textures (tests/game/rp/make_labpbr_test.py) as the resource pack
-rm -f "$G/resourcepacks/mcm-labpbr-test.zip"
-if [ "${GAME_RP:-}" = labpbr-test ]; then
-    mkdir -p "$G/resourcepacks" && python3 -I "$SRC/tests/game/rp/make_labpbr_test.py" "$G/resourcepacks/mcm-labpbr-test.zip" > /dev/null
-    sed -i.bak 's|^resourcePacks:.*|resourcePacks:["vanilla","file/mcm-labpbr-test.zip"]|' "$G/options.txt"
-fi
+# GAME_RP: a LabPBR resource pack for the game
+#   labpbr-test       our own LabPBR test textures (tests/game/rp/make_labpbr_test.py)
+#   vanilla-rtx[-opus] Cubeir's Vanilla RTX (the Bedrock RTX pack) converted by shaderpack/tools/vanilla_rtx_labpbr.py
+#                     (16x normals, or Opus's 96x); downloaded at a fixed commit, never stored in this repo
+#   spbr              SPBR 16.2 from Modrinth (Hearth & Hex's PBR pack in 1.3.12-1.3.14)
+VANILLA_RTX_COMMIT=07239401a49d43e4538f66fa3d67a11a7168f061
+SPBR="https://cdn.modrinth.com/data/aNcOVoD7/versions/jtNbhldU/SPBR-16_2.zip|55221318c6b0a817f7edea282f308ddd15b133e5"
+use_rp() { # NAME (see GAME_RP above; empty = none): puts the pack in resourcepacks/ and selects it in options.txt
+    local rp_file= v url sha
+    rm -f "$G/resourcepacks/"mcm-*.zip
+    case "$1" in
+    '') ;;
+    labpbr-test) mkdir -p "$G/resourcepacks" && python3 -I "$SRC/tests/game/rp/make_labpbr_test.py" "$G/resourcepacks/mcm-labpbr-test.zip" > /dev/null
+        rp_file=mcm-labpbr-test.zip ;;
+    vanilla-rtx|vanilla-rtx-opus)
+        v=$WORK/vanilla-rtx-$VANILLA_RTX_COMMIT
+        if [ ! -d "$v" ]; then
+            rm -rf "$v.tmp"; mkdir -p "$v.tmp"
+            curl -fsSL "https://codeload.github.com/Cubeir/Vanilla-RTX/tar.gz/$VANILLA_RTX_COMMIT" | tar xz -C "$v.tmp" --strip-components 1 \
+                && mv "$v.tmp" "$v" || { echo "could not download Vanilla RTX"; return 1; }
+        fi
+        mkdir -p "$G/resourcepacks" && python3 -I "$SRC/shaderpack/tools/vanilla_rtx_labpbr.py" "$v" "$WORK/mc/versions/1.21.1/1.21.1.jar" \
+            "$G/resourcepacks/mcm-$1.zip" $([ "$1" = vanilla-rtx-opus ] && echo --opus) > "$OUT/rp-$1.log" || return 1
+        cut -c1-200 "$OUT/rp-$1.log"
+        rp_file=mcm-$1.zip ;;
+    spbr) IFS='|' read -r url sha <<< "$SPBR"; mkdir -p "$G/resourcepacks"
+        python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import bare_mc; bare_mc.fetch(*sys.argv[2:])' \
+            "$SRC/tools" "$url" "$G/resourcepacks/mcm-spbr.zip" "$sha" || { echo "could not download SPBR"; return 1; }
+        rp_file=mcm-spbr.zip ;;
+    *) echo "unknown resource pack $1"; return 1 ;;
+    esac
+    if [ -n "$rp_file" ]; then
+        sed -i.bak "s|^resourcePacks:.*|resourcePacks:[\"vanilla\",\"file/$rp_file\"]|" "$G/options.txt"
+    else
+        sed -i.bak 's|^resourcePacks:.*|resourcePacks:[]|' "$G/options.txt"
+    fi
+}
+use_rp "${GAME_RP:-}" || exit 1
 mkdir -p "$G/shaderpacks" && find "$G/shaderpacks" -maxdepth 1 -name "mcmetal-*" ! -name "*.txt" -exec rm -rf {} + && cp -r "$SRC/tests/game/packs/"mcmetal-* "$SRC/shaderpack/mcmetal-rt-pack" "$G/shaderpacks/"
 rm -rf "$G/saves/metal" && tar xzf "$SRC/tests/game/world-metal.tgz" -C "$G/saves"
 # The game loads mcmetal the way players will: through the mod jar in mods/, no JVM arguments.
@@ -515,6 +548,22 @@ for p in $PHASES; do
     ours-puddles) GAME_LOOK="-90 50" scene 3000 rain room; PACK=mcmetal-rt-pack run_phase ours-puddles 180 metal true ;;  # open ground in rain
     ours-puddle-mask) GAME_LOOK="-90 50" scene 3000 rain room; PACK_OPTS="DEBUG_VIEW=6 ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-puddle-mask 180 metal true ;;
     ours-pbr) GAME_LOOK="-90 10" scene 3000 clear pbr; PACK=mcmetal-rt-pack run_phase ours-pbr 180 metal true ;;  # with GAME_RP=labpbr-test
+    pbr-ours*|pbr-comp*|pbr-plain*) # pbr-VIEW[+RP]: the material gallery for resource-pack looks, with resource pack RP
+        # (as GAME_RP: vanilla-rtx, vanilla-rtx-opus, spbr, labpbr-test; none without +RP). VIEW: ours = our RT pack,
+        # comp = Complementary reading LabPBR with POM off (Bedrock RTX has no parallax), comp-pom = with POM,
+        # comp-ipbr = Complementary's own Integrated PBR (as shipped), plain = no shaders
+        v=${p%%+*}; [ "$v" = "$p" ] && r=${GAME_RP:-} || r=${p#*+}
+        use_rp "$r" || { CRASHED="$CRASHED $p"; continue; }
+        GAME_LOOK="-90 18" scene 1500 clear pbr_gallery
+        case $v in
+        pbr-ours) PACK=mcmetal-rt-pack run_phase $p 180 metal true ;;
+        pbr-comp) PACK_OPTS="RP_MODE=3 ${PACK_OPTS:-}" run_phase $p 240 metal true ;;
+        pbr-comp-pom) PACK_OPTS="RP_MODE=3 POM=true ${PACK_OPTS:-}" run_phase $p 240 metal true ;;
+        pbr-comp-ipbr) run_phase $p 240 metal true ;;
+        pbr-plain) run_phase $p 180 metal false ;;
+        *) echo "unknown phase $p" ;;
+        esac
+        use_rp "${GAME_RP:-}" ;;
     ours-low|ours-ultra)   # the Low / Ultra presets (shaders.properties profile.LOW / profile.ULTRA) in the test room
         [ $p = ours-low ] && o="RT_GI=false LIGHT_SLOTS=2 LIGHT_SHAFTS=false LIGHT_SHAFTS_STEPS=4 RT_REFLECT_DISTANCE=32.0 RT_GI_DISTANCE=16.0 RT_AO_FRAMES=32.0" \
                           || o="LIGHT_SLOTS=8 LIGHT_SHAFTS_STEPS=12 RT_REFLECT_DISTANCE=256.0 RT_GI_DISTANCE=64.0 RT_AO_FRAMES=32.0"
