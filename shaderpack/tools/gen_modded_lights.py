@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Give modded light blocks their light colour in the RT pack. Reads modded-lights.tsv (block, lit states, light
-level, colour name) and writes the modded part of shaders/block.properties (between the BEGIN/END MODDED LIGHTS
+"""Give modded light blocks their light colour in the RT pack. Reads the modded rows of the light list every pack
+shares, mod/resources/mcmetal/lights.tsv (block, lit states, light level, colour name) and writes the modded part of shaders/block.properties (between the BEGIN/END MODDED LIGHTS
 lines) and shaders/lib/lights_modded.glsl (the colour and light level of each new id). They get ids 10110-10199
 (bright texels glow) or 10209-10299 (glow all over), one per colour and level (never a vanilla light's id: a
 repeated block.N line would replace the vanilla one). Iris skips block names that aren't installed, so the list is harmless without
@@ -33,8 +33,8 @@ def bucket(level):  # fewer distinct levels, so the ids fit
     return 15
 
 groups = collections.defaultdict(list)
-for line in (here / "modded-lights.tsv").read_text().splitlines():
-    if line.startswith("#") or not line.strip(): continue
+for line in (here.parent.parent / "mod/resources/mcmetal/lights.tsv").read_text().splitlines():
+    if line.startswith("#") or line.startswith("minecraft:") or not line.strip(): continue  # vanilla: the pack names them
     block, states, level, color = line.split("\t")
     if states:
         key, vals = states.split("=", 1)
@@ -51,7 +51,7 @@ for key in sorted(groups, key=lambda k: (-len(groups[k]), k)):
 if next_id[False] > 10200 or next_id[True] > 10300:
     raise SystemExit("too many modded light ids: %s" % next_id)
 
-props = ["# BEGIN MODDED LIGHTS (made by shaderpack/tools/gen_modded_lights.py from tools/modded-lights.tsv; don't edit)"]
+props = ["# BEGIN MODDED LIGHTS (made by shaderpack/tools/gen_modded_lights.py from mod/resources/mcmetal/lights.tsv; don't edit)"]
 for key in sorted(groups, key=lambda k: ids[k]):
     toks = sorted(groups[key])
     lines = [" ".join(toks[i:i + 8]) for i in range(0, len(toks), 8)]
@@ -63,7 +63,7 @@ text = re.sub(r"\n# BEGIN MODDED LIGHTS.*?# END MODDED LIGHTS\n", "\n", text, fl
 bp.write_text(text + "\n".join(props) + "\n")
 
 glsl = ["// Modded light blocks' colour and vanilla light level by block id (made by shaderpack/tools/gen_modded_lights.py",
-        "// from tools/modded-lights.tsv; don't edit). Used by lightColorOf in lib/lights.glsl.",
+        "// from mod/resources/mcmetal/lights.tsv; don't edit). Used by lightColorOf in lib/lights.glsl.",
         "vec3 moddedLightColor(int id, inout float level) {",
         "    switch (id) {"]
 for key in sorted(groups, key=lambda k: ids[k]):
