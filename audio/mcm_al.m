@@ -18,6 +18,7 @@
 #import <AudioToolbox/AudioToolbox.h>
 #import <CoreAudio/CoreAudio.h>
 #include <dlfcn.h>
+#include <mach/mach_time.h>
 #include <math.h>
 #include <pthread.h>
 #include "mcm_al.h"
@@ -91,7 +92,6 @@ typedef struct { float gain, gainHF; ALint type; } FilterParams;
 @property ALint processed; /* first `processed` of queue have played */
 @property ALint scheduled; /* how many of queue were handed to the node */
 @property unsigned gen; /* bumped on every play/stop: completion callbacks of older runs are ignored */
-@property double lead;   /* frames of silence played before this run's first buffer (see leadIn) */
 @property(strong) AVAudioPlayerNode *node;
 @property(strong) AVAudioFormat *nodeFormat;
 @property BOOL toEnv;
@@ -918,40 +918,25 @@ static void feed(MCSource *s) {
     }
 }
 
-/* A node just connected to the running engine renders its first moments at full volume whatever its volume says
- * (al_test on the GitHub Mac: one 50 ms step leaking through a zero-gain filter). Starting it 50 ms late by the
- * clock was not enough on a busy runner (PRs #69/#70, 10-25), so a fresh node now plays 60 ms of silence before
- * its first buffer: whenever its volume lands, the leaked part is silent. Only a source's first sound, or the first
- * after its format changed, waits; Minecraft reuses its sources. */
-static void leadIn(MCSource *s) {
-    AVAudioFormat *f = s.nodeFormat;
-    AVAudioFrameCount n = (AVAudioFrameCount)(f.sampleRate * 0.06);
-    AVAudioPCMBuffer *z = [[AVAudioPCMBuffer alloc] initWithPCMFormat:f frameCapacity:n];
-    z.frameLength = n;
-    for (AVAudioChannelCount c = 0; c < f.channelCount; c++) memset(z.floatChannelData[c], 0, n * sizeof(float));
-    [s.node scheduleBuffer:z completionHandler:nil];
-    s.lead = n;
-}
-
 static void playNow(MCSource *s, BOOL keepProcessed) {
     MCDevice *d = s.dev;
     if (!d) return;
     if (s.node) [s.node stop];
     s.gen++;
     unsigned gen = s.gen;
-    s.lead = 0;
+    BOOL fresh = NO;
     MCBuffer *b = s.buffer ? buffers[@(s.buffer)] : nil;
     if (!keepProcessed) s.processed = 0; /* playing a stopped source starts its whole queue again, as in OpenAL */
     if (s.queue.count && s.processed >= (ALint)s.queue.count) { s.state = AL_STOPPED; return; }
     if (s.queue.count) {
         MCBuffer *first = buffers[s.queue[MIN((NSUInteger)s.processed, s.queue.count - 1)]];
         if (!first.pcm) { s.state = AL_STOPPED; return; }
-        if (wire(s, first.pcm.format)) leadIn(s);
+        fresh = wire(s, first.pcm.format);
         s.scheduled = s.processed;
         s.state = AL_PLAYING;
         feed(s);
     } else if (b.pcm) {
-        if (wire(s, b.pcm.format)) leadIn(s);
+        fresh = wire(s, b.pcm.format);
         s.state = AL_PLAYING;
         [s.node scheduleBuffer:b.pcm atTime:nil options:(s.looping ? AVAudioPlayerNodeBufferLoops : 0)
               completionCallbackType:AVAudioPlayerNodeCompletionDataPlayedBack
@@ -962,7 +947,11 @@ static void playNow(MCSource *s, BOOL keepProcessed) {
     }
     apply(s);
     if (!d.running) startEngine(d);
-    if (d.running) [s.node play];
+    /* A node just connected to the running engine plays its first ~50 ms at full volume whatever its volume says
+     * (al_test, GitHub Mac): start it 50 ms later so its volume is in place. Only a source's first sound, or the
+     * first after its format changed, waits; Minecraft reuses its sources. */
+    if (d.running && fresh) [s.node playAtTime:[AVAudioTime timeWithHostTime:mach_absolute_time() + [AVAudioTime hostTimeForSeconds:0.05]]];
+    else if (d.running) [s.node play];
     if (verbose()) lg("source %u plays %s (%s), volume %.3f obstruction %.0f dB reverb %.2f", s.name, s.queue.count ? "a stream" : "a buffer",
                       s.toEnv ? "3D" : "flat", s.node.volume, s.toEnv ? s.node.obstruction : 0, s.toEnv ? s.node.reverbBlend : 0);
 }
@@ -1148,7 +1137,7 @@ static double offsetFrames(MCSource *s) {
     AVAudioTime *t = s.node.lastRenderTime;
     if (!t) return 0;
     AVAudioTime *pt = [s.node playerTimeForNodeTime:t];
-    return pt ? fmax(0, (double)pt.sampleTime - s.lead) : 0;
+    return pt ? (double)pt.sampleTime : 0;
 }
 
 AL_API void alGetSourcef(ALuint name, ALenum p, ALfloat *v);
