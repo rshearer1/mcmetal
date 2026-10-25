@@ -1,7 +1,7 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
 #   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary sound sound-off sound-apple water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-underwater ours-vista ours-vista-STYLE-TIME ours-season-SEASON[-STYLE]
-#   menu menu-noif menu-shaders particles ab-menu ab-menu-noif ab-particles (JEI, ImmediatelyFast, Particle Rain)
+#   menu menu-noif menu-shaders creative creative-shaders creative-scroll particles ab-menu ab-menu-noif ab-menu-shaders ab-creative ab-creative-shaders ab-particles (JEI, ImmediatelyFast, Particle Rain)
 #   pack-NAME packnight-NAME packshadow-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
 #   herd-NAME (the pack over a busy farm: 240 mobs and 64 chests, for entity costs; ab-herd-NAME for A/B)
 #   glcount-pack-NAME (the pack on Apple's OpenGL, draws counted by tools/glcount.c)
@@ -366,6 +366,8 @@ dh_phase() { # dh / dh-shaders / dh-PACK: Distant Horizons at noon, without a pa
 #                ImmediatelyFast on (as in the pack); GUI scale 2, so JEI shows several hundred icons at 1920x1200
 #   menu-noif    the same without ImmediatelyFast (every item icon its own draw)
 #   menu-shaders the same with Complementary on behind the menu
+#   creative     the creative menu's search tab (every item) held open with JEI beside it; creative-shaders with
+#                Complementary behind it, creative-scroll scrolls the item list as someone browsing it
 #   particles    rain with Particle Rain (thousands of rain and splash particles) + ImmediatelyFast, no shaders
 #   ab-menu, ab-menu-noif, ab-particles: new, old (GAME_AB_OFF's env), new in one job
 JEI="https://cdn.modrinth.com/data/u6dRKJwZ/versions/ufHUqt9b/jei-1.21.1-neoforge-19.51.0.418.jar|d19552586f686eae4ef5e7199f31604d1d3cfca7"
@@ -376,16 +378,18 @@ fetch_mod() { # "url|sha" file-in-mods/
     python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import bare_mc; bare_mc.fetch(*sys.argv[2:])' \
         "$SRC/tools" "$url" "$G/mods/$2" "$sha" || { echo "could not download $2"; return 1; }
 }
-gui_phase() { # kind (menu, menu-noif, menu-shaders, particles) out-name [VAR=value ...]
+gui_phase() { # kind (menu, menu-noif, menu-shaders, creative, creative-shaders, creative-scroll, particles) out-name [VAR=value ...]
     local kind=$1 out=$2; shift 2
     rm -f "$G/mods/mcm-jei.jar" "$G/mods/mcm-immediatelyfast.jar" "$G/mods/mcm-particlerain.jar"
     case $kind in menu-noif) ;; *) fetch_mod "$IMMEDIATELYFAST" mcm-immediatelyfast.jar || return ;; esac
     case $kind in
-    menu*)
+    menu*|creative*)
         fetch_mod "$JEI" mcm-jei.jar || return
-        scene noon clear menu
+        local screen=inventory stage=menu
+        case $kind in creative-scroll) screen=creative-scroll stage=creative ;; creative*) screen=creative stage=creative ;; esac
+        scene noon clear $stage
         cp "$G/options.txt" "$G/options.txt.gui"; sed -i.bak 's/^guiScale:.*/guiScale:2/' "$G/options.txt"
-        run_phase "$out" 240 metal "$([ $kind = menu-shaders ] && echo true || echo false)" MCMETAL_TEST_SCREEN=inventory "$@"
+        run_phase "$out" 240 metal "$(case $kind in *-shaders) echo true ;; *) echo false ;; esac)" MCMETAL_TEST_SCREEN=$screen "$@"
         mv "$G/options.txt.gui" "$G/options.txt" ;;
     particles)
         fetch_mod "$PARTICLE_RAIN" mcm-particlerain.jar || return
@@ -548,8 +552,8 @@ for p in $PHASES; do
         third_party "$inner" "$p" MCMETAL_DISABLE=1 GLCOUNT_LOG="$OUT/$p/glcount.log"
         LIBARGS=()
         tail -5 "$OUT/$p/glcount.log" 2>/dev/null ;;
-    menu|menu-noif|menu-shaders|particles) gui_phase "$p" "$p" ;;
-    ab-menu|ab-menu-noif|ab-particles) # new, old (GAME_AB_OFF's env), new, as for the packs below
+    menu|menu-noif|menu-shaders|creative|creative-shaders|creative-scroll|particles) gui_phase "$p" "$p" ;;
+    ab-menu|ab-menu-noif|ab-menu-shaders|ab-creative|ab-creative-shaders|ab-particles) # new, old (GAME_AB_OFF's env), new, as for the packs below
         inner=${p#ab-}
         gui_phase "$inner" "$p-new1"
         gui_phase "$inner" "$p-old" ${GAME_AB_OFF:-}

@@ -106,6 +106,8 @@ public final class SoundPhysicsHooks {
                 return;
             }
             int source = (Integer) j[0];
+            if (!live(source)) // a short sound that already finished (Minecraft deleted its source): nothing to trace,
+                continue;      // and tracing it made Sound Physics log an AL_INVALID_NAME error per sound
             applied = -1;
             long t0 = System.nanoTime();
             try {
@@ -125,6 +127,15 @@ public final class SoundPhysicsHooks {
                     // the sound engine is shutting down
                 }
             }
+        }
+    }
+
+    /** Whether a queued sound's source still exists and hasn't finished playing. */
+    private static boolean live(int source) {
+        try {
+            return AL11.alIsSource(source) && AL11.alGetSourcei(source, AL11.AL_SOURCE_STATE) != AL11.AL_STOPPED;
+        } catch (Throwable e) {
+            return false; // the sound engine is shutting down
         }
     }
 
