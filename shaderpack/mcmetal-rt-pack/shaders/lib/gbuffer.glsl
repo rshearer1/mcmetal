@@ -186,7 +186,10 @@ void main() {
   #ifdef LABPBR
     {
         vec4 nt = texture(normals, texcoord);
-        vec2 xy = (nt.xy * 2.0 - 1.0) * LABPBR_NORMAL_STRENGTH;
+        // bumps fade out with distance: far away a texel is smaller than a pixel, and full-strength normals there
+        // shimmer into wave-like patterns (moire) as the view moves
+        float bump = LABPBR_NORMAL_STRENGTH * (1.0 - 0.75 * smoothstep(12.0, 40.0, length(playerPos)));
+        vec2 xy = (nt.xy * 2.0 - 1.0) * bump;
         vec3 tn = vec3(xy, sqrt(max(1.0 - dot(xy, xy), 0.0)));
         vec3 t = tangentW.xyz - n * dot(tangentW.xyz, n);
         if (dot(t, t) > 1e-6 && nt.a > 0.0) {
@@ -195,7 +198,9 @@ void main() {
             nm = normalize(t * tn.x + b * tn.y + n * tn.z);
             // the pack's own AO and height (cracks, grout, mortar lines) darken the colour itself, so the relief
             // shows in every light, also in the ray-traced bounce light and at noon when the sun is straight above
-            c.rgb *= nt.b * mix(1.0 - 0.3 * LABPBR_NORMAL_STRENGTH, 1.0, nt.a);
+            // (at most to 0.6 in all: packs made by converters often store something else in blue, and the
+            // ray-traced AO darkens the same cracks again)
+            c.rgb *= max(nt.b * mix(1.0 - 0.3 * bump, 1.0, nt.a), 0.6);
         }
         spec = texture(specular, texcoord);
         if (spec.a > 254.5 / 255.0) spec.a = 0.0;   // LabPBR: 255 = no emission

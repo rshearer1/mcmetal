@@ -51,9 +51,9 @@ void main() {
     if (depth >= 1.0) h = texture(colortex8, texcoord * LIGHT_SHAFTS_SCALE);
     if (any(isnan(h.rgb))) valid = false;   // never let a bad value live on in the history
     vec3 scatter = vec3(0.0);
-#if defined USE_RT && defined LIGHT_SHAFTS && defined SHADOW_CHECKERBOARD
-    // 1 in SHADOW_RATE pixels each frame (like deferred1.fsh): the others keep their average
-    if (valid && rayRest(gl_FragCoord.xy, SHADOW_RATE, frameCounter)) {
+#if defined USE_RT && defined LIGHT_SHAFTS
+    // 1 in LIGHT_SHAFTS_RATE pixels each frame (like deferred1.fsh's shadows): the others keep their average
+    if (valid && rayRest(gl_FragCoord.xy, LIGHT_SHAFTS_RATE, frameCounter)) {
         outScatter = vec4(h.rgb, depth < 1.0 ? length(p) : 48.0);
         return;
     }
@@ -86,7 +86,7 @@ void main() {
             // under water the light comes down in the waves' focused lines: shafts even with nothing in the way
             if (underWater) through *= 3.5 * caustics(dir * t + cameraPosition, lightDir, frameTimeCounter);
   #endif
-            if (mcm_trace(dir * t, lightDir, 256.0) < 0.0) lit += through;
+            if (mcm_trace(dir * t, lightDir, 128.0) < 0.0) lit += through;   // (what's further off barely shades the air you see)
         }
         // a beam in shade (sun through a roof hole or a gap in the trees) stands out the way it does in real dusty
         // air: the less of the view ray is lit, the more each lit step counts. Open air (all lit) stays clear
@@ -98,5 +98,5 @@ void main() {
         if (any(isnan(scatter)) || any(isinf(scatter))) scatter = vec3(0.0);
     }
 #endif
-    outScatter = vec4(valid ? mix(h.rgb, scatter, SHADOW_BLEND) : scatter, depth < 1.0 ? length(p) : 48.0);
+    outScatter = vec4(valid ? mix(h.rgb, scatter, LIGHT_SHAFTS_BLEND) : scatter, depth < 1.0 ? length(p) : 48.0);
 }

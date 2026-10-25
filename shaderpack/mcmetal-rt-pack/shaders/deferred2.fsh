@@ -60,6 +60,10 @@ vec3 filteredGI(vec3 n, float dist) {
     // (GI_FILTER 9: a 3x3 over the same area, every other tap; the history and TAA smooth the rest)
     const int R = GI_FILTER == 9 ? 1 : 2;
     float tapStep = GI_FILTER == 9 ? 2.0 : 1.0;
+    // a pixel that just came into view (turning, walking past a corner) has only a frame or two in its average:
+    // noisy. Spread its taps wider until its history builds up, so newly seen areas don't show the single rays
+    float frames = texture(colortex3, texcoord * GI_SCALE).g;
+    tapStep *= mix(3.0, 1.0, smoothstep(2.0, 8.0, frames));
     for (int y = -R; y <= R; y++)
         for (int x = -R; x <= R; x++) {
             vec2 uv = texcoord + vec2(x, y) * (px * tapStep);              // full-screen position of that GI pixel
@@ -149,7 +153,9 @@ void main() {
         col = a * surfaceLight(p, nm, nl.zw, ao, mat, lightDir, sunCol, skyAmb, sh) + emission(a, mat);
 #endif
         // metals have no diffuse light of their own: their colour is in what they reflect
-        if (metal) col = emission(a, mat) + (col - emission(a, mat)) * 0.08;
+        // (only as far as they get a reflection below: a rough metal reflects its surroundings blurred, which
+        // the diffuse light stands in for, instead of going black)
+        if (metal) col = emission(a, mat) + (col - emission(a, mat)) * mix(1.0, 0.08, smoothstep(0.45, 0.75, smoothness));
         // LabPBR emission (specular map alpha)
         col += a * m.a * (4.0 * EMISSIVE_STRENGTH);
 #ifdef LABPBR
