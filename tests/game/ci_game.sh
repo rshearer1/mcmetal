@@ -326,7 +326,11 @@ scene() { # time [weather [stage]]: copy the test datapack into the world; it bu
     [ "${3:-scene}" = nether ] && echo 'tp @s 0.5 64 0.5 -90 7' > "$f/look.mcfunction" # held in the Nether room
     [ "${3:-scene}" = dh ] && echo 'tp @s 0.5 150 0.5 -45 12' > "$f/look.mcfunction" # high up, looking at the horizon
     [ "${3:-scene}" = herd ] && echo 'tp @s ~ ~ ~ -90 20' > "$f/look.mcfunction" # above the farm, looking down at it
-    [ -n "${GAME_LOOK:-}" ] && echo "tp @s ~ ~ ~ $GAME_LOOK" > "$f/look.mcfunction" # GAME_LOOK="yaw pitch"
+    # GAME_LOOK="yaw pitch" turns the player where the scene put them; "x y z yaw pitch" also moves them there
+    if [ -n "${GAME_LOOK:-}" ]; then
+        if [ "$(wc -w <<< "$GAME_LOOK")" -ge 5 ]; then echo "tp @s $GAME_LOOK" > "$f/look.mcfunction"
+        else echo "tp @s ~ ~ ~ $GAME_LOOK" > "$f/look.mcfunction"; fi
+    fi
     [ -n "${GAME_TP:-}" ] && echo "tp @s $GAME_TP" > "$f/look.mcfunction" # GAME_TP="~0.1 ~ ~ ~2 7": walk and turn each tick
     return 0
 }
