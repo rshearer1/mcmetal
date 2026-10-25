@@ -678,9 +678,12 @@ static const char *compute_prelude =
     "uint mgl_word(int b, uint w) {\n"
     "  if (b == 0) return mgl_vb0[w];\n  if (b == 1) return mgl_vb1[w];\n  if (b == 2) return mgl_vb2[w];\n"
     "  return mgl_vb3[w];\n}\n"
+    /* off need not be aligned: Iris's entity format is 54 bytes a vertex (iris_Entity is 3 ushorts), so every other
+       vertex's position starts 2 bytes into a word, and a value may span two words */
     "uint mgl_bits(int b, uint off, uint size) {\n"
-    "  uint w = mgl_word(b, off >> 2u);\n  if (size == 4u) return w;\n"
-    "  return (w >> ((off & 3u) * 8u)) & ((1u << (size * 8u)) - 1u);\n}\n"
+    "  uint s = (off & 3u) * 8u;\n  uint w = mgl_word(b, off >> 2u) >> s;\n"
+    "  if (s + size * 8u > 32u) w |= mgl_word(b, (off >> 2u) + 1u) << (32u - s);\n"
+    "  return size == 4u ? w : w & ((1u << (size * 8u)) - 1u);\n}\n"
     /* attribute descriptor: x buffer (-1 none), y byte offset, z stride, w type | size << 4 | normalized << 8 */
     /* kb, kf: the attribute's buffer and format word as function constants (kb -1: not set, read the descriptor;
        -2: no attribute), so a pipeline made for one vertex format drops the type switch and the buffer choice */

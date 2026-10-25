@@ -1218,8 +1218,8 @@ mglb_texture *mglb_texture_new(const mglb_texture_desc *d)
     tex_bytes += mt->bytes;
     tex_count++;
     /* A new Metal texture holds whatever its memory held before; GL drivers hand out zeroed storage, and packs
-       count on it: Rethinking Voxels' irradiance cache (an Iris image with clear=false) accumulates into its
-       first contents, and leftovers there drew a white haze and dark straight lines over its water.
+       can count on it: Rethinking Voxels' irradiance cache (an Iris image with clear=false) accumulates into
+       its first contents.
        3D textures start zeroed; MGL_ZERO_3D=0 leaves them as Metal makes them. */
     static int zero3d = -1;
     if (zero3d < 0) {

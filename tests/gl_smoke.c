@@ -876,6 +876,27 @@ int main(int argc, char **argv)
         snprintf(what, sizeof what, "geometry shader: a second strip keeps its winding under culling (pixels %08x %08x)",
                  one_strip, px[32 * 64 + 32]);
         check(near(one_strip, rgba(64, 128, 191, 255)) && near(px[32 * 64 + 32], one_strip), what);
+
+        /* a 10-byte vertex: every other position starts 2 bytes into a word, as in Iris's 54-byte entity format
+           (the player's shadow in Rethinking Voxels came out as long dark streaks through the camera) */
+        unsigned char odd[6 * 10] = {0};
+        for (int v = 0; v < 6; v++)
+            memcpy(odd + v * 10, quad + v * 2, 8);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof odd, odd, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 10, (void *)0);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glUseProgram(p);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        read_texture(rb, tex, ssbo, px);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof quad, quad, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8, (void *)0);
+        snprintf(what, sizeof what, "geometry shader: a float at an unaligned offset reads right (pixels %08x %08x)",
+                 px[8 * 64 + 56], px[56 * 64 + 8]);
+        check(near(px[8 * 64 + 56], rgba(64, 128, 191, 255)) && near(px[56 * 64 + 8], rgba(64, 128, 191, 255)), what);
     }
 
     /* 14. GL_RGB textures live in RGBA8: whatever alpha the uploaded texels carry, GL samples alpha as 1 */
