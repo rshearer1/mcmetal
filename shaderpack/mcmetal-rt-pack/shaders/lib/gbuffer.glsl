@@ -43,7 +43,7 @@ in vec4 mc_Entity;
 void main() {
     gl_Position = gl_ProjectionMatrix * (gl_ModelViewMatrix * gl_Vertex);   // not ftransform(): Iris leaves it in line programs
 #ifdef TAA
-    // a different sub-pixel shift every frame (Halton 2,3 over 8 frames); composite1 blends them into smooth edges
+    // a different sub-pixel shift every frame (Halton 2,3 over 8 frames); composite2 blends them into smooth edges
     int k = frameCounter % 8 + 1;
     vec2 halton = vec2(0.0);
     for (float f = 0.5, i = float(k); i > 0.0; f *= 0.5, i = floor(i / 2.0)) halton.x += f * mod(i, 2.0);
@@ -90,6 +90,9 @@ void main() {
     #define WATER_RT_REFLECT
     #include "/lib/reflect.glsl"
 #endif
+#ifdef WATER
+    #include "/lib/waves.glsl"
+#endif
 uniform sampler2D gtexture;
 in vec2 texcoord;
 in vec2 lmcoord;
@@ -118,7 +121,7 @@ layout(location = 1) out vec4 outMaterial;
 #elif defined WATER
 // Water, glass and the other see-through blocks are blended in two parts (shaders.properties): colortex0 is
 // multiplied by how much light gets through (a colour, so stained glass tints what's behind it), colortex13 adds
-// what the surface itself gives (its lit texture, reflections); composite.fsh adds the two.
+// what the surface itself gives (its lit texture, reflections); composite1.fsh adds the two.
 /* RENDERTARGETS: 0,11,13 */
 layout(location = 0) out vec4 outColor;   // rgb: light let through (multiplies what's behind)
 layout(location = 1) out vec4 outWater;   // colortex11: r water, gb glass refraction offset, a glass (nearest surface)
@@ -217,21 +220,13 @@ void main() {
     #endif
     vec3 col = albedo * surfaceLight(playerPos, n, lmcoord, ao, mat, L, sunCol, skyAmb, sh) + emission(albedo, mat);
     #ifdef WATER
+    bool top = false;   // open water's flat top: its rays are traced in composite.fsh instead (WATER_REFLECT_PASS)
     if (mat == MAT_WATER && n.y > 0.9) {
-        // small moving waves: a few travelling sine waves in world space, their slopes tilt the normal
-        vec2 w = playerPos.xz + cameraPosition.xz;
-        float tm = frameTimeCounter * WAVE_SPEED;
-        vec2 slope = vec2(0.0);
-        const vec2 dirs[4] = vec2[4](vec2(0.8, 0.6), vec2(-0.5, 0.86), vec2(0.97, -0.26), vec2(-0.2, -0.98));
-        const float lens[4] = float[4](3.1, 1.7, 0.93, 0.51);
-        for (int i = 0; i < 4; i++) {
-            float k = 6.2832 / lens[i], ph = dot(dirs[i], w) * k + tm * sqrt(9.8 * k);
-            slope += dirs[i] * (cos(ph) * k * lens[i] * 0.012);   // amplitude grows with wavelength
-        }
-        n = normalize(vec3(-slope.x, 1.0, -slope.y) * vec3(WAVE_HEIGHT, 1.0, WAVE_HEIGHT));
+        n = waveNormal(playerPos.xz + cameraPosition.xz);   // lib/waves.glsl
+        top = true;
         c.a = 0.55;    // clearer than vanilla water: you see the bottom
     }
-    // glass: the streaks become bumps. Their brightness slope across the texture bends the view (composite.fsh
+    // glass: the streaks become bumps. Their brightness slope across the texture bends the view (composite1.fsh
     // shifts what's seen through it), more up close than far away
     vec2 refr = vec2(0.0);
       #ifdef GLASS_REFRACTION
@@ -250,7 +245,11 @@ void main() {
     // looking down at water reflects only 2-5%: not worth a ray, the sky stands in (the biggest share of water pixels)
     // (faded in between 4% and 6%, so there's no visible line where the rays start)
     vec3 refl = skyColor(reflect(v, n), sunDirection()) * skyOpen;
-    if (f > 0.04)
+    bool traced = f > 0.04;
+        #ifdef WATER_REFLECT_PASS
+    if (top && isEyeInWater == 0) traced = false;   // open water: only the sky here, composite.fsh adds the traced part
+        #endif
+    if (traced)
         refl = mix(refl, traceReflection(playerPos + n * 0.02, reflect(v, n), L, sunCol, skyAmb, sunDirection(), skyOpen),
                    smoothstep(0.04, 0.06, f));
       #else
@@ -278,7 +277,9 @@ void main() {
     // (alpha: dims the light that surfaces further back added to colortex13, which the multiply on colortex0 can't
     // reach; only by brightness, so a waterfall behind red glass is darkened rather than reddened)
     outAdd = vec4(own, 1.0 - luma(through));
-    outWater = vec4(float(mat == MAT_WATER), clamp(refr * 8.0 + 0.5, 0.0, 1.0), float(mat == MAT_GLASS));
+    // r: 0 not water, 0.55 water, 0.6-1.0 open water's top (and how open its sky is, for composite.fsh)
+    float wr = mat != MAT_WATER ? 0.0 : top ? 0.6 + 0.4 * skyOpen : 0.55;
+    outWater = vec4(wr, clamp(refr * 8.0 + 0.5, 0.0, 1.0), float(mat == MAT_GLASS));
   #else
     outColor = vec4(col, c.a);
   #endif

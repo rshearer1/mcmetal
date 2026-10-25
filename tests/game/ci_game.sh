@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
-#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary sound sound-off sound-apple water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-underwater ours-vista ours-vista-STYLE-TIME ours-season-SEASON[-STYLE]
+#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary sound sound-off sound-apple water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-shadow ours-ao ours-gi ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-water ours-water-full ours-underwater ours-vista ours-vista-STYLE-TIME ours-season-SEASON[-STYLE]
 #   menu menu-noif menu-shaders creative creative-shaders creative-scroll particles ab-menu ab-menu-noif ab-menu-shaders ab-creative ab-creative-shaders ab-particles (JEI, ImmediatelyFast, Particle Rain)
 #   pack-NAME packnight-NAME packshadow-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
 #   herd-NAME (the pack over a busy farm: 240 mobs and 64 chests, for entity costs; ab-herd-NAME for A/B)
@@ -521,6 +521,9 @@ for p in $PHASES; do
     ours-glass-off) GAME_LOOK="-90 8" scene 6000 clear glass; PACK_OPTS="GLASS_REFRACTION=false ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-glass-off 180 metal true ;;
     ours-caustics) GAME_LOOK="-90 45" scene 6000 clear pool; PACK=mcmetal-rt-pack run_phase ours-caustics 180 metal true ;;  # deep pool from above
     ours-caustics-mask) GAME_LOOK="-90 45" scene 6000 clear pool; PACK_OPTS="DEBUG_VIEW=7 ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-caustics-mask 180 metal true ;;
+    ours-water|ours-water-full)   # the pool at a low angle: water reflections (-full: every pixel traces its own, WATER_REFLECT_HALF off)
+        o=; [ $p = ours-water-full ] && o="WATER_REFLECT_HALF=false"
+        GAME_LOOK="${GAME_LOOK:--90 6}" scene 6000 clear pool; PACK_OPTS="$o ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase $p 180 metal true ;;
     ours-underwater) GAME_LOOK="-90 -10" scene 6000 clear pool_under; PACK=mcmetal-rt-pack run_phase ours-underwater 180 metal true ;;
     ours-sky) GAME_LOOK="-60 -25" scene 2000; PACK=mcmetal-rt-pack run_phase ours-sky 180 metal true ;;  # clouds
     ours-vista) GAME_TP="${VISTA_TP:-~ 88 ~ 90 10}" scene ${VISTA_TIME:-noon}; PACK=mcmetal-rt-pack run_phase ours-vista 180 metal true ;;  # open land and sky from y 88, away from the test stages (style shots)

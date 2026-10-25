@@ -13,7 +13,7 @@ in vec2 texcoord;
 layout(location = 0) out vec4 outColor;
 
 void main() {
-    float exposure = texelFetch(colortex6, ivec2(0), 0).r * EXPOSURE;   // from composite2
+    float exposure = texelFetch(colortex6, ivec2(0), 0).r * EXPOSURE;   // from composite3
     vec3 col = texture(colortex0, texcoord).rgb * exposure;
 #ifdef STYLE_PAINT
     // painted finish (Kuwahara): of the four 3x3 corners around the pixel, take the average of the calmest one, so

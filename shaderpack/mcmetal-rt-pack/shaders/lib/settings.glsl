@@ -39,6 +39,7 @@
 #define COLORED_SHADOWS // sunlight through stained glass (and water) takes its colour
 #define RT_REFLECTIONS // ray-traced reflections on water and glass
 #define RT_REFLECT_DISTANCE 128.0 // [32.0 64.0 128.0 256.0]
+#define WATER_REFLECT_HALF // open water's reflections traced at half resolution, half the pixels each frame, averaged over frames (much faster)
 
 #define LIGHT_SHAFTS // ray-traced light shafts (god rays) where sunlight comes through gaps
 #define LIGHT_SHAFTS_STRENGTH 1.0 // [0.25 0.5 0.75 1.0 1.5 2.0 3.0]
@@ -99,6 +100,11 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef WATER_SHADOWS
 #endif
 #ifdef RT_REFLECTIONS
+#endif
+#ifdef WATER_REFLECT_HALF
+#endif
+#if defined USE_RT && defined RT_REFLECTIONS && defined WATER_SHADOWS && defined WATER_REFLECT_HALF
+    #define WATER_REFLECT_PASS   // composite.fsh traces open water's reflections, composite1.fsh adds them
 #endif
 #ifdef COLORED_SHADOWS
 #endif
