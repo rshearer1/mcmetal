@@ -22,7 +22,7 @@ mglb_buffer *mglb_buffer_new(size_t size)
 }
 void *mglb_buffer_ptr(mglb_buffer *b) { return b->mem; }
 size_t mglb_buffer_size(mglb_buffer *b) { return b ? b->size : 0; }
-void mglb_buffer_release(mglb_buffer *b) { if (b) { free(b->mem); free(b); } }
+void mglb_buffer_release(mglb_buffer *b) { if (b) { mgl_rt_note_free(b); free(b->mem); free(b); } }
 int mglb_buffer_in_use(mglb_buffer *b) { return 0; }
 void mglb_buffer_written(mglb_buffer *b) {}
 void mglb_buffer_volatile(mglb_buffer *b) {}
