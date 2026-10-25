@@ -38,6 +38,9 @@ bool cachedShadow(vec3 hp, out vec3 sh) {
 }
 
 #if defined USE_RT && (defined RT_AO || defined RT_GI)
+  #ifdef GI_COARSE_RAYS
+    #define COARSE_RAYS   // bounce light and AO: leaves and plants count as solid (lib/reflect.glsl)
+  #endif
     #include "/lib/shadow.glsl"
     #include "/lib/reflect.glsl"
 #endif
