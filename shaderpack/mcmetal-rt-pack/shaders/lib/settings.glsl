@@ -49,6 +49,8 @@
 #define LIGHT_SHAFTS_STRENGTH 1.0 // [0.25 0.5 0.75 1.0 1.5 2.0 3.0]
 #define LIGHT_SHAFTS_STEPS 6 // [4 6 8 12 16]
 #define LIGHT_SHAFTS_SCALE 0.5
+#define LAMP_FOG // torches, lanterns and glowing blocks light up the air round them: a soft glow in fog, rain and dusty rooms (needs coloured light)
+#define LAMP_FOG_STRENGTH 1.0 // [0.5 1.0 1.5 2.0 3.0]
 #define VOLUMETRIC_MIST // morning mist near the ground that the sun's beams light up (with Light Shafts)
 #define MIST_AMOUNT 1.0 // [0.0 0.5 1.0 1.5 2.0 3.0]
 #define LIGHT_SHAFTS_RATE 4 // [2 4] light shafts traced for 1 in this many pixels each frame (the rest keep their average; shafts are soft, 4 is enough)
@@ -203,6 +205,8 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef WAVING_PLANTS
 #endif
 #ifdef AUTO_PBR
+#endif
+#ifdef LAMP_FOG
 #endif
 #ifdef LIGHTNING_FLASH
 #endif

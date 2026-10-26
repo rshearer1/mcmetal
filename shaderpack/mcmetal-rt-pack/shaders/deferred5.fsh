@@ -29,6 +29,10 @@ layout(location = 0) out vec4 outScatter;
 #if defined USE_RT && defined LIGHT_SHAFTS
 float mcm_trace(vec3 origin, vec3 dir, float tmax);
 #endif
+#if defined USE_RT && defined LIGHT_SHAFTS && defined USE_LIGHTS && defined LAMP_FOG
+    #include "/lib/lights.glsl"
+    #define LAMP_FOG_PASS
+#endif
 
 void main() {
     float depth = texture(depthtex0, texcoord).r;
@@ -108,8 +112,29 @@ void main() {
         float beam = underWater ? 0.0 : 0.05 * (LIGHT_SHAFTS_STRENGTH * STYLE_SHAFTS) * shade * shade * shade;
         scatter = sunCol * (underWater ? vec3(0.1, 0.26, 0.32) : vec3(1.0)) * phase * ((density + beam) * lit + litMist) * stepLen * 4.0 * PI;   // x 4pi: our lights skip the 1/pi of diffuse
         scatter += skyAmb * skyMist * stepLen;
-        if (any(isnan(scatter)) || any(isinf(scatter))) scatter = vec3(0.0);
     }
+  #ifdef LAMP_FOG_PASS
+    // lamp-lit air: the light of the nearest torch, lantern or glowing block, scattered by the air and mist round
+    // it, so lamps glow in fog, dusty rooms and at night. A few steps over the first 24 blocks, each with a
+    // shadow ray to that light (walls cut the glow off)
+    {
+        float ld = min(dist, 24.0), lstep = ld / 4.0;
+        float air = 0.012 * LAMP_FOG_STRENGTH * (1.0 + 3.0 * rainStrength + 2.0 * (1.0 - float(eyeBrightnessSmooth.y) / 240.0));
+        float lj = ign(gl_FragCoord.xy + vec2(13.0, 71.0), frameCounter);
+        for (int i = 0; i < 4; i++) {
+            vec3 q = dir * ((float(i) + lj) * lstep);
+            vec3 lp; int lid;
+            if (mcm_lights_near(q, 0, lp, lid) < 0) continue;
+            vec3 to = lp - q;
+            float d2 = max(dot(to, to), 0.25), d = sqrt(d2);
+            float level;
+            vec3 lc = lightColorOf(lid, level);
+            if (mcm_trace(q, to / d, max(d - 0.6, 0.0)) >= 0.0) continue;   // a wall between
+            scatter += lc * (level / 15.0) * air * lstep * BLOCK_LIGHT_STRENGTH / d2 * exp(-float(i) * lstep * 0.02);
+        }
+    }
+  #endif
+    if (any(isnan(scatter)) || any(isinf(scatter))) scatter = vec3(0.0);
 #endif
     outScatter = vec4(valid ? mix(h.rgb, scatter, LIGHT_SHAFTS_BLEND) : scatter, depth < 1.0 ? length(p) : 48.0);
 }

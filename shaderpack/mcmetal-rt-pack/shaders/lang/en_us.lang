@@ -170,3 +170,7 @@ option.AUTO_PBR=Automatic Materials
 option.AUTO_PBR.comment=Blocks without PBR maps still look their part: ores glint, metal blocks shine, gems and polished stone are glossy. Works on modded blocks too.
 option.AUTO_PBR_STRENGTH=Automatic Material Shine
 option.AUTO_PBR_STRENGTH.comment=How glossy the automatic materials are.
+option.LAMP_FOG=Lamp-Lit Fog
+option.LAMP_FOG.comment=Torches, lanterns and glowing blocks light up the air round them: a soft glow in fog, rain and dusty rooms.
+option.LAMP_FOG_STRENGTH=Lamp Fog Strength
+option.LAMP_FOG_STRENGTH.comment=How much the air glows round lamps.
