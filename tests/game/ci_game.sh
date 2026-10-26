@@ -22,6 +22,15 @@ python3 -I "$SRC/tools/bare_mc.py" setup "$WORK" --java "$JAVA" > "$OUT/setup.lo
 G=$WORK/game
 mkdir -p "$G/config" "$G/saves"
 cp "$SRC/tests/game/options.txt" "$G/options.txt"
+# GAME_ENV goes to the game process; a PACK_OPTS=A=false,B=2 in it (commas: GAME_ENV is split on spaces) sets the
+# pack's options instead, so a manual run's "env" input can switch pack options for every phase
+if [ -n "${GAME_ENV:-}" ]; then
+    rest=""
+    for kv in $GAME_ENV; do
+        case $kv in PACK_OPTS=*) PACK_OPTS="${PACK_OPTS:-} $(printf '%s' "${kv#PACK_OPTS=}" | tr ',' ' ')" ;; *) rest="$rest $kv" ;; esac
+    done
+    GAME_ENV=${rest# }
+fi
 # GAME_BENCH=true: frame-rate runs. No vsync or frame cap, 12 chunks, Minecraft's fps logged every second by the mod
 # (also on Apple's OpenGL: GAME_ENV=MCMETAL_DISABLE=1), window GAME_SIZE (default 1920x1200). Once the world is on
 # screen it settles for GAME_BENCH_SETTLE s (default 10), then measures GAME_BENCH_SECS s (default 30) and stops
