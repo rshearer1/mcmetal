@@ -25,6 +25,10 @@ float mcm_hit_emission();
     #define HIT_PBR_EMISSION
 #endif
 
+#if defined WORLD_CACHE && defined GI_CACHE
+    #include "/lib/worldcache.glsl"
+#endif
+
 int materialOf(int blockId) {
     if (blockId == 10001 || blockId == 10004) return MAT_FOLIAGE;
     if (blockId >= 10100 && blockId < 10200) return MAT_EMISSIVE;
@@ -65,7 +69,11 @@ vec3 traceRadiance(vec3 p, vec3 dir, float tmax, vec3 L, vec3 sunCol, vec3 skyAm
     // light cache (the pass's cachedGI): on screen, the hit takes the GI gathered there, which already holds the
     // sky light, earlier bounces and (with coloured light) the block light, in place of the lightmap's guesses
     vec3 cgi;
-    if (cachedGI(hp, cgi)) {
+    bool cached = cachedGI(hp, cgi);
+  #ifdef WORLD_CACHE
+    if (!cached) cached = wcLoad(hp + cameraPosition, hn, cgi);   // off screen: the world-space cache
+  #endif
+    if (cached) {
   #ifdef USE_LIGHTS
         vec2 clm = vec2(0.0, hl.y);
   #else

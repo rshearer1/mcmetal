@@ -30,6 +30,7 @@
 #endif
 #define GI_COARSE_RAYS // bounce light rays see leaves and plants beyond 2 blocks as solid (no alpha test: faster in forests; needs mcmetal from 10-25 or newer)
 #define LIGHT_CACHE // light bounces more than once: ray hits that are on screen reuse the bounce light already gathered there (brighter, more even rooms; no extra rays)
+//#define WORLD_CACHE // the bounce light is also kept per block face in the world, so light keeps bouncing off things behind you and round corners
 #define DENOISER // two extra filter rounds that clean the GI's grain but keep its light and shadow edges (a-trous, like SVGF)
 #define GI_FILTER 9 // [9 25] taps in the GI blur/upscale (9: 6% less GPU on the M3, no visible difference)
 #define GI_HALF_RES 1 // [0 1] trace GI and AO for every 2x2 pixels (about half the cost), then upscale
@@ -226,6 +227,11 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef HALF_PRECISION
 #endif
 #ifdef LIGHT_CACHE
+#endif
+#ifdef WORLD_CACHE
+#endif
+#if defined WORLD_CACHE && !(defined USE_RT && defined LIGHT_CACHE && defined RT_GI)
+    #undef WORLD_CACHE   // it extends the light cache
 #endif
 #ifdef SHADOW_CHECKERBOARD
 #endif

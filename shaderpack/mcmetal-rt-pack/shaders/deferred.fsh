@@ -178,4 +178,9 @@ void main() {
     outAO = vec4(mix(valid ? h.r : ao, ao, w), frames, dist, 1.0);
     vec3 hgi = valid ? texture(colortex4, puv * GI_SCALE).rgb : gi;
     outGI = vec4(mix(hgi, gi, w), 1.0);
+#if defined WORLD_CACHE && defined GI_CACHE
+    // feed the world-space light cache (lib/worldcache.glsl) from settled pixels, a quarter of them each frame
+    if (frames >= 4.0 && ((int(gl_FragCoord.x) + 2 * int(gl_FragCoord.y) + frameCounter) & 3) == 0)
+        wcStore(p + cameraPosition, octDecode(texture(colortex1, texcoord).xy), outGI.rgb);
+#endif
 }
