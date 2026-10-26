@@ -32,7 +32,7 @@ for f in sorted(root.glob("*.[vf]sh")):
     for rt in (False, True):
         src = expand(f, set())
         lines = src.split("\n", 1)
-        src = lines[0] + "\n" + IRIS + ("#define MCMETAL_RT 1\n#define MCMETAL_LIGHTS 1\n#define DISTANT_HORIZONS\n" if rt else "") + lines[1]
+        src = lines[0] + "\n" + IRIS + ("#define MCMETAL_RT 1\n#define MCMETAL_LIGHTS 1\n#define MCMETAL_RT_PBR 1\n#define DISTANT_HORIZONS\n" if rt else "") + lines[1]
         if f.name.startswith("dh_") and f.suffix == ".vsh":   # Iris declares this in DH vertex shaders
             src = src.replace(IRIS, IRIS + "in int dhMaterialId;\n", 1)
         # strip Iris-only comment directives is unnecessary; glslang ignores comments

@@ -108,7 +108,8 @@ public final class IrisMacroTransformer implements ITransformationService {
             pre.add(new LdcInsnNode(MetalBootstrap.ACTIVE));
             pre.add(new MethodInsnNode(Opcodes.INVOKESTATIC, "java/lang/Boolean", "getBoolean", "(Ljava/lang/String;)Z"));
             pre.add(new JumpInsnNode(Opcodes.IFEQ, skip));
-            for (String name : new String[] {"MCMETAL_RT", "MCMETAL_LIGHTS"}) { // MCMETAL_LIGHTS: mcm_lights_near exists
+            // MCMETAL_LIGHTS: mcm_lights_near exists; MCMETAL_RT_PBR: mcm_hit_emission exists
+            for (String name : new String[] {"MCMETAL_RT", "MCMETAL_LIGHTS", "MCMETAL_RT_PBR"}) {
                 pre.add(new VarInsnNode(Opcodes.ALOAD, 0));
                 pre.add(new TypeInsnNode(Opcodes.NEW, PAIR));
                 pre.add(new InsnNode(Opcodes.DUP));
@@ -122,7 +123,7 @@ public final class IrisMacroTransformer implements ITransformationService {
             pre.add(new FrameNode(Opcodes.F_SAME, 0, null, 0, null));
             m.instructions.insert(pre);
             m.maxStack = Math.max(m.maxStack, 5);
-            MetalBootstrap.log("shader packs get MCMETAL_RT and MCMETAL_LIGHTS (hardware ray tracing through mcm_trace)");
+            MetalBootstrap.log("shader packs get MCMETAL_RT, MCMETAL_LIGHTS and MCMETAL_RT_PBR (hardware ray tracing through mcm_trace)");
             return m;
         }
 

@@ -129,6 +129,7 @@ typedef struct mgl_program {
     int rt_epos_loc, rt_emv_off, rt_eproj_off; /* entity capture (mgl_rt.c): float3 position, model-view, projection */
     int rt_entity;              /* 1 = draws entities (by Iris program name or the entity vertex format's overlay input) */
     int rt_atlas_slot;          /* x.textures[] entry holding the block atlas (u_BlockTex, gtexture...), or -1 */
+    int rt_spec_slot;           /* ... and Iris's LabPBR specular atlas ("specular"), or -1 */
     int rt_euv_loc, rt_ecol_loc, rt_etex_slot; /* entity colours (mgl_rt.c): UV0, Color, the texture they sample */
     unsigned char *ublock[3];   /* default-block shadow per stage (vertex, fragment, compute) */
     int unit_of[MGL_MAX_TEXTURES * 3]; /* GL texture unit per x.textures[] entry (glUniform1i on a sampler) */

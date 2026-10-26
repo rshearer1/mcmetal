@@ -18,6 +18,12 @@ float traceHitCoarse(vec3 p, vec3 dir, float tmax, out vec3 hn, out vec4 ha, out
 #else
     #define TRACE_HIT mcm_trace_hit
 #endif
+#if defined MCMETAL_RT_PBR && defined LABPBR && defined RT_PBR_EMISSIVE
+// mcmetal: the LabPBR emission (specular map alpha) where the last TRACE_HIT landed, so glowing texels light
+// rooms and show in reflections, like they do on screen
+float mcm_hit_emission();
+    #define HIT_PBR_EMISSION
+#endif
 
 int materialOf(int blockId) {
     if (blockId == 10001) return MAT_FOLIAGE;
@@ -35,6 +41,11 @@ vec3 traceRadiance(vec3 p, vec3 dir, float tmax, vec3 L, vec3 sunCol, vec3 skyAm
     vec3 hp = p + dir * t;
     int mat = materialOf(id);
     vec3 a = toLinear(ha.rgb);
+#ifdef HIT_PBR_EMISSION
+    vec3 pbrGlow = a * mcm_hit_emission() * (4.0 * EMISSIVE_STRENGTH);   // the same as deferred4's
+#else
+    vec3 pbrGlow = vec3(0.0);
+#endif
     vec3 sh = vec3(0.0);
     // a second ray: is the hit in shadow? Far away (only in reflections) the hit's sky light stands in for it
     // (no sky light at the hit, in a world that has it: no path to the sun, no ray)
@@ -50,7 +61,7 @@ vec3 traceRadiance(vec3 p, vec3 dir, float tmax, vec3 L, vec3 sunCol, vec3 skyAm
         sh = t < 48.0 ? sunShadow(hp, hn, L, mat) : vec3(smoothstep(0.8, 0.95, hl.y));
   #endif
     }
-    return a * surfaceLight(hp, hn, hl, 1.0, mat, L, sunCol, skyAmb, sh) + emission(a, mat);
+    return a * surfaceLight(hp, hn, hl, 1.0, mat, L, sunCol, skyAmb, sh) + emission(a, mat) + pbrGlow;
 }
 
 vec3 traceReflection(vec3 p, vec3 dir, vec3 L, vec3 sunCol, vec3 skyAmb, vec3 sunDir, float skyOpen) {

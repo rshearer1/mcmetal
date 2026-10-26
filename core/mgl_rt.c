@@ -78,11 +78,13 @@ void mgl_rt_link(mgl_program *p)
     }
     if (p->rt_pos_loc < 0 || p->rt_region_off < 0)
         p->rt_pos_loc = -1; /* not a terrain program */
-    p->rt_atlas_slot = -1; /* the block atlas, for mcm_trace's alpha test */
+    p->rt_atlas_slot = p->rt_spec_slot = -1; /* the block atlas, for mcm_trace's alpha test; its LabPBR twin */
     for (int i = 0; i < p->x.num_textures; i++) {
         const char *n = p->x.textures[i].name;
         if (!strcmp(n, "u_BlockTex") || !strcmp(n, "gtexture") || !strcmp(n, "tex") || !strcmp(n, "texture"))
             p->rt_atlas_slot = i;
+        if (!strcmp(n, "specular"))
+            p->rt_spec_slot = i;
     }
     /* entities: a float3 position (vanilla's Position, or Iris's / OptiFine-style core names) and a model-view */
     p->rt_epos_loc = p->rt_emv_off = p->rt_eproj_off = p->rt_euv_loc = p->rt_ecol_loc = -1;
@@ -719,7 +721,7 @@ static void rt_debug_tick(void)
     }
 }
 
-mglb_texture *mgl_rt_atlas;
+mglb_texture *mgl_rt_atlas, *mgl_rt_specular;
 int mgl_rt_light_ids[2] = {-1, -1};
 float mgl_rt_radius;
 
@@ -769,6 +771,11 @@ void mgl_rt_record(mgl_program *p, const mgl_draw *d)
         int idx = p->x.textures[p->rt_atlas_slot].msl_index[MGL_FRAGMENT];
         if (idx >= 0 && idx < MGL_MAX_TEXTURES && d->textures[MGL_FRAGMENT][idx].tex)
             mgl_rt_atlas = d->textures[MGL_FRAGMENT][idx].tex;
+    }
+    if (p->rt_spec_slot >= 0) { /* Iris's specular atlas (same layout), for mcm_hit_emission */
+        int idx = p->x.textures[p->rt_spec_slot].msl_index[MGL_FRAGMENT];
+        if (idx >= 0 && idx < MGL_MAX_TEXTURES && d->textures[MGL_FRAGMENT][idx].tex)
+            mgl_rt_specular = d->textures[MGL_FRAGMENT][idx].tex;
     }
     const mgl_vertex_buf *vb = &d->vbufs[a->buffer];
     int ent_off = -1; /* Iris: ((id + 1) << 1) | render type, 4 bytes */

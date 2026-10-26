@@ -58,6 +58,7 @@
 
 #define LABPBR_NORMAL_STRENGTH 1.0 // [0.5 1.0 1.5 2.0 3.0] how deep LabPBR normal maps and height look
 #define LABPBR // LabPBR resource packs: normal maps, shiny and metal blocks, glowing texels
+#define RT_PBR_EMISSIVE // glowing texels of LabPBR packs (lamps, ores, lava) also light rooms in the bounce light and glow in reflections
 #define ROUGH_REFLECTIONS_STRENGTH 1.0 // [0.0 0.5 1.0 1.5 2.0] the soft sheen of rough and satin PBR blocks (stone, wood, brick): a blurred reflection of their surroundings
 #define BLOOM // soft glow around the sun, lights and other bright things
 #define BLOOM_STRENGTH 1.0 // [0.25 0.5 0.75 1.0 1.5 2.0 3.0]
@@ -167,4 +168,6 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef VOLUMETRIC_MIST
 #endif
 #ifdef LABPBR
+#endif
+#ifdef RT_PBR_EMISSIVE
 #endif
