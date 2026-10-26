@@ -112,3 +112,6 @@ option.SEASON_LENGTH=Days per Sub-season
 option.SEASON_LENGTH.comment=Match Serene Seasons' sub_season_duration (8 by default). A season is three sub-seasons.
 option.SEASON_OFFSET=Season Offset (days)
 option.SEASON_OFFSET.comment=Moves the shader's calendar on by this many days, if it is out of step with the mod (for example after /season set).
+option.VOLUMETRIC_MIST=Morning Mist
+option.VOLUMETRIC_MIST.comment=Mist near the ground at sunrise and in rain, lit up by the sun's beams. Needs Light Shafts.
+option.MIST_AMOUNT=Mist Amount
