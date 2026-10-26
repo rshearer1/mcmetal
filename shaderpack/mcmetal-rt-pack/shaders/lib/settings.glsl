@@ -66,6 +66,8 @@
 #define SHAFT_STEP_LENGTH 4.0 // [2.0 3.0 4.0 6.0 8.0] with the above: blocks of air per light-shaft step
 //#define FOG_GRID // light shafts: whether the sun reaches each half-block of air is traced once per cell and shared, not per pixel
 #define FOG_GRID_FRAMES 8 // [4 8 16 32] how many frames a cell keeps its sun ray before tracing again
+//#define DH_SHADOWS // far Distant Horizons terrain gets sun shadows (a march over its depth on screen): hills and forests cast long shadows
+#define DH_SHADOW_STEPS 16 // [8 12 16 24]
 #define LAMP_FOG // torches, lanterns and glowing blocks light up the air round them: a soft glow in fog, rain and dusty rooms (needs coloured light)
 #define LAMP_FOG_STRENGTH 1.0 // [0.5 1.0 1.5 2.0 3.0]
 #define VOLUMETRIC_MIST // morning mist near the ground that the sun's beams light up (with Light Shafts)
@@ -239,6 +241,8 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef REFLECTION_DENOISE
 #endif
 #ifdef FOG_GRID
+#endif
+#ifdef DH_SHADOWS
 #endif
 #ifndef IRIS_FEATURE_SSBO   // these keep their history in Iris shader storage buffers
     #undef FOG_GRID
