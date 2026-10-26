@@ -71,15 +71,17 @@ float cloudShadow(vec3 wp, vec3 lightDir) {
 // wind, lit bright by the sun, gone in rain
 vec3 drawCirrus(vec3 sky, vec3 dir, vec3 lightDir, vec3 sunCol, vec3 skyAmb) {
     if (dir.y < 0.02) return sky;
-    vec2 w = dir.xz / dir.y * 6.0 + vec2(frameTimeCounter * 0.004 * CLOUD_SPEED, 0.0);
-    vec2 q = vec2(w.x * 0.35 + w.y * 0.2, w.y * 2.6 - w.x * 0.3);   // stretched and slanted: streaks
-    float n = valueNoise(q) * 0.6 + valueNoise(q * 2.3 + 4.7) * 0.3 + valueNoise(q * 5.1 + 1.9) * 0.1;
-    float c = smoothstep(0.55 - 0.08 * (CLOUD_AMOUNT - 1.0), 0.85, n) * (1.0 - rainStrength);
+    vec2 w = dir.xz / dir.y * 2.5 + vec2(frameTimeCounter * 0.002 * CLOUD_SPEED, 0.0);
+    vec2 q = vec2(w.x * 0.5 + w.y * 0.15, w.y * 1.5 - w.x * 0.25);   // stretched and slanted: streaks
+    float n = valueNoise(q) * 0.55 + valueNoise(q * 2.1 + 4.7) * 0.3 + valueNoise(q * vec2(1.3, 6.0) + 1.9) * 0.15;
+    // patches of streaks, not the whole sky: a broad mask decides where there is any cirrus at all
+    float patchy = smoothstep(0.45, 0.75, valueNoise(w * 0.18 + 9.3));
+    float c = smoothstep(0.5 - 0.08 * (CLOUD_AMOUNT - 1.0), 0.9, n) * patchy * (1.0 - rainStrength);
     c *= smoothstep(0.02, 0.2, dir.y) * (0.6 + 0.4 * smoothstep(0.3, -0.3, dailyCover() * 4.0));
     if (c <= 0.0) return sky;
     float mu = dot(dir, lightDir);
     vec3 lit = sunCol * (0.25 + 0.6 * pow(max(mu, 0.0), 8.0)) + skyAmb * 0.8;
-    return mix(sky, lit, c * 0.35);
+    return mix(sky, lit, c * 0.28);
 }
 #endif
 
