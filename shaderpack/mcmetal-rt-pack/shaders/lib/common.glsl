@@ -22,7 +22,7 @@ vec3 toSRGB(vec3 c) {
 }
 
 // octahedral normal packing into [0,1]^2 (Cigolle et al. 2014)
-// Octahedral normals, SIGNED (-1..1): the buffers that hold them are snorm, so anything reading them from outside
+// Octahedral normals, SIGNED (-1..1): the buffers that hold them are signed (half float), so anything reading them from outside
 // the pack (mcmetal's denoised upscaler) gets the same numbers without knowing our encoding. See shaders.properties
 // mcmetal.denoise.normal.
 vec2 octEncode(vec3 n) {
