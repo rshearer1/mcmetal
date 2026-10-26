@@ -67,7 +67,14 @@ void main() {
   #endif
             vec3 st = normalize(abs(lightDir.y) < 0.99 ? cross(lightDir, vec3(0.0, 1.0, 0.0)) : cross(lightDir, vec3(1.0, 0.0, 0.0)));
             vec3 sl = normalize(lightDir + (st * cos(a1) + cross(lightDir, st) * sin(a1)) * tan(a2));
+  #ifdef PIXEL_SHADOWS
+            // shadows in the blocks' own pixels (16 a block, like Minecraft's textures): every point of a texel
+            // traces from that texel's centre, half a texel out from the face, so shadow edges are steps, not lines
+            vec3 ps = (floor((p + cameraPosition) * 16.0 + ns * 0.5) + 0.5) / 16.0 - cameraPosition;
+            sh = sunShadow(ps, ns, sl, mat);
+  #else
             sh = sunShadow(p, ns, sl, mat);
+  #endif
         } else sh = vec3(0.0);
     }
 #endif

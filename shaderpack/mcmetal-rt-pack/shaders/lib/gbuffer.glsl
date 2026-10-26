@@ -10,6 +10,7 @@
 //   MATERIAL        material id when TERRAIN doesn't decide it (default MAT_NONE)
 //   TRACE_SHADOW    FORWARD non-terrain programs that still cast a shadow ray (translucent entities, held glass)
 //   KEEP_MATERIAL   FORWARD programs that may run before deferred (clouds): also mark the pixel already lit
+//   BLOCK_ENTITIES  gbuffers_block: chests, signs, End portals (blockEntityId from block.properties)
 #include "/lib/settings.glsl"
 #include "/lib/common.glsl"
 #include "/lib/uniforms.glsl"
@@ -20,6 +21,10 @@
 #endif
 #ifndef MATERIAL
     #define MATERIAL MAT_NONE
+#endif
+#if defined BLOCK_ENTITIES && defined END_PORTAL_STARS
+    #include "/lib/portal.glsl"
+uniform int blockEntityId;   // 10300: End portal or gateway (block.properties)
 #endif
 
 #ifdef VSH
@@ -105,6 +110,9 @@ void main() {
     }
 #endif
     mat = MATERIAL;
+#if defined BLOCK_ENTITIES && defined END_PORTAL_STARS
+    if (blockEntityId == 10300) mat = MAT_LIT;   // the starfield glows by itself (lib/portal.glsl)
+#endif
 #ifdef TERRAIN
     int id = int(mc_Entity.x + 0.5);
     if (id == 10001 || id == 10004) mat = MAT_FOLIAGE;
@@ -256,6 +264,9 @@ void main() {
   #ifdef STARS
     discard;   // our own stars instead (lib/stars.glsl)
   #endif
+#endif
+#if defined BLOCK_ENTITIES && defined END_PORTAL_STARS
+    if (mat == MAT_LIT) c = vec4(endPortalStars(playerPos, gl_FrontFacing ? normalize(normalW) : -normalize(normalW)), 1.0);
 #endif
     if (c.a < 0.1) discard;
 #if defined TERRAIN && STYLE > 0

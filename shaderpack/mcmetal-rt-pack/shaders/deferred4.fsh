@@ -21,6 +21,10 @@ const vec4 colortex10ClearColor = vec4(0.0, 0.0, 1.0, 0.0);   // nothing written
     #include "/lib/clouds.glsl"
 #endif
 #include "/lib/stars.glsl"
+#include "/lib/aurora.glsl"
+#if defined USE_RT && defined RT_GI && defined HELD_LIGHT_SHADOWS
+float mcm_trace(vec3 origin, vec3 dir, float tmax);
+#endif
 #if !defined USE_RT || defined RT_REFLECTIONS
     // (the ray-traced shadow comes from deferred1.fsh; with RT this is only for what reflections see)
     #include "/lib/shadow.glsl"
@@ -237,7 +241,11 @@ void main() {
             }
         }
 #endif
+#ifdef AURORA
+        if (hasSkylight) col += drawAurora(dir, smoothstep(0.02, -0.12, sunDir.y)) * (1.0 - rainStrength);
+#else
         col += styleAurora(dir, smoothstep(0.02, -0.12, sunDir.y)) * (1.0 - rainStrength);
+#endif
   #ifdef CLOUDS
         col = drawClouds(col, dir, lightDir, sunCol, skyAmb);
   #endif
@@ -277,6 +285,20 @@ void main() {
         // and from in front of the face), so bumps show in shade and under an overhead sun
         vec3 gd = normalize(n + vec3(0.0, 0.8, 0.0));
         gi *= clamp(1.0 + 2.0 * (dot(nm, gd) - dot(n, gd)), 0.45, 1.4);
+  #endif
+  #ifdef HELD_LIGHT_SHADOWS
+        // the torch or lantern in your hand casts shadows: one ray from the surface to the hand (low and to the
+        // right of the view, so the shadows show beside what casts them instead of hiding right behind it)
+        {
+            float held = float(max(heldBlockLightValue, heldBlockLightValue2));
+            if (held > 0.0 && mat != MAT_HAND && held > length(p)) {
+                vec3 hand = mat3(gbufferModelViewInverse) * vec3(0.3, -0.25, -0.35);
+                vec3 o = p + n * 0.05;
+                vec3 to = hand - o;
+                float d = length(to);
+                if (d > 0.7 && mcm_trace(o, to / d, d - 0.6) >= 0.0) heldVis = 0.0;
+            }
+        }
   #endif
   #ifdef USE_LIGHTS
         // coloured block light (in the GI, deferred.fsh) replaces the lightmap's block light; the held light stays
