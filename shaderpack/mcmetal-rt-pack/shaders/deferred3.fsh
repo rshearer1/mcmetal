@@ -15,4 +15,10 @@ in vec2 texcoord;
 /* RENDERTARGETS: 7 */
 layout(location = 0) out vec4 outGI;
 
-void main() { outGI = vec4(denoiseRound(colortex15, texcoord, 2.0), 1.0); }
+void main() {
+#if DENOISE_PASSES == 1
+    discard;   // deferred2 already wrote colortex7 (shaders.properties also switches this program off)
+#else
+    outGI = vec4(denoiseRound(colortex15, texcoord, 2.0), 1.0);
+#endif
+}

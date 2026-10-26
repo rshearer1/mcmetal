@@ -2,15 +2,15 @@
 // Deferred lighting (after deferred.fsh: GI + AO, deferred1.fsh: sun shadows) of everything opaque, plus our sky. Runs after the opaque G-buffer, before water and glass.
 /*
 const int colortex0Format = RGBA16F;   // albedo in, HDR colour out (water etc. then blend on top in HDR)
-const int colortex1Format = RGBA16;    // xy octahedral normal (player space), zw lightmap (block, sky)
+const int colortex1Format = RGBA16_SNORM;   // xy octahedral normal (player space, signed), zw lightmap (block, sky)
 const int colortex2Format = RGBA8;     // r material id, g vanilla AO
 const bool colortex1Clear = true;
 const bool colortex2Clear = true;
 const vec4 colortex1ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 const vec4 colortex2ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
-const int colortex10Format = RGBA16;   // xy normal with the normal map, z smoothness, w F0/metal (LabPBR)
+const int colortex10Format = RGBA16_SNORM; // xy normal with the normal map (signed), z linear roughness (1 - LabPBR smoothness), w F0/metal
 const bool colortex10Clear = true;
-const vec4 colortex10ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
+const vec4 colortex10ClearColor = vec4(0.0, 0.0, 1.0, 0.0);   // nothing written: fully rough
 */
 #include "/lib/settings.glsl"
 #include "/lib/common.glsl"
@@ -218,7 +218,7 @@ void main() {
         // LabPBR (colortex10): the normal-mapped normal lights the surface; the block's own normal stays for rays
         vec4 pbr = texture(colortex10, texcoord);
         vec3 nm = dot(pbr.xy, pbr.xy) > 0.0 ? octDecode(pbr.xy) : n;
-        float smoothness = pbr.z;
+        float smoothness = 1.0 - pbr.z;   // stored as roughness (what mcmetal's denoised upscaler reads)
         bool metal = pbr.w > 229.5 / 255.0;
         vec3 f0 = metal ? a : vec3(max(pbr.w, 0.02));
         vec3 sh = vec3(0.0);

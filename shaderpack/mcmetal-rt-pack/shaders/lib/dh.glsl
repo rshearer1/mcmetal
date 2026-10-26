@@ -86,7 +86,7 @@ void main() {
     outNormalLight = vec4(octEncode(n), lmcoord);
     // glowing LODs (lava, light blocks) use the emission channel LabPBR uses
     outMaterial = vec4(float(MAT_DH) / 255.0, 1.0, 0.0, dhMat == DH_BLOCK_ILLUMINATED ? 0.5 : 0.0);
-    outPBR = vec4(0.0);
+    outPBR = vec4(0.0, 0.0, 1.0, 0.0);   // no normal map, fully rough
 #endif
 }
 #endif
