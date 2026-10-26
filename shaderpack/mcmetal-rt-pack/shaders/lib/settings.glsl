@@ -61,6 +61,8 @@
 #define ROUGH_REFLECTIONS_STRENGTH 1.0 // [0.0 0.5 1.0 1.5 2.0] the soft sheen of rough and satin PBR blocks (stone, wood, brick): a blurred reflection of their surroundings
 #define BLOOM // soft glow around the sun, lights and other bright things
 #define BLOOM_STRENGTH 1.0 // [0.25 0.5 0.75 1.0 1.5 2.0 3.0]
+//#define LENS_FLARE // a camera's lens flare from the sun: soft coloured ghosts across the screen
+#define LENS_FLARE_STRENGTH 1.0 // [0.5 1.0 1.5 2.0]
 #define TAA // temporal anti-aliasing: smooth edges, no shimmering plants and fences
 #define CLOUDS // our own soft cloud layer (replaces Minecraft's blocky clouds)
 #define CLOUD_AMOUNT 1.0 // [0.0 0.5 1.0 1.5 2.0]
@@ -159,6 +161,8 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef TAA
 #endif
 #ifdef BLOOM
+#endif
+#ifdef LENS_FLARE
 #endif
 #ifdef VOLUMETRIC_MIST
 #endif
