@@ -37,6 +37,9 @@ import org.objectweb.asm.tree.VarInsnNode;
  * Hearth & Hex's recipe load); see load/IngredientMatchHooks.
  * Create: its ItemStack mixin looked every new stack's item up in the item registry to see if it is a clipboard (a
  * quarter of JEI's start after joining a world in the cloud test, 2026-10-25); see load/ClipboardHooks.
+ * Block model names: with FerriteCore, BlockModelShaper.statePropertiesToString() built a slow entry set for every block
+ * state each time a model loader named it (~40% of the M3's model loading thread before the title screen, 2026-10-25);
+ * see load/StateNameHooks.
  */
 final class LoadSpeedTransformer implements ITransformer<ClassNode> {
     static final String HEXEREI = "net.joefoxe.hexerei.data.recipes.WoodcutterRecipes";
@@ -49,6 +52,8 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
     static final String MATCH_HOOKS = "mcmetal/loader/load/IngredientMatchHooks";
     static final String CREATE_STACK = "com.simibubi.create.foundation.mixin.ItemStackMixin";
     static final String CLIP_HOOKS = "mcmetal/loader/load/ClipboardHooks";
+    static final String SHAPER = "net.minecraft.client.renderer.block.BlockModelShaper";
+    static final String STATE_HOOKS = "mcmetal/loader/load/StateNameHooks";
     static final String PREFIX = GpuCullTransformer.PREFIX;
     /** createRecipes() of Hexerei 0.5.0.3 (see fingerprint()); any other version keeps its own loop. */
     static final Set<String> KNOWN_CREATE_RECIPES = Set.of("1f31c51f74d9f41b");
@@ -71,6 +76,8 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
             kubeMatches(c);
         else if (c.name.equals(CREATE_STACK.replace('.', '/')))
             createClipboard(c);
+        else if (c.name.equals(SHAPER.replace('.', '/')))
+            stateNames(c);
         return c;
     }
 
@@ -271,6 +278,48 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
         MetalBootstrap.log("load fixes: Create's clipboard check compares items (MCMETAL_LOAD_FIXES)");
     }
 
+    /**
+     * statePropertiesToString(map) becomes "return mcmetal$propertiesString(map);", see load/StateNameHooks. Only when its
+     * body is vanilla's (one map.entrySet() walk, nothing else calling out but StringBuilder, Property and its own getValue).
+     */
+    static void stateNames(ClassNode c) {
+        MethodNode target = null;
+        int entrySets = 0, others = 0;
+        for (MethodNode m : c.methods)
+            if (m.name.equals("statePropertiesToString") && m.desc.equals("(Ljava/util/Map;)Ljava/lang/String;")
+                    && (m.access & Opcodes.ACC_STATIC) != 0) {
+                target = m;
+                for (AbstractInsnNode n : m.instructions.toArray())
+                    if (n instanceof MethodInsnNode mi) {
+                        if (mi.owner.equals("java/util/Map") && mi.name.equals("entrySet"))
+                            entrySets++;
+                        else if (!(mi.owner.equals("java/lang/StringBuilder") || mi.owner.equals("java/util/Set")
+                                || mi.owner.equals("java/util/Iterator") || mi.owner.equals("java/util/Map$Entry")
+                                || mi.owner.equals("net/minecraft/world/level/block/state/properties/Property")
+                                || mi.owner.equals(c.name) && mi.name.equals("getValue")))
+                            others++;
+                    }
+            }
+        ClassNode hooks = GpuCullTransformer.readHooks(STATE_HOOKS);
+        if (hooks != null && hooks.methods.stream().anyMatch(m -> m.name.equals("<clinit>")))
+            hooks = null;
+        if (target == null || entrySets != 1 || others != 0 || hooks == null) {
+            MetalBootstrap.log("load fixes: block model names are not built the expected way, left as they are");
+            return;
+        }
+        GpuCullTransformer.merge(hooks, c);
+        InsnList body = new InsnList();
+        body.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        body.add(new MethodInsnNode(Opcodes.INVOKESTATIC, c.name, PREFIX + "propertiesString", "(Ljava/util/Map;)Ljava/lang/String;", false));
+        body.add(new org.objectweb.asm.tree.InsnNode(Opcodes.ARETURN));
+        target.instructions = body;
+        target.tryCatchBlocks.clear();
+        target.localVariables = null;
+        target.maxLocals = 1;
+        target.maxStack = 1;
+        MetalBootstrap.log("load fixes: block model names are built straight from the state's properties (MCMETAL_LOAD_FIXES)");
+    }
+
     /** A call on the object in front of its arguments becomes a static call of the merged hook with the same order. */
     static void redirect(MethodInsnNode mi, String owner, String hook, String desc) {
         mi.setOpcode(Opcodes.INVOKESTATIC);
@@ -325,7 +374,7 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
     @Override
     public Set<Target<ClassNode>> targets() {
         return Set.of(Target.targetClass(HEXEREI), Target.targetClass(VEGAN), Target.targetClass(CARRYON), Target.targetClass(KUBEJS),
-                Target.targetClass(CREATE_STACK));
+                Target.targetClass(CREATE_STACK), Target.targetClass(SHAPER));
     }
 
     @Override

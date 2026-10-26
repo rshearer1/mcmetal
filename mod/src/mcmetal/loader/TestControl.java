@@ -14,6 +14,12 @@ import java.util.List;
  *                    "cmd time set 12300" or "cmd reload" (reloads the world's datapacks, e.g. a rewritten look)
  *   shaders          reloads the shader pack (Iris re-reads iris.properties and the pack's options file)
  *   mark TEXT        just logs "[mcmetal] mark TEXT", for the rig to find its place in the log
+ *   resources        reloads the resource packs as F3+T does, then logs "[mcmetal] control: resources reloaded in N ms"
+ *   dimension DIM    sends the player to dimension DIM (e.g. minecraft:the_nether, at 0 120 0), then logs
+ *                    "[mcmetal] control: dimension DIM ready in N ms" once the player is there with no loading screen
+ *   leave            leaves the world as the pause menu's button does, then logs "[mcmetal] control: left the world in
+ *                    N ms" once the title screen is back (the "Saving world" wait)
+ * The timed lines wait (up to 3 minutes) before the next line runs, so a file can time several in a row.
  * Then it logs "[mcmetal] control done N". Never starts without the variable.
  *
  * MCMETAL_TEST_SCREEN=inventory (test rig only): once a world is loaded, opens the player's inventory (with JEI's
@@ -77,9 +83,15 @@ final class TestControl {
                             command(mc, line.substring(4));
                         else if (line.equals("shaders"))
                             reloadShaders(mc, cl);
+                        else if (line.equals("resources"))
+                            reloadResources(mc);
+                        else if (line.startsWith("dimension "))
+                            dimension(mc, line.substring(10).strip());
+                        else if (line.equals("leave"))
+                            leave(mc, cl);
                         else if (!line.startsWith("mark "))
                             MetalBootstrap.log("control: unknown line");
-                    } catch (ReflectiveOperationException | RuntimeException e) {
+                    } catch (Exception e) {
                         MetalBootstrap.log("control failed: " + e);
                     }
                 }
@@ -217,12 +229,81 @@ final class TestControl {
         Method reload = Class.forName("net.irisshaders.iris.Iris", true, cl).getMethod("reload");
         Runnable r = () -> {
             try {
+                long t0 = System.nanoTime();
                 reload.invoke(null);
-                MetalBootstrap.log("control: shaders reloaded");
+                MetalBootstrap.log("control: shaders reloaded in " + (System.nanoTime() - t0) / 1_000_000 + " ms");
             } catch (ReflectiveOperationException e) {
                 MetalBootstrap.log("control: shader reload failed: " + e.getCause());
             }
         };
         mc.getClass().getMethod("execute", Runnable.class).invoke(mc, r);
+    }
+
+    /** Minecraft.reloadResourcePacks() on the render thread (F3+T); waits for it and logs how long it took. */
+    private static void reloadResources(Object mc) throws Exception {
+        long t0 = System.nanoTime();
+        java.util.concurrent.CompletableFuture<Object> started = new java.util.concurrent.CompletableFuture<>();
+        Method reload = mc.getClass().getMethod("reloadResourcePacks");
+        Runnable r = () -> {
+            try {
+                started.complete(reload.invoke(mc));
+            } catch (ReflectiveOperationException e) {
+                started.completeExceptionally(e);
+            }
+        };
+        mc.getClass().getMethod("execute", Runnable.class).invoke(mc, r);
+        Object done = started.get(30, java.util.concurrent.TimeUnit.SECONDS);
+        ((java.util.concurrent.CompletableFuture<?>) done).get(3, java.util.concurrent.TimeUnit.MINUTES);
+        waitFor(() -> mc.getClass().getMethod("getOverlay").invoke(mc) == null); // the loading overlay fades out after
+        MetalBootstrap.log("control: resources reloaded in " + (System.nanoTime() - t0) / 1_000_000 + " ms");
+    }
+
+    /** Teleports the player to another dimension and waits until it is there with no screen open. */
+    private static void dimension(Object mc, String dim) throws Exception {
+        long t0 = System.nanoTime();
+        command(mc, "execute in " + dim + " run tp @a 0 120 0");
+        waitFor(() -> {
+            Object level = mc.getClass().getField("level").get(mc);
+            if (level == null || mc.getClass().getField("screen").get(mc) != null)
+                return false;
+            Object key = level.getClass().getMethod("dimension").invoke(level);
+            return String.valueOf(key.getClass().getMethod("location").invoke(key)).equals(dim);
+        });
+        MetalBootstrap.log("control: dimension " + dim + " ready in " + (System.nanoTime() - t0) / 1_000_000 + " ms");
+    }
+
+    /** Leaves the world as the pause menu does (disconnect, then the title screen) and times the save. */
+    private static void leave(Object mc, ClassLoader cl) throws Exception {
+        long t0 = System.nanoTime();
+        Class<?> screenClass = Class.forName("net.minecraft.client.gui.screens.Screen", false, cl);
+        Class<?> title = Class.forName("net.minecraft.client.gui.screens.TitleScreen", true, cl);
+        Runnable r = () -> {
+            try {
+                Object level = mc.getClass().getField("level").get(mc);
+                if (level != null)
+                    level.getClass().getMethod("disconnect").invoke(level);
+                mc.getClass().getMethod("disconnect").invoke(mc);
+                mc.getClass().getMethod("setScreen", screenClass).invoke(mc, title.getConstructor().newInstance());
+            } catch (ReflectiveOperationException e) {
+                MetalBootstrap.log("control: leaving failed: " + e.getCause());
+            }
+        };
+        mc.getClass().getMethod("execute", Runnable.class).invoke(mc, r);
+        waitFor(() -> mc.getClass().getField("level").get(mc) == null && title.isInstance(mc.getClass().getField("screen").get(mc)));
+        MetalBootstrap.log("control: left the world in " + (System.nanoTime() - t0) / 1_000_000 + " ms");
+    }
+
+    private interface Check {
+        boolean done() throws Exception;
+    }
+
+    /** Polls every 20 ms, for at most 3 minutes. */
+    private static void waitFor(Check c) throws Exception {
+        long end = System.nanoTime() + 180_000_000_000L;
+        while (!c.done()) {
+            if (System.nanoTime() > end)
+                throw new java.util.concurrent.TimeoutException("waited 3 minutes");
+            Thread.sleep(20);
+        }
     }
 }
