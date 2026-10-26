@@ -1,4 +1,4 @@
-// A layer of soft clouds high above the world, drawn into our sky (deferred2.fsh). Shapes from layered noise that
+// A layer of soft clouds high above the world, drawn into our sky (deferred4.fsh). Shapes from layered noise that
 // drift with time; thicker parts are darker underneath, edges towards the sun glow (forward scattering). More
 // and greyer clouds in rain. The look (lib/style.glsl, STYLE_CLOUD) sets cover, size, softness, brightness and the
 // colour of the shaded undersides; Storybook draws them as flat cartoon clouds. With VOLUMETRIC_CLOUDS the same

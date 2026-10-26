@@ -1,5 +1,5 @@
 // Distant Horizons LODs (dh_terrain, dh_water). Far terrain is drawn by DH into the same G-buffer before
-// deferred, with its own depth (dhDepthTex0). It isn't in the ray-traced scene: deferred2.fsh lights it from the
+// deferred, with its own depth (dhDepthTex0). It isn't in the ray-traced scene: deferred4.fsh lights it from the
 // lightmap (MAT_DH). DH_WATER = forward-lit water with a sky reflection.
 #include "/lib/settings.glsl"
 #include "/lib/common.glsl"
