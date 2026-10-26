@@ -38,7 +38,7 @@ vec3 traceRadiance(vec3 p, vec3 dir, float tmax, vec3 L, vec3 sunCol, vec3 skyAm
     vec3 sh = vec3(0.0);
     // a second ray: is the hit in shadow? Far away (only in reflections) the hit's sky light stands in for it
     // (no sky light at the hit, in a world that has it: no path to the sun, no ray)
-    if ((dot(hn, L) > 0.0 || mat == MAT_FOLIAGE) && (hl.y > 0.05 || !hasSkylight))
+    if ((dot(hn, L) > 0.0 || mat == MAT_FOLIAGE) && hl.y > 0.05 && hasSkylight)   // no sun in the Nether or End
     {
   #ifdef SHADOW_CACHE
         // a hit that was on screen last frame already has its (soft, averaged) sun shadow: no ray needed

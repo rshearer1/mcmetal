@@ -8,3 +8,5 @@ uniform int frameCounter, isEyeInWater, heldBlockLightValue, heldBlockLightValue
 uniform ivec2 eyeBrightnessSmooth;
 uniform vec4 entityColor;
 uniform bool hasSkylight;   // false in worlds without sky light (Nether, End)
+uniform bool hasCeiling;    // true in the Nether
+uniform vec3 fogColor;      // the world's fog colour (the Nether's changes with the biome)

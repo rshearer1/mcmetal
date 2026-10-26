@@ -15,7 +15,7 @@ float cloudDensity(vec2 w) {
 
 // sky colour behind, view direction, sun/moon direction and light: returns the sky with clouds over it
 vec3 drawClouds(vec3 sky, vec3 dir, vec3 lightDir, vec3 sunCol, vec3 skyAmb) {
-    if (dir.y < 0.01) return sky;
+    if (dir.y < 0.01 || !hasSkylight) return sky;
     float h = 900.0;                                          // height of the layer above the camera
     vec2 w = cameraPosition.xz + dir.xz / dir.y * h;
     float d = cloudDensity(w);

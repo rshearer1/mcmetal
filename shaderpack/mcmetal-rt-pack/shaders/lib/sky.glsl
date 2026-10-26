@@ -67,7 +67,24 @@ vec3 lightTransmittance(vec3 lightDir) {
 
 // full sky (sun + moon lit air, a little airglow at night), no discs. Times pi: our surfaces skip Lambert's 1/pi,
 // so the sky is scaled the same way to keep sky and ground in the right balance.
+// Worlds without sky light have no sun, no daylight sky and no sky light. Their own light instead: the Nether's
+// glow in its biome's fog colour (red, teal in warped forests and soul sand valleys), kept to one brightness and
+// warmed so it never turns pure red; the End's dim violet. dimensionLight() is the light on every surface there,
+// the sky (and so the fog and what reflections and missed rays see) is a darker share of it.
+vec3 dimensionLight() {
+    if (hasCeiling) {
+        vec3 c = toLinear(fogColor);
+        return mix(c / max(luma(c), 1e-4), vec3(1.0, 0.72, 0.55), 0.4) * 0.08;
+    }
+    return vec3(0.75, 0.62, 1.0) * 0.06;
+}
+vec3 dimensionSky(vec3 dir) {
+    if (hasCeiling) return dimensionLight() * 0.6;
+    return dimensionLight() * (0.25 + 0.35 * (1.0 - abs(dir.y)));   // the End: darkest straight up and down
+}
+
 vec3 skyColorExact(vec3 dir, vec3 sunDir) {
+    if (!hasSkylight) return dimensionSky(dir);
     vec3 c = atmosphere(dir, sunDir, SUN_INTENSITY);
     c += atmosphere(dir, -sunDir, MOON_INTENSITY) + vec3(0.0006, 0.0009, 0.0018);
     return seasonSky(stylePaintSky(c * PI, dir, sunDir), seasonWeights());   // the look's and the season's sky colours

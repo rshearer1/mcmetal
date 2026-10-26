@@ -144,10 +144,10 @@ void main() {
   #endif
   #ifdef USE_LIGHTS
         // coloured block light (in the GI, deferred.fsh) replaces the lightmap's block light; the held light stays
-        col = a * (surfaceLight(p, nm, vec2(mat == MAT_HAND ? nl.z : 0.0, nl.w), ao, mat, lightDir, sunCol, vec3(0.0), sh) + gi)
+        col = a * (surfaceLight(p, nm, vec2(mat == MAT_HAND ? nl.z : 0.0, nl.w), ao, mat, lightDir, sunCol, hasSkylight ? vec3(0.0) : skyAmb, sh) + gi)
             + emission(a, mat);
   #else
-        col = a * (surfaceLight(p, nm, nl.zw, ao, mat, lightDir, sunCol, vec3(0.0), sh) + gi) + emission(a, mat);
+        col = a * (surfaceLight(p, nm, nl.zw, ao, mat, lightDir, sunCol, hasSkylight ? vec3(0.0) : skyAmb, sh) + gi) + emission(a, mat);
   #endif
 #else
         col = a * surfaceLight(p, nm, nl.zw, ao, mat, lightDir, sunCol, skyAmb, sh) + emission(a, mat);

@@ -46,6 +46,8 @@
 #define LIGHT_SHAFTS_STRENGTH 1.0 // [0.25 0.5 0.75 1.0 1.5 2.0 3.0]
 #define LIGHT_SHAFTS_STEPS 6 // [4 6 8 12 16]
 #define LIGHT_SHAFTS_SCALE 0.5
+#define VOLUMETRIC_MIST // morning mist near the ground that the sun's beams light up (with Light Shafts)
+#define MIST_AMOUNT 1.0 // [0.0 0.5 1.0 1.5 2.0 3.0]
 #define LIGHT_SHAFTS_RATE 4 // [2 4] light shafts traced for 1 in this many pixels each frame (the rest keep their average; shafts are soft, 4 is enough)
 #if LIGHT_SHAFTS_RATE == 4
     #define LIGHT_SHAFTS_BLEND 0.25
@@ -55,6 +57,8 @@
 
 #define LABPBR_NORMAL_STRENGTH 1.0 // [0.5 1.0 1.5 2.0 3.0] how deep LabPBR normal maps and height look
 #define LABPBR // LabPBR resource packs: normal maps, shiny and metal blocks, glowing texels
+#define BLOOM // soft glow around the sun, lights and other bright things
+#define BLOOM_STRENGTH 1.0 // [0.25 0.5 0.75 1.0 1.5 2.0 3.0]
 #define TAA // temporal anti-aliasing: smooth edges, no shimmering plants and fences
 #define CLOUDS // our own soft cloud layer (replaces Minecraft's blocky clouds)
 #define CLOUD_AMOUNT 1.0 // [0.0 0.5 1.0 1.5 2.0]
@@ -134,6 +138,10 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef CLOUDS
 #endif
 #ifdef TAA
+#endif
+#ifdef BLOOM
+#endif
+#ifdef VOLUMETRIC_MIST
 #endif
 #ifdef LABPBR
 #endif

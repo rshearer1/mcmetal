@@ -75,18 +75,30 @@ void main() {
         // under water: much thicker (the beams you see from below the surface), and blue-green
         if (underWater) { dist = min(dist, 32.0); density = 0.04 * (LIGHT_SHAFTS_STRENGTH * STYLE_SHAFTS); }
         float stepLen = dist / float(LIGHT_SHAFTS_STEPS);
+        // ground mist the sun's beams show in (SEUS's misty mornings): thick air in the lowest few blocks above sea
+        // level, around sunrise, in rain, and with the look's own ground mist; it thins out over 6 blocks of height
+        float mist = 0.0;
+  #ifdef VOLUMETRIC_MIST
+        float wt = float(worldTime);
+        float dawn = max(smoothstep(22000.0, 23200.0, wt), 1.0 - smoothstep(1000.0, 3500.0, wt));
+        if (!underWater && hasSkylight) mist = 0.015 * MIST_AMOUNT * (dawn + 0.5 * rainStrength + 0.5 * STYLE_GROUND_MIST);
+  #endif
+        float litMist = 0.0, skyMist = 0.0, od = 0.0;
         float jitter = ign(valid ? rayPixel(gl_FragCoord.xy, LIGHT_SHAFTS_RATE) : gl_FragCoord.xy, frameCounter);
         float lit = 0.0;
         for (int i = 0; i < LIGHT_SHAFTS_STEPS; i++) {
             float t = (float(i) + jitter) * stepLen;
             // air further away is seen through more air (the haze in composite1.fsh adds the rest)
-            float vis = exp(-t * density);
+            float md = mist > 0.0 ? mist * exp(-max(dir.y * t + cameraPosition.y - 62.0, 0.0) / 6.0) : 0.0;
+            od += md * stepLen;
+            float vis = exp(-t * density - od);
             float through = vis;
+            skyMist += vis * md;   // mist in shade still glows with the sky's light
   #ifdef CAUSTICS
             // under water the light comes down in the waves' focused lines: shafts even with nothing in the way
             if (underWater) through *= 3.5 * caustics(dir * t + cameraPosition, lightDir, frameTimeCounter);
   #endif
-            if (mcm_trace(dir * t, lightDir, 128.0) < 0.0) lit += through;   // (what's further off barely shades the air you see)
+            if (mcm_trace(dir * t, lightDir, 128.0) < 0.0) { lit += through; litMist += through * md; }   // (what's further off barely shades the air you see)
         }
         // a beam in shade (sun through a roof hole or a gap in the trees) stands out the way it does in real dusty
         // air: the less of the view ray is lit, the more each lit step counts. Open air (all lit) stays clear
@@ -94,7 +106,8 @@ void main() {
         float shade = 1.0 - lit / float(LIGHT_SHAFTS_STEPS);
         // (cubed: a view ray that starts in open sunlight and then enters a room shouldn't haze the whole room)
         float beam = underWater ? 0.0 : 0.05 * (LIGHT_SHAFTS_STRENGTH * STYLE_SHAFTS) * shade * shade * shade;
-        scatter = sunCol * (underWater ? vec3(0.1, 0.26, 0.32) : vec3(1.0)) * phase * (density + beam) * stepLen * lit * 4.0 * PI;   // x 4pi: our lights skip the 1/pi of diffuse
+        scatter = sunCol * (underWater ? vec3(0.1, 0.26, 0.32) : vec3(1.0)) * phase * ((density + beam) * lit + litMist) * stepLen * 4.0 * PI;   // x 4pi: our lights skip the 1/pi of diffuse
+        scatter += skyAmb * skyMist * stepLen;
         if (any(isnan(scatter)) || any(isinf(scatter))) scatter = vec3(0.0);
     }
 #endif
