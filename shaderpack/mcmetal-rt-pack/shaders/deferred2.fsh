@@ -104,6 +104,9 @@ void main() {
         // sun disc with darker edges; the moon and stars come from vanilla's textures (MAT_SKY)
         float cosSun = dot(dir, sunDir), edge = smoothstep(0.99955, 0.99975, cosSun);
         col += sunTransmittance() * edge * (60.0 * (0.6 + 0.4 * smoothstep(0.99955, 0.99995, cosSun)));
+        // the bright glow round the sun (the sky table is too coarse for the haze's sharp forward peak), less in rain
+        float near = max(cosSun, 0.0);
+        col += sunTransmittance() * (pow(near, 4000.0) * 3.0 + pow(near, 300.0) * 0.25) * (1.0 - 0.8 * rainStrength) * (1.0 - edge);
         if (mat == MAT_SKY) col += toLinear(albedo.rgb) * 0.4 * (1.0 - 0.9 * rainStrength);
         col += styleAurora(dir, smoothstep(0.02, -0.12, sunDir.y)) * (1.0 - rainStrength);
   #ifdef CLOUDS

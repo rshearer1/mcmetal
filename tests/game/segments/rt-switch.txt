@@ -1,0 +1,7 @@
+# pack-switch crash check (PR #79): from our RT pack to another pack and back, twice. Before #79 the game crashed
+# switching back (ray-tracing draws kept buffers the other pack had freed). Run from an ours-* phase.
+# (GitHub's Mac has no Metal ray tracing, so there the BVH build that crashed never runs: a real check needs the M3)
+away1||||-|yes|complementary
+back1||||-|yes|mcmetal-rt-pack
+away2||||-|yes|complementary
+back2||||-|yes|mcmetal-rt-pack
