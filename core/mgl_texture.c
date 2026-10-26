@@ -8,7 +8,8 @@
 typedef struct fmt_info {
     int bpt;            /* bytes per texel in the backend */
     int comps;          /* components stored */
-    int kind;           /* 0 unorm8, 1 snorm8, 2 half, 3 float, 4 uint16, 5 uint32, 6 uint8, 7 unorm16, 8 int32, 9 depth32f, 10 packed */
+    int kind;           /* 0 unorm8, 1 snorm8, 2 half, 3 float, 4 uint16, 5 uint32, 6 uint8, 7 unorm16, 8 int32, 9 depth32f, 10 packed,
+                           11 snorm16 */
 } fmt_info;
 
 static const fmt_info finfo[MGLF_COUNT] = {
@@ -20,6 +21,7 @@ static const fmt_info finfo[MGLF_COUNT] = {
     [MGLF_RGBA16UI] = {8, 4, 4}, [MGLF_RGBA32UI] = {16, 4, 5}, [MGLF_R32I] = {4, 1, 8}, [MGLF_DEPTH32F] = {4, 1, 9},
     [MGLF_DEPTH16] = {2, 1, 7}, [MGLF_DEPTH24_STENCIL8] = {4, 1, 10}, [MGLF_DEPTH32F_STENCIL8] = {8, 1, 10},
     [MGLF_RGBA16I] = {8, 4, 4}, [MGLF_RGBA32I] = {16, 4, 8}, [MGLF_RG32UI] = {8, 2, 5},
+    [MGLF_RGBA16_SNORM] = {8, 4, 11},
 };
 
 enum mgl_format mgl_format_from_internal(GLenum internal, int *bpt)
@@ -29,6 +31,8 @@ enum mgl_format mgl_format_from_internal(GLenum internal, int *bpt)
     case GL_RGBA: case GL_RGBA8: case GL_RGB: case GL_RGB8: case 4: case 3: f = MGLF_RGBA8; break;
     case GL_SRGB8_ALPHA8: case GL_SRGB8: f = MGLF_SRGB8_A8; break;
     case GL_RGBA8_SNORM: case GL_RGB8_SNORM: f = MGLF_RGBA8_SNORM; break;
+    /* signed buffers (our RT pack's normals): RGBA8 would clamp every negative to 0 */
+    case GL_RGBA16_SNORM: case GL_RGB16_SNORM: f = MGLF_RGBA16_SNORM; break;
     case GL_RED: case GL_R8: case 1: f = MGLF_R8; break;
     case GL_RG: case GL_RG8: case 2: f = MGLF_RG8; break;
     case GL_RGBA16F: case GL_RGB16F: f = MGLF_RGBA16F; break;
@@ -188,6 +192,7 @@ static void write_texel(unsigned char *d, enum mgl_format f, const float v[4], c
     case 5: case 8: memcpy(d, iv, 4 * (size_t)fi->comps); break;
     case 6: for (int c = 0; c < fi->comps; c++) d[c] = (unsigned char)iv[c]; break;
     case 7: for (int c = 0; c < fi->comps; c++) { uint16_t s = (uint16_t)lrintf(clamp01(v[c]) * 65535.0f); memcpy(d + 2 * c, &s, 2); } break;
+    case 11: for (int c = 0; c < fi->comps; c++) { int16_t s = (int16_t)lrintf(fmaxf(-1, fminf(1, v[c])) * 32767.0f); memcpy(d + 2 * c, &s, 2); } break;
     default: memset(d, 0, (size_t)fi->bpt); break; /* packed float/depth-stencil uploads: not seen in Minecraft */
     }
 }

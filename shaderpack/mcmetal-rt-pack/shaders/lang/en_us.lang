@@ -223,3 +223,5 @@ option.GI_SHORT_RAYS.comment=Faster: bounce-light rays stop after a few blocks a
 option.GI_SHORT_DISTANCE=Short Ray Length
 option.DENOISE_PASSES=Denoiser Passes
 option.DENOISE_PASSES.comment=Rounds of the bounce-light denoiser. One does the same reach in a single wider pass, which is one render pass fewer.
+option.METALFX_DENOISE=MetalFX Denoiser
+option.METALFX_DENOISE.comment=Apple's denoiser cleans the whole lit picture. Needs mcmetal with MCMETAL_DENOISE=1, an M3 or newer and macOS 26. Replaces the pack's own denoiser.
