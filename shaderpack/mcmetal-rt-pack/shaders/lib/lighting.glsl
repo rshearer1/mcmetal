@@ -6,6 +6,11 @@ vec3 lightDirection() { return normalize(mat3(gbufferModelViewInverse) * shadowL
 // Direct light colour (from the sun or moon, whichever is up) and sky light from the whole sky.
 // Worked out once a frame in prepare.fsh (lightColorsExact) and read back from the sky table everywhere else.
 void lightColorsExact(out vec3 sunCol, out vec3 skyAmb) {
+    if (!hasSkylight) {   // Nether, End: no sun or moon; skyAmb is the world's own light (lib/sky.glsl)
+        sunCol = vec3(0.0);
+        skyAmb = dimensionLight() * SKY_LIGHT_STRENGTH;
+        return;
+    }
     vec3 sunDir = sunDirection();
     float moonLight = 0.25 + 0.75 * abs(float(moonPhase) - 4.0) / 4.0;   // full moon brightest
     vec3 sun = lightTransmittance(sunDir) * (SUN_INTENSITY * 0.2) * STYLE_SUN_TINT * seasonSunTint(seasonWeights());
@@ -40,7 +45,8 @@ vec3 surfaceLight(vec3 p, vec3 n, vec2 lm, float ao, int mat, vec3 L, vec3 sunCo
     float ls = luma(sh);
     direct = sunCol * toonBands(clamp(diff * ls, 0.0, 1.0)) * (ls > 1e-3 ? sh / ls : vec3(1.0));
 #endif
-    vec3 sky = skyAmb * (lm.y * lm.y) * (0.7 + 0.3 * n.y) * ao;
+    // sky light by the lightmap; where there is no sky (Nether, End) skyAmb is the world's own light, everywhere
+    vec3 sky = skyAmb * (hasSkylight ? lm.y * lm.y : 1.0) * (0.7 + 0.3 * n.y) * ao;
     // block light (torches etc.); the held light is a sphere around the player
     float held = float(max(heldBlockLightValue, heldBlockLightValue2));
     float bl = max(lm.x, clamp((held - length(p)) / 15.0, 0.0, 1.0));

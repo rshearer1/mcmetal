@@ -23,7 +23,7 @@ void main() {
     if (q.y >= int(SKY_LUT_ROWS)) {
         vec3 sunCol, skyAmb;
         lightColorsExact(sunCol, skyAmb);
-        outSky = vec4(q.x == 0 ? sunCol : q.x == 1 ? skyAmb : q.x == 2 ? lightTransmittance(sunDir) : vec3(0.0), 1.0);
+        outSky = vec4(q.x == 0 ? sunCol : q.x == 1 ? skyAmb : q.x == 2 ? (hasSkylight ? lightTransmittance(sunDir) : vec3(0.0)) : vec3(0.0), 1.0);
         return;
     }
     vec2 a = vec2(q) / vec2(SKY_LUT_W - 1.0, SKY_LUT_ROWS - 1.0);

@@ -51,8 +51,8 @@ void main() {
         vec4 nl = texture(colortex1, texcoord);
         vec3 ns = octDecode(nl.xy);
         // no sky light at all (caves, deep indoors): no path to the sun either, so no ray (the lightmap's sky
-        // level is 0 there; worlds without sky light, like the End, always trace)
-        bool skyReach = nl.w > 0.5 / 15.0 || !hasSkylight;
+        // level is 0 there); worlds without sky light (Nether, End) have no sun or moon to trace to
+        bool skyReach = nl.w > 0.5 / 15.0 && hasSkylight;
         if (skyReach && (dot(ns, lightDir) > 0.0 || mat == MAT_FOLIAGE)) {
             vec2 q = gl_FragCoord.xy;
   #ifdef SHADOW_CHECKERBOARD
