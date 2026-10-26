@@ -33,6 +33,9 @@ float mcm_trace(vec3 origin, vec3 dir, float tmax);
     // reflections on puddles and on smooth LabPBR surfaces
     #define SURFACE_RT
     #include "/lib/reflect.glsl"
+  #ifdef REFLECTION_DENOISE
+    #include "/lib/refldenoise.glsl"
+  #endif
 #endif
 
 uniform sampler2D colortex0, colortex1, colortex2, colortex3, colortex4, colortex5, colortex7, colortex10, depthtex0;
@@ -386,6 +389,9 @@ void main() {
                 vec3 refl = skyColor(rd, sunDir) * skyOpen;
   #ifdef SURFACE_RT
                 refl = traceReflection(p + n * 0.02, rd, lightDir, sunCol, skyAmb, sunDir, skyOpen);
+    #ifdef REFLECTION_DENOISE
+                refl = reflDenoise(p, refl, alpha);
+    #endif
   #endif
                 refl /= 1.0 + luma(refl) * 0.08;
                 col = mix(col, refl * (metal ? a : vec3(1.0)), w * (metal ? 0.9 : luma(Fv)));

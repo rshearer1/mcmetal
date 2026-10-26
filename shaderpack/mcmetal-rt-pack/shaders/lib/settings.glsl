@@ -55,6 +55,7 @@
 #define COLORED_SHADOWS // sunlight through stained glass (and water) takes its colour
 #define RT_REFLECTIONS // ray-traced reflections on water and glass
 #define RT_REFLECT_DISTANCE 128.0 // [32.0 64.0 128.0 256.0]
+//#define REFLECTION_DENOISE // glossy traced reflections average over frames (rougher = longer), so they are smooth instead of grainy
 #define WATER_REFLECT_HALF // open water's reflections traced at half resolution, half the pixels each frame, averaged over frames (much faster)
 
 #define LIGHT_SHAFTS // ray-traced light shafts (god rays) where sunlight comes through gaps
@@ -232,6 +233,8 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef WORLD_CACHE
 #endif
 #ifdef LIGHT_RESTIR
+#endif
+#ifdef REFLECTION_DENOISE
 #endif
 #if defined WORLD_CACHE && !(defined USE_RT && defined LIGHT_CACHE && defined RT_GI)
     #undef WORLD_CACHE   // it extends the light cache

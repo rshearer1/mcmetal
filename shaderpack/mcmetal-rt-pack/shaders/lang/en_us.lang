@@ -253,3 +253,5 @@ option.GLOSSY_RT.comment=Satin PBR blocks (polished stone, wood, brick) close to
 option.GLOSSY_RT_DISTANCE=Traced Sheen Distance
 option.LIGHT_RESTIR=Many-Light Sampling (ReSTIR)
 option.LIGHT_RESTIR.comment=Each pixel remembers which nearby light it picked last frame and how well that worked, so in a room full of candles it settles on the lights it can actually see. Less flicker and faster settling. Uses 32 MB.
+option.REFLECTION_DENOISE=Reflection Denoiser
+option.REFLECTION_DENOISE.comment=Glossy traced reflections are averaged over frames (rougher surfaces for longer), so they look smooth instead of grainy. Mirrors are left sharp. Uses 64 MB.
