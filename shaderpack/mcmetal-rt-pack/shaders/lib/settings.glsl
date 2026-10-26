@@ -97,6 +97,8 @@
 #define STARS_BRIGHTNESS 1.0 // [0.5 1.0 1.5 2.0 3.0]
 #define LIGHT_POLLUTION // your lamps light up the night haze: a warm glow low in the sky over a lit base
 #define LIGHT_POLLUTION_STRENGTH 1.0 // [0.5 1.0 2.0 3.0]
+#define END_BEAMS // the End's sky: violet beams rising out of the void, and faint stars
+#define END_BEAMS_STRENGTH 1.0 // [0.5 1.0 2.0 3.0]
 #define RAINBOW // a rainbow opposite the sun as the rain clears
 #define RAINBOW_STRENGTH 1.0 // [0.5 1.0 1.5 2.0]
 #define CIRRUS // thin, high streaks of ice cloud above the main clouds

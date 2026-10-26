@@ -204,3 +204,6 @@ option.RAINBOW_STRENGTH=Rainbow Strength
 option.LIGHT_POLLUTION=Lamp Glow In The Sky
 option.LIGHT_POLLUTION.comment=At night, a lit base makes a warm glow low in the sky.
 option.LIGHT_POLLUTION_STRENGTH=Lamp Glow Strength
+option.END_BEAMS=End Sky Beams
+option.END_BEAMS.comment=In the End, violet beams rise out of the void under faint stars.
+option.END_BEAMS_STRENGTH=End Beams Strength

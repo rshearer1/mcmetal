@@ -52,3 +52,28 @@ vec3 drawStars(vec3 dir, float night) {
     return c * fade * night * (1.0 - rainStrength) * 0.12 * STARS_BRIGHTNESS;
 }
 #endif
+
+#ifdef END_BEAMS
+// the End's sky: pale violet beams rising out of the void, slowly swaying and pulsing, over a scatter of still stars
+vec3 drawEndSky(vec3 dir) {
+    float az = atan(dir.z, dir.x) / 6.2831853 + 0.5;          // 0..1 round the horizon
+    float t = frameTimeCounter * 0.05;
+    vec3 c = vec3(0.0);
+    for (int i = 0; i < 3; i++) {
+        float fi = float(i);
+        float x = az * (14.0 + fi * 9.0) + valueNoise(vec2(dir.y * 2.0 + fi, t + fi * 3.0)) * 0.6;
+        float id = floor(x), f = fract(x);
+        float on = step(0.55, hash12(vec2(id, fi * 7.0)));
+        float w = 0.08 + 0.12 * hash12(vec2(id * 1.7, fi));
+        float beam = on * exp(-pow((f - 0.5) / w, 2.0));
+        float pulse = 0.6 + 0.4 * sin(frameTimeCounter * (0.3 + 0.2 * fi) + id * 2.3);
+        float h = smoothstep(-0.4, 0.05, dir.y) * (1.0 - smoothstep(0.1, 0.8, dir.y));   // up from below, fading high
+        c += beam * pulse * h * mix(vec3(0.55, 0.3, 0.9), vec3(0.85, 0.6, 1.0), fi * 0.5);
+    }
+    vec3 s = vec3(0.0);
+  #ifdef STARS
+    s = starLayer(dir, 140.0, 0.08) * vec3(0.9, 0.85, 1.0) * 0.05;
+  #endif
+    return c * 0.03 * END_BEAMS_STRENGTH + s;
+}
+#endif

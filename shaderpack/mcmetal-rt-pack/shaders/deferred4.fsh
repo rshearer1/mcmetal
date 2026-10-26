@@ -166,6 +166,9 @@ void main() {
     if (depth >= 1.0) {
         vec3 dir = normalize(p);
         col = skyColor(dir, sunDir);
+#ifdef END_BEAMS
+        if (!hasSkylight && !hasCeiling) col += drawEndSky(dir);
+#endif
 #ifdef LIGHTNING_FLASH
         col += lightningLight(vec3(0.0)) * 0.08 * (0.3 + 0.7 * max(dir.y, 0.0));   // the clouds light up
 #endif
