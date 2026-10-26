@@ -1783,11 +1783,6 @@ static char *scale_vertex_inputs(const char *msl)
 
 static id<MTLFunction> compile_fn_lib(const char *msl, NSString *what, char **err, id<MTLLibrary> *lib_out,
                                       id<MTLFunction> *hit_out);
-static id<MTLFunction> compile_fn(const char *msl, NSString *what, char **err)
-{
-    return compile_fn_lib(msl, what, err, NULL, NULL);
-}
-
 /* sin(, cos( and pow( calls in generated MSL -> precise:: versions (NULL if there is none); not asin, sinh
    or already-qualified calls. The rest of the maths functions stay fast. */
 static char precise_names[32][16];
@@ -7165,7 +7160,7 @@ static struct {
     unsigned long long last_frame;
 } dn;
 
-static int dn_setup(int w, int h)
+API_AVAILABLE(macos(26.0)) static int dn_setup(int w, int h)
 {
     if (dn.fx && dn.w == w && dn.h == h)
         return 1;
