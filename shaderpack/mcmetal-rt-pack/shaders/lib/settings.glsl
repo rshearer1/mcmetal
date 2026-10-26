@@ -95,6 +95,10 @@
 #define STARS // our own steady night sky: stars of many sizes and colours that turn with the night
 #define MILKY_WAY // the Milky Way's faint band and dust lanes across the stars
 #define STARS_BRIGHTNESS 1.0 // [0.5 1.0 1.5 2.0 3.0]
+#define LIGHT_POLLUTION // your lamps light up the night haze: a warm glow low in the sky over a lit base
+#define LIGHT_POLLUTION_STRENGTH 1.0 // [0.5 1.0 2.0 3.0]
+#define RAINBOW // a rainbow opposite the sun as the rain clears
+#define RAINBOW_STRENGTH 1.0 // [0.5 1.0 1.5 2.0]
 #define CIRRUS // thin, high streaks of ice cloud above the main clouds
 #define DAILY_WEATHER // each day has its own sky: some clear, some cloudy (the same for everyone in the world)
 #define CLOUD_SHADOWS // the clouds' shadows drift over the land

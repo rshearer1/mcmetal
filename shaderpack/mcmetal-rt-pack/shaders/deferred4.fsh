@@ -179,6 +179,29 @@ void main() {
 #ifdef STARS
         col += drawStars(dir, smoothstep(0.02, -0.15, sunDir.y));
 #endif
+#ifdef LIGHT_POLLUTION
+        {   // the glow of your own lamps in the night haze: a warm band low in the sky, by how much block light is
+            // around the player (a lit village glows, a dark forest doesn't); stronger in rain (more to light up)
+            float night = smoothstep(0.05, -0.1, sunDir.y);
+            float lamps = float(eyeBrightnessSmooth.x) / 240.0;
+            float low = exp(-max(dir.y, 0.0) * 6.0);
+            col += vec3(1.0, 0.62, 0.32) * low * night * lamps * (0.015 + 0.03 * rainStrength) * LIGHT_POLLUTION_STRENGTH;
+        }
+#endif
+#ifdef RAINBOW
+        {   // a rainbow opposite the sun as the rain clears (wet air, little rain left): red outside at 42 degrees,
+            // violet inside at 40, a faint second bow at 51 with the colours the other way round
+            float ang = degrees(acos(clamp(dot(dir, -sunDir), -1.0, 1.0)));
+            float bow = clamp(wetness * 1.5 - rainStrength * 3.0, 0.0, 1.0) * smoothstep(0.0, 0.1, sunDir.y)
+                      * smoothstep(0.6, 0.2, sunDir.y) * smoothstep(-0.02, 0.06, dir.y);
+            if (bow > 0.0) {
+                float t1 = (ang - 40.0) / 2.5, t2 = (53.0 - ang) / 3.0;
+                vec3 c1 = clamp(vec3(1.0 - abs(t1 - 0.9) * 3.0, 1.0 - abs(t1 - 0.55) * 3.0, 1.0 - abs(t1 - 0.15) * 3.0), 0.0, 1.0);
+                vec3 c2 = clamp(vec3(1.0 - abs(t2 - 0.9) * 3.0, 1.0 - abs(t2 - 0.55) * 3.0, 1.0 - abs(t2 - 0.15) * 3.0), 0.0, 1.0);
+                col += (c1 + c2 * 0.35) * sunCol * 0.06 * bow * RAINBOW_STRENGTH;
+            }
+        }
+#endif
         col += styleAurora(dir, smoothstep(0.02, -0.12, sunDir.y)) * (1.0 - rainStrength);
   #ifdef CLOUDS
         col = drawClouds(col, dir, lightDir, sunCol, skyAmb);
