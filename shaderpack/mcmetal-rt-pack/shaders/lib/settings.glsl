@@ -63,6 +63,8 @@
 #define CLOUDS // our own soft cloud layer (replaces Minecraft's blocky clouds)
 #define CLOUD_AMOUNT 1.0 // [0.0 0.5 1.0 1.5 2.0]
 #define CLOUD_SPEED 1.0 // [0.0 0.5 1.0 2.0 4.0]
+#define VOLUMETRIC_CLOUDS // clouds with real height: self-shadowed, silver edges towards the sun, dark bellies (off = flat layer, faster)
+#define CLOUD_STEPS 12 // [6 8 12 16 24] samples through the clouds per pixel (more = smoother, slower)
 #define RAIN_PUDDLES // puddles on open ground in the rain, with ray-traced reflections
 #define PUDDLE_AMOUNT 1.0 // [0.5 1.0 1.5 2.0]
 #define GLASS_REFRACTION // glass bends and tints what is behind it, with clean see-through panes
@@ -136,6 +138,8 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef RAIN_PUDDLES
 #endif
 #ifdef CLOUDS
+#endif
+#ifdef VOLUMETRIC_CLOUDS
 #endif
 #ifdef TAA
 #endif
