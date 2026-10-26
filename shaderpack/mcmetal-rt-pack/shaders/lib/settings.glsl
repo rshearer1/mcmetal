@@ -143,6 +143,7 @@ const float drynessHalfLife = 400.0;
 #define WATER_DEPTH_COLOR // shallow water is clear, deep water turns blue-green and dark (light absorbed by depth)
 #define WATER_DEPTH_COLOR_STRENGTH 1.0 // [0.5 1.0 1.5 2.0]
 #define WATER_FOAM // a thin moving line of foam where water meets the shore
+//#define WATER_REFRACTION // traced refraction: the view bends where it enters water, so the bottom looks nearer and moves with the waves
 #define WAVE_HEIGHT 1.0 // [0.0 0.5 1.0 1.5 2.0 3.0]
 #define WAVE_SPEED 1.0 // [0.5 1.0 1.5 2.0]
 

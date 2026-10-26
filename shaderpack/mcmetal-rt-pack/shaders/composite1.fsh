@@ -50,6 +50,10 @@ in vec2 texcoord;
 #if defined CAUSTICS && defined USE_RT
     #include "/lib/caustics.glsl"
 #endif
+#if defined WATER_REFRACTION && defined USE_RT
+    #include "/lib/waves.glsl"
+float mcm_trace(vec3 origin, vec3 dir, float tmax);
+#endif
 flat in vec3 sunCol, skyAmb, sunDir;
 
 /* RENDERTARGETS: 0 */
@@ -83,6 +87,31 @@ void main() {
         vec4 vb = gbufferProjectionInverse * vec4(vec3(texcoord, wDepth1) * 2.0 - 1.0, 1.0);
         wBottom = mat3(gbufferModelViewInverse) * (vb.xyz / vb.w);
         wPath = length(wBottom) - dist;
+    }
+#endif
+#if defined WATER_REFRACTION && defined USE_RT && (defined WATER_DEPTH_COLOR || defined WATER_FOAM)
+    // traced refraction: the view bends where it enters open water (the same waves as the surface), so the bottom
+    // looks nearer and shifts with the waves. One ray finds where the bent view meets the bottom; what's there is
+    // taken from the screen (already lit) when it's in view there, otherwise the view stays straight
+    if (wPath > 0.0 && wm.r > 0.58) {
+        vec3 o = p + gbufferModelViewInverse[3].xyz;
+        vec3 n = waveNormal(o.xz + cameraPosition.xz);
+        vec3 r = refract(normalize(p), n, 1.0 / 1.33);
+        float t = mcm_trace(o + r * 0.02, r, min(wPath * 2.0 + 4.0, 48.0));
+        if (t > 0.0) {
+            vec3 q = o + r * (t + 0.02);
+            vec4 qc = gbufferProjection * (gbufferModelView * vec4(q, 1.0));
+            vec2 quv = qc.xy / qc.w * 0.5 + 0.5;
+            float qd = texture(depthtex1, quv).r;
+            vec4 vq = gbufferProjectionInverse * vec4(vec3(quv, qd) * 2.0 - 1.0, 1.0);
+            float seen = length(mat3(gbufferModelViewInverse) * (vq.xyz / vq.w));
+            if (qc.w > 0.0 && all(greaterThan(quv, vec2(0.0))) && all(lessThan(quv, vec2(1.0)))
+                && texture(colortex11, quv).r > 0.5 && abs(seen - length(q)) < 0.05 * length(q) + 0.3) {
+                col = texture(colortex0, quv).rgb;
+                wPath = t;
+                wBottom = q - gbufferModelViewInverse[3].xyz;
+            }
+        }
     }
 #endif
 #ifdef WATER_DEPTH_COLOR
