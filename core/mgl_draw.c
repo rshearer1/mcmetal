@@ -514,6 +514,8 @@ static void submit(mgl_draw *d)
 {
     mgl_program *p = mgl_current_program();
     mgl_rt_record(p, d);
+    if (mgl_denoise_draw(p, d)) /* MetalFX instead of the pack's own pass */
+        return;
     if (!p || !p->x.gs_max_vertices) {
         mglb_draw(d);
         return;

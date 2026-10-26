@@ -147,6 +147,7 @@ int main(int argc, char **argv)
     static unsigned px[64 * 64];
     signal(SIGSEGV, on_crash);
     signal(SIGBUS, on_crash);
+    setenv("MCMETAL_DENOISE", "1", 1); /* only programs with MCMETAL_DENOISE_PASS see it (test 13) */
     setvbuf(stdout, NULL, _IOLBF, 0); /* piped through tee in CI: keep the lines a crash would otherwise lose */
     const char *r = (const char *)glGetString(GL_RENDERER);
     printf("renderer: %s\n", r ? r : "?");
@@ -983,6 +984,75 @@ int main(int argc, char **argv)
                          "  frag = vec4(s, t.x + n.x + a.x, l.x + float(b), float(c));\n"
                          "}\n", NULL);
     check(really_linked(rtf), "fragment shader with every mcm_trace call compiles on Metal");
+
+    /* 13. a pack's MCMETAL_DENOISE_PASS (MetalFX's denoiser, MCMETAL_DENOISE=1). Here, without Iris's camera
+       uniforms (and on CI's Mac, without an M3), MetalFX must step aside and the pack's own pass run: a copy. */
+    {
+        GLuint dt[5], dfbo, dout, dvao, dvbo;
+        static const GLenum fmt[4] = {GL_RGBA16F, GL_RGBA16_SNORM, GL_RGBA8, GL_RGBA8};
+        static unsigned char texel[64 * 64 * 4];
+        static float zero[64 * 64];
+        for (int i = 0; i < 64 * 64; i++) {
+            texel[i * 4] = 64; texel[i * 4 + 1] = 128; texel[i * 4 + 2] = 192; texel[i * 4 + 3] = 255;
+        }
+        glGenTextures(5, dt);
+        for (int i = 0; i < 4; i++) {
+            glBindTexture(GL_TEXTURE_2D, dt[i]);
+            glTexImage2D(GL_TEXTURE_2D, 0, fmt[i], 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, texel);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        }
+        glBindTexture(GL_TEXTURE_2D, dt[4]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, 64, 64, 0, GL_DEPTH_COMPONENT, GL_FLOAT, zero);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glGenTextures(1, &dout);
+        glBindTexture(GL_TEXTURE_2D, dout);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glGenFramebuffers(1, &dfbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, dfbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dout, 0);
+        glViewport(0, 0, 64, 64);
+        GLuint dp = program("#version 330 core\nlayout(location = 0) in vec2 pos;\n"
+                            "void main() { gl_Position = vec4(pos, 0.0, 1.0); }\n",
+                            "#version 330 core\n"
+                            "#define MCMETAL_DENOISE_PASS\n"
+                            "#define MCMETAL_DENOISE_COLOR colortex0\n"
+                            "#define MCMETAL_DENOISE_DEPTH depthtex0\n"
+                            "#define MCMETAL_DENOISE_NORMAL colortex1\n"
+                            "#define MCMETAL_DENOISE_ALBEDO colortex2\n"
+                            "#define MCMETAL_DENOISE_ROUGHNESS colortex10 b\n"
+                            "uniform sampler2D colortex0, colortex1, colortex2, colortex10, depthtex0;\n"
+                            "uniform float never;\nout vec4 frag;\n"
+                            "void main() {\n"
+                            "  ivec2 c = ivec2(gl_FragCoord.xy);\n"
+                            "  frag = texelFetch(colortex0, c, 0);\n"
+                            "  if (never > 1.0) frag += texelFetch(colortex1, c, 0) + texelFetch(colortex2, c, 0)\n"
+                            "                          + texelFetch(colortex10, c, 0) + texelFetch(depthtex0, c, 0);\n"
+                            "}\n", NULL);
+        check(really_linked(dp), "denoise pass program links");
+        float quad[] = {-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1};
+        glGenVertexArrays(1, &dvao);
+        glBindVertexArray(dvao);
+        glGenBuffers(1, &dvbo);
+        glBindBuffer(GL_ARRAY_BUFFER, dvbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof quad, quad, GL_STATIC_DRAW);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8, (void *)0);
+        glUseProgram(dp);
+        static const char *names[5] = {"colortex0", "colortex1", "colortex2", "colortex10", "depthtex0"};
+        for (int i = 0; i < 5; i++) {
+            glActiveTexture(GL_TEXTURE0 + (GLenum)i);
+            glBindTexture(GL_TEXTURE_2D, dt[i]);
+            glUniform1i(glGetUniformLocation(dp, names[i]), i);
+        }
+        glActiveTexture(GL_TEXTURE0);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        read_texture(rb, dout, ssbo, px);
+        char what[160];
+        snprintf(what, sizeof what, "denoise pass without MetalFX runs the pack's own copy (pixel %08x)", px[32 * 64 + 32]);
+        check(near(px[32 * 64 + 32], rgba(64, 128, 192, 255)) && near(px[64 + 1], rgba(64, 128, 192, 255)), what);
+    }
 
     printf("%d check(s) failed\n", failed);
     return failed;

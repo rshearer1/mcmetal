@@ -814,6 +814,8 @@ static void release_link(mgl_program *p)
     mgl_xlate_free(&p->x);
     free(p->name_hash);
     p->name_hash = NULL;
+    mgl_denoise_free(p->denoise);
+    p->denoise = NULL;
     for (int s = 0; s < 3; s++) {
         free(p->ublock[s]);
         p->ublock[s] = NULL;
@@ -988,6 +990,7 @@ void glLinkProgram(GLuint prog)
         }
     }
     p->copy_fs = plain_copy_fs(src[MGL_FRAGMENT]);
+    p->denoise = mgl_denoise_parse(src[MGL_FRAGMENT]);
     double t0 = now_ms();
     static int links, hits;
     static double ms;
