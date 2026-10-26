@@ -52,7 +52,8 @@ static int cenc_concurrent; /* cenc lets its dispatches overlap (geometry-shader
                           =0 turns it off. Waits on completion signals instead of polling, and presents at an even rate
                           (120/60/40/30/24/20/15 fps, 12 with interpolation, whichever the last frames' cost sustains, only rates that divide the screen's
                           refresh rate; MGL_TARGET_FPS forces one, over the power cap too: it's a test override).
-                          Only with vsync on. MGL_PRESENT_STATS=1 logs how evenly frames reach the screen. */
+                          Only with vsync on. MGL_PRESENT_STATS=1 logs how evenly frames reach the screen.
+                          MGL_PACE_FREE_FPS=N leaves frames that fit N fps or more unpaced (see pace_free). */
 static int opt(const char *name)
 {
     const char *e = getenv(name);
@@ -708,6 +709,7 @@ size_t mglb_buffer_size(mglb_buffer *b) { return b ? b->size : 0; }
 static void priv_forget(mglb_buffer *b);
 static void buf_destroy(mglb_buffer *b)
 {
+    mgl_rt_note_free(b);
     buf_live_bytes -= b->cap;
     if (b->last_use <= atomic_load(&completed_serial) && b->cap >= ((size_t)1 << 20))
         /* the GPU is done with it: drop its pages now. On GitHub's Mac, Metal's allocated size did not go down when
@@ -1343,10 +1345,15 @@ void mglb_texture_upload(mglb_texture *t, int level, int x, int y, int z, int w,
     }
 }
 
+static void depth_mipmaps(mglb_texture *t);
 void mglb_texture_generate_mipmaps(mglb_texture *t)
 {
-    if (!t || t->d.levels < 2 || is_int_format(t->pf) || is_depth_format(t->pf))
+    if (!t || t->d.levels < 2 || is_int_format(t->pf))
         return;
+    if (is_depth_format(t->pf)) {
+        depth_mipmaps(t);
+        return;
+    }
     [blit_encoder_for(t, NULL) generateMipmapsForTexture:OBJ(id<MTLTexture>, t->mtl)];
 }
 
@@ -3256,6 +3263,12 @@ static const char *builtin_msl =
     "vertex float4 clear_vs(uint vid [[vertex_id]], constant float4 &v [[buffer(0)]]) {\n"
     "  float2 p = float2((vid << 1) & 2, vid & 2); return float4(p.x * 2 - 1, 1 - p.y * 2, v.x, 1); }\n"
 "fragment CO clear_fs(constant float4 &c [[buffer(0)]]) { CO o; o.c0 = o.c1 = o.c2 = o.c3 = o.c4 = o.c5 = o.c6 = o.c7 = c; return o; }\n"
+    /* depth mipmaps: each level the average of 2x2 depths of the level above (t is a view of that one level) */
+    "struct MipDepth { float d [[depth(any)]]; };\n"
+    "fragment MipDepth depth_mip_fs(float4 pos [[position]], depth2d<float> t [[texture(0)]]) {\n"
+    "  uint2 m = uint2(t.get_width() - 1u, t.get_height() - 1u), c = uint2(pos.xy) * 2u;\n"
+    "  MipDepth o; o.d = 0.25 * (t.read(min(c, m)) + t.read(min(c + uint2(1u, 0u), m)) + t.read(min(c + uint2(0u, 1u), m)) +\n"
+    "                            t.read(min(c + 1u, m)));\n  return o; }\n"
     /* ray tracing: Sodium/Iris terrain vertices -> region-local float3 triangle list (see mgl_rt.c for the layout) */
     "struct RtInfo { uint vbase, stride, ioff, itype, count; int base_vertex; int ent_off; uint translucent;\n"
     "  int lmin, lmax; uint lcap; uint tw, th, aw, ah, split, flags; };\n"
@@ -3409,6 +3422,56 @@ static id<MTLRenderPipelineState> blit_pipeline(MTLPixelFormat fmt)
     else
         cache[@(fmt)] = ps;
     return ps;
+}
+
+/* glGenerateMipmap on a depth texture. Metal's blit mipmaps skip depth formats, and the levels used to be left as
+   Metal made them (whatever the memory held): SEUS PTGI reads its shadow map at LOD 4 (shadowtexMipmap) to tell
+   where water lies above a surface, and the garbage there put water caustics on every floor and wall. Each level
+   is drawn from the one above it, averaging 2x2 depths, as GL drivers do. 2D depth-only textures; MGL_DEPTH_MIPS=0
+   leaves the levels alone as before. */
+static void depth_mipmaps(mglb_texture *t)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("MGL_DEPTH_MIPS");
+        on = !(e && *e == '0');
+    }
+    if (!on || t->d.type != MGLT_2D || t->pf == MTLPixelFormatDepth32Float_Stencil8)
+        return;
+    static id<MTLRenderPipelineState> ps[2]; /* Depth32Float, Depth16Unorm */
+    int k = t->pf == MTLPixelFormatDepth16Unorm;
+    if (!ps[k]) {
+        MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
+        pd.vertexFunction = builtin(@"clear_vs");
+        pd.fragmentFunction = builtin(@"depth_mip_fs");
+        pd.depthAttachmentPixelFormat = t->pf;
+        NSError *e = nil;
+        ps[k] = [dev newRenderPipelineStateWithDescriptor:pd error:&e];
+        if (!ps[k]) {
+            mgl_log("depth mipmap pipeline: %s", e.localizedDescription.UTF8String);
+            return;
+        }
+    }
+    id<MTLTexture> tex = OBJ(id<MTLTexture>, t->mtl);
+    int levels = (int)tex.mipmapLevelCount;
+    for (int l = 1; l < levels; l++) {
+        int w = (int)tex.width >> l, h = (int)tex.height >> l;
+        mgl_target one = {0};
+        one.depth = t;
+        one.depth_level = l;
+        one.width = w > 0 ? w : 1;
+        one.height = h > 0 ? h : 1;
+        id<MTLTexture> src = [tex newTextureViewWithPixelFormat:tex.pixelFormat textureType:MTLTextureType2D
+                                                         levels:NSMakeRange((NSUInteger)(l - 1), 1) slices:NSMakeRange(0, 1)];
+        id<MTLRenderCommandEncoder> e = begin_pass(&one, 0, NULL, 0, 0);
+        [e setRenderPipelineState:ps[k]];
+        [e setDepthStencilState:get_depth_state(0, 1, GL_ALWAYS)];
+        float z[4] = {0};
+        [e setVertexBytes:z length:sizeof z atIndex:0];
+        [e setFragmentTexture:src atIndex:0];
+        [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+        end_encoders();
+    }
 }
 
 static id<MTLSamplerState> blit_sampler(int linear)
@@ -5916,6 +5979,33 @@ static int choose_paced_fps(mgl_ctx *c, int shown_per_frame)
     return c->paced_fps;
 }
 
+/* MGL_PACE_FREE_FPS=N (off unless set): with pacing on, frames that could come faster than the paced rate and at
+   least N fps go to the screen as soon as they are ready instead of being held to an even 60/40/...: on a 120 Hz
+   screen the even rates jump from 120 straight to 60, so a frame costing 10 ms (M3, Metal test instance, RT pack +
+   MetalFX: CPU 7.9 + GPU 10.4 ms) was held at 60 when it could show ~90, unevenly. Below N pacing works as before.
+   The paced rate keeps being chosen underneath, so it takes over again as soon as the cost drops below N, with 10%
+   either way so the two don't flip back and forth. */
+static int pace_free(mgl_ctx *c, int fps)
+{
+    static int free_fps = -1, on;
+    if (free_fps < 0) {
+        const char *e = getenv("MGL_PACE_FREE_FPS");
+        free_fps = e ? atoi(e) : 0;
+        if (free_fps > 0)
+            mgl_log("frame pacing: frames that fit %d fps or more go out unpaced", free_fps);
+    }
+    if (free_fps <= 0 || fps >= pace_rates[0] || c->avg_frame_ms <= 0) {
+        on = 0;
+        return 0;
+    }
+    double can = 1000.0 / c->avg_frame_ms;
+    int was = on;
+    on = on ? can >= free_fps * 0.9 && can > fps : can >= free_fps * 1.1 && can > fps * 1.1;
+    if (on != was)
+        mgl_log("frame pacing: %s (frame time %.1f ms, paced rate %d)", on ? "unpaced" : "paced again", c->avg_frame_ms, fps);
+    return on;
+}
+
 /* MGL_PRESENT_STATS=1 (or MGL_PROFILE): once a second, log how evenly frames reached the screen, from the
    drawables' presentedTime: shown fps, mean and spread of the time each frame stayed on screen, the worst one,
    and judder = share of frames whose time on screen differs from the previous frame's by more than 2 ms.
@@ -7146,7 +7236,10 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
                 atomic_store(&pace_target_ms, 1000.0 / fps);
                 mgl_log("frame pacing: presenting at an even %d fps (frame time %.1f ms)", fps, c->avg_frame_ms);
             }
-            [current_cb() presentDrawable:drawable afterMinimumDuration:1.0 / fps];
+            if (pace_free(c, fps))
+                [current_cb() presentDrawable:drawable];
+            else
+                [current_cb() presentDrawable:drawable afterMinimumDuration:1.0 / fps];
         } else {
             [current_cb() presentDrawable:drawable];
         }

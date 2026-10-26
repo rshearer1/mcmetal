@@ -46,6 +46,12 @@
 #define LIGHT_SHAFTS_STRENGTH 1.0 // [0.25 0.5 0.75 1.0 1.5 2.0 3.0]
 #define LIGHT_SHAFTS_STEPS 6 // [4 6 8 12 16]
 #define LIGHT_SHAFTS_SCALE 0.5
+#define LIGHT_SHAFTS_RATE 4 // [2 4] light shafts traced for 1 in this many pixels each frame (the rest keep their average; shafts are soft, 4 is enough)
+#if LIGHT_SHAFTS_RATE == 4
+    #define LIGHT_SHAFTS_BLEND 0.25
+#else
+    #define LIGHT_SHAFTS_BLEND 0.125
+#endif
 
 #define LABPBR_NORMAL_STRENGTH 1.0 // [0.5 1.0 1.5 2.0 3.0] how deep LabPBR normal maps and height look
 #define LABPBR // LabPBR resource packs: normal maps, shiny and metal blocks, glowing texels

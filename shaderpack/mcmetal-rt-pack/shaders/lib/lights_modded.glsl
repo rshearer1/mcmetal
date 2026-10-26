@@ -1,5 +1,5 @@
 // Modded light blocks' colour and vanilla light level by block id (made by shaderpack/tools/gen_modded_lights.py
-// from tools/modded-lights.tsv; don't edit). Used by lightColorOf in lib/lights.glsl.
+// from mod/resources/mcmetal/lights.tsv; don't edit). Used by lightColorOf in lib/lights.glsl.
 vec3 moddedLightColor(int id, inout float level) {
     switch (id) {
     case 10110: level = 15.0; return vec3(1.00, 0.55, 0.22); // torch, 876 blocks

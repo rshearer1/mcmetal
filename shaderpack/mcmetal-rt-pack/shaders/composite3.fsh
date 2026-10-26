@@ -11,7 +11,7 @@ const bool colortex6Clear = false;
 #include "/lib/common.glsl"
 #include "/lib/uniforms.glsl"
 
-uniform sampler2D colortex0, colortex6;
+uniform sampler2D colortex0, colortex6, depthtex0;
 
 in vec2 texcoord;
 flat in float keyExposure;
@@ -28,12 +28,16 @@ void main() {
             vec2 uv = (vec2(x, y) + 0.5) / 8.0;
             float w = 1.0 - 0.6 * length(uv - 0.5);   // the middle of the screen counts more
             float l = luma(textureLod(colortex0, uv, 5.0).rgb);
+            // the sky counts much less, and never as the brightest spot: an eye looking at a sunlit hill under a
+            // bright sky sees the hill, it doesn't stop down for the sky (that made daylight ground far too dark)
+            bool sky = textureLod(depthtex0, uv, 0.0).r >= 1.0;
+            if (sky) w *= 0.25;
             logSum += log(max(l, 1e-4)) * w;
-            peak = max(peak, l * w);
+            if (!sky) peak = max(peak, l * w);
             wSum += w;
         }
     float avg = exp(logSum / wSum);
-    float target = clamp(0.16 / avg, keyExposure * 0.25, keyExposure * 4.0);
+    float target = clamp(0.18 / avg, keyExposure * 0.25, keyExposure * 4.0);
     // highlight guard: a lit room under a black night sky averages dark, which would blow the room out. Never brighten
     // past the point where the brightest metered spot lands well above white (ACES rolls it off from there). It only
     // takes back the eye's extra brightening and at most half of the time of day's own exposure, so a bright stage

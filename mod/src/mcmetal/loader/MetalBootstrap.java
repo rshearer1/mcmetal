@@ -114,6 +114,11 @@ public final class MetalBootstrap implements GraphicsBootstrapper {
                     # How much of the last stretch before the render distance fades Minecraft's chunks into DH's
                     # (0 = hard edge, 0.25 = default, 1 = the whole way out).
                     #MCMETAL_DH_EDGE=0.25
+                    #
+                    # Every shader pack lights the blocks in mcmetal's light list (modded lamps, froglights, soul
+                    # lanterns...) like their closest vanilla light, unless the pack names them itself. Add or change
+                    # lights in mcmetal/lights.tsv (block, states, light level, colour). 0 = packs see only their own list.
+                    #MCMETAL_LIGHT_LIST=0
                     """);
         // the native side reads this file itself; the Java side (in-memory patches) sees it as mcmetal.opt.NAME
         for (String line : Files.readAllLines(options)) {
