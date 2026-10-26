@@ -16,6 +16,7 @@
 #define UNIFIED_TARGETS // see-through things share water's buffer list, so they draw in one Metal render pass
 //#define PHOTO_MODE // standing still: rays keep averaging much longer, for clean screenshots (lights settle slower while still)
 #define PHOTO_FRAMES 128.0 // [32.0 64.0 128.0 256.0]
+//#define METALFX_DENOISE // Apple's MetalFX denoiser cleans the whole lit picture (needs mcmetal with MCMETAL_DENOISE=1, an M3 or newer and macOS 26; our own denoiser is switched off)
 #define DENOISE_PASSES 2 // [1 2] rounds of the bounce-light denoiser: 1 does the same reach in one wider pass (one pass fewer)
 #define RT_NOISE 1 // [0 1] random numbers for rays: 0 the old shifted noise, 1 decorrelated per dimension (Apple's denoiser advice)
 #define SHADOW_FILTER // smooth the grain out of ray-traced sun shadows (a small blur that keeps edges between objects)
@@ -190,6 +191,10 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef WATER_FOAM
 #endif
 #ifdef GI_COARSE_RAYS
+#endif
+// MetalFX denoises the whole picture: our own GI denoiser steps aside
+#ifdef METALFX_DENOISE
+    #undef DENOISER
 #endif
 #ifdef DENOISER
 #endif

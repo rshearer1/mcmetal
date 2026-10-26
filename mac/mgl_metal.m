@@ -1124,6 +1124,7 @@ static MTLPixelFormat pixel_format(enum mgl_format f)
     case MGLF_R32UI: return MTLPixelFormatR32Uint;
     case MGLF_R32I: return MTLPixelFormatR32Sint;
     case MGLF_RGBA16: return MTLPixelFormatRGBA16Unorm;
+    case MGLF_RGBA16_SNORM: return MTLPixelFormatRGBA16Snorm;
     case MGLF_R16: return MTLPixelFormatR16Unorm;
     case MGLF_RG16: return MTLPixelFormatRG16Unorm;
     case MGLF_RGBA8UI: return MTLPixelFormatRGBA8Uint;
@@ -1164,7 +1165,7 @@ static int bytes_per_texel(MTLPixelFormat pf)
     case MTLPixelFormatR8Unorm: case MTLPixelFormatR8Uint: return 1;
     case MTLPixelFormatRG8Unorm: case MTLPixelFormatR16Float: case MTLPixelFormatR16Uint: case MTLPixelFormatR16Unorm:
     case MTLPixelFormatDepth16Unorm: return 2;
-    case MTLPixelFormatRGBA16Float: case MTLPixelFormatRG32Float: case MTLPixelFormatRGBA16Unorm:
+    case MTLPixelFormatRGBA16Float: case MTLPixelFormatRG32Float: case MTLPixelFormatRGBA16Unorm: case MTLPixelFormatRGBA16Snorm:
     case MTLPixelFormatRGBA16Uint: case MTLPixelFormatDepth32Float_Stencil8: case MTLPixelFormatRGBA16Sint:
     case MTLPixelFormatRG32Uint: return 8;
     case MTLPixelFormatRGBA32Float: case MTLPixelFormatRGBA32Uint: case MTLPixelFormatRGBA32Sint: return 16;

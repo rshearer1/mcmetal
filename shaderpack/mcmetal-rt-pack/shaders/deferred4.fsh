@@ -100,8 +100,14 @@ vec3 lightningLight(vec3 p) {
 }
 #endif
 
+#ifdef METALFX_DENOISE
+/* RENDERTARGETS: 0,15 */
+layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outAlbedo;   // colortex15: diffuse albedo for MetalFX's denoiser (deferred6.fsh)
+#else
 /* RENDERTARGETS: 0 */
 layout(location = 0) out vec4 outColor;
+#endif
 
 vec3 playerFromDepth(vec2 uv, float depth) {
     vec4 v = gbufferProjectionInverse * vec4(vec3(uv, depth) * 2.0 - 1.0, 1.0);
@@ -146,6 +152,9 @@ vec3 filteredGI(vec3 n, float dist) {
 void main() {
     float depth = texture(depthtex0, texcoord).r;
     vec4 albedo = texture(colortex0, texcoord);
+#ifdef METALFX_DENOISE
+    outAlbedo = vec4(toLinear(albedo.rgb), 1.0);
+#endif
     vec4 m = texture(colortex2, texcoord);
     int mat = int(m.r * 255.0 + 0.5);
     vec3 p = playerFromDepth(texcoord, depth);
