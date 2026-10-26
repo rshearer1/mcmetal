@@ -171,7 +171,8 @@ jobs:
     runs-on: macos-15
     # a hung game must not hold one of our 5 Macs for half an hour: the slowest healthy phase (ab-*) takes ~8 min;
     # segment benches and soak tests (long) keep 30
-    timeout-minutes: ${{ (github.event.inputs.segments || github.event.inputs.long == 'true') && 30 || 15 }}
+    # the full Hearth & Hex pack (hh-*) launches twice and reloads twice: 40
+    timeout-minutes: ${{ startsWith(matrix.phase, 'hh-') && 40 || (github.event.inputs.segments || github.event.inputs.long == 'true') && 30 || 15 }}
     strategy:
       fail-fast: false
       matrix:
@@ -192,6 +193,12 @@ jobs:
         with:
           path: ~/mcgame
           key: mc-1.21.1-neoforge-21.1.259-sodium-iris-v1
+      - name: Cache Hearth & Hex mods (hh-* phases; links in tests/game/hh-pack/mods.txt)
+        if: ${{ startsWith(matrix.phase, 'hh-') }}
+        uses: actions/cache@v4
+        with:
+          path: ~/mcgame/hh-mods
+          key: hh-mods-${{ hashFiles('tests/game/hh-pack/mods.txt') }}
       - name: Real game on mcmetal (screenshots)
         # inputs reach the script as environment variables, never pasted into the shell text
         env:

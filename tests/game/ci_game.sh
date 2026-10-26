@@ -8,6 +8,7 @@
 #   glcount-pack-NAME (the pack on Apple's OpenGL, draws counted by tools/glcount.c)
 #   ab-pack-NAME ab-packnight-NAME (the pack three times in one job: new, old = with GAME_AB_OFF's env, new)
 #   archive-NAME (pipeline binary archive: cold, warm, warm without archive)
+#   hh-pack hh-pack-off (Hearth & Hex's 341 mods from Modrinth: load times, F3+T, with and without the load fixes)
 #   (default: the first three)
 # WORK holds the game install (cacheable), OUT gets screenshots and logs. Needs Java 21 as `java` or $JAVA.
 set -uo pipefail
@@ -541,6 +542,77 @@ sound_phase() { # name [VAR=value ...]
     mv "$G/options.txt.sound" "$G/options.txt"
 }
 
+# Hearth & Hex (the pack mcmetal is made for, release 1.3.14): its 341 client mods from Modrinth, in a game folder of
+# its own (WORK/hh, sharing WORK/mc). tests/game/hh-pack/mods.txt holds links and hashes only: the jars are fetched at
+# run time into WORK/hh-mods (cached) and never kept in the repo. No KubeJS scripts or pack configs, only the settings
+# the test needs (Every Compat's cached assets as the pack ships them, update checks off as in 1.3.15). Load times on
+# the full pack: launch to the title screen, F3+T twice (MCMETAL_CONTROL "resources"), then a second launch, with
+# Moonlight's asset cache state at each step; summary.txt has the lines. hh-pack-off: the same with the load fixes off.
+hh_pack_phase() { # name [VAR=value ...]
+    local name=$1 H=$WORK/hh run; shift
+    mkdir -p "$H/game/mods" "$H/game/config/xaero/lib" "$WORK/hh-mods" "$OUT/$name"
+    ln -sfn "$WORK/mc" "$H/mc"; cp "$WORK/install.json" "$H/install.json"
+    echo "=== phase $name: Hearth & Hex 1.3.14 mods, launch + F3+T x2 + relaunch"
+    local started=$SECONDS
+    python3 -I -c '
+import concurrent.futures as cf, os, sys
+sys.path.insert(0, sys.argv[1]); import bare_mc
+jobs = [l.strip().split("|") for l in open(sys.argv[2]) if l.strip()]
+with cf.ThreadPoolExecutor(16) as ex:
+    list(ex.map(lambda j: bare_mc.fetch(j[0], os.path.join(sys.argv[3], j[2]), j[1]), jobs))
+print(f"{len(jobs)} mods ready")' "$SRC/tools" "$SRC/tests/game/hh-pack/mods.txt" "$WORK/hh-mods" || { echo "could not download the pack's mods"; return; }
+    rm -f "$H/game/mods/"*.jar
+    cut -d'|' -f3 "$SRC/tests/game/hh-pack/mods.txt" | while read -r f; do ln -f "$WORK/hh-mods/$f" "$H/game/mods/$f"; done
+    cp "$G/mods/mcmetal.jar" "$H/game/mods/mcmetal.jar"
+    cp "$SRC/tests/game/options.txt" "$H/game/options.txt"
+    printf 'enableShaders=false\ndisableUpdateMessage=true\n' > "$H/game/config/iris.properties"
+    printf '[general]\n\tdynamic_assets_generation_mode = "CACHED"\n' > "$H/game/config/everycomp-client.toml"
+    printf '[general]\n\tserver_assets_generation_mode = "CACHED"\n' > "$H/game/config/everycomp-common.toml"
+    printf '[client.advanced.autoUpdater]\n\tenableAutoUpdater = false\n' > "$H/game/config/DistantHorizons.toml"
+    printf 'versionCheck = false\n' > "$H/game/config/fml.toml"
+    echo "allow_internet_access = false" > "$H/game/config/xaero/lib/common.cfg"
+    for run in 1 2; do
+        rm -f "$OUT/$name/control"
+        MCMETAL_CONTROL="$OUT/$name/control" MCMETAL_BACKGROUND=${MCMETAL_BACKGROUND-behind} \
+        MGL_LOG="$OUT/$name/mgl-$run.log" MGL_CACHE_DIR="$WORK/cache" env ${GAME_ENV:-} "$@" \
+            python3 -I "$SRC/tools/bare_mc.py" launch "$H" --java "$JAVA" --xmx "${GAME_XMX:-5G}" --size 1280x720 \
+            ${LIBARGS[@]+"${LIBARGS[@]}"} > "$OUT/$name/launch-$run.out" 2>&1
+        local pid t=0 want=0
+        pid=$(cat "$H/client.pid" 2>/dev/null)
+        hh_wait() { # pattern seconds: until the game log has it, the game is gone or the time is up
+            local k=0
+            while [ $k -lt "$2" ] && ! grep -qE "$1" "$H/client.log" 2>/dev/null && kill -0 "$pid" 2>/dev/null; do sleep 5; k=$((k + 5)); done
+            grep -qE "$1" "$H/client.log" 2>/dev/null
+        }
+        if hh_wait 'Game took' 900 && [ $run = 1 ]; then
+            sleep 15
+            for want in 1 2; do
+                echo resources > "$OUT/$name/control"
+                hh_wait "control done $want" 600 || break
+            done
+        fi
+        kill "$pid" 2>/dev/null; t=0; while [ $t -lt 20 ] && kill -0 "$pid" 2>/dev/null; do sleep 0.5; t=$((t + 1)); done
+        kill -9 "$pid" 2>/dev/null
+        cp "$H/client.log" "$OUT/$name/client-$run.log" 2>/dev/null
+        echo "launch $run:" >> "$OUT/$name/summary.txt"
+        grep -hE 'Game took|Resource cache state|Finished runtime resources generation|resources reloaded|load fixes: Moonlight|took [0-9.]+ s to run a deferred task|control failed' \
+            "$OUT/$name/client-$run.log" | sed 's/^.*\]: //' | cut -c1-200 >> "$OUT/$name/summary.txt"
+        if ls "$H/game"/crash-reports/*.txt >/dev/null 2>&1; then
+            mkdir -p "$OUT/$name/crash-reports" && mv "$H/game"/crash-reports/*.txt "$OUT/$name/crash-reports/"
+            CRASHED="$CRASHED $name"
+            echo "::error::phase $name: Minecraft crash report ($(grep -m1 -h '^Description:' "$OUT/$name"/crash-reports/*.txt | cut -c1-160))"
+        fi
+        if ls "$H/game"/hs_err_pid*.log >/dev/null 2>&1; then
+            mv "$H/game"/hs_err_pid*.log "$OUT/$name/"; CRASHED="$CRASHED $name"
+            echo "::error::phase $name: the JVM crashed"
+        fi
+        rm -f "$H/game/mcmetal/starting"
+    done
+    cat "$OUT/$name/summary.txt"
+    grep -h 'last launch on Metal did not' "$OUT/$name"/client-*.log 2>/dev/null | head -1
+    echo "phase $name took $((SECONDS - started)) s"
+}
+
 for p in $PHASES; do
     act off
     case $p in
@@ -553,6 +625,8 @@ for p in $PHASES; do
             grep -E "use|FAIL|cutout|replayed|failed" "$OUT/world/replay-sodium-cutout.txt"
         fi ;;
     complementary) run_phase complementary 300 metal true ;;
+    hh-pack) hh_pack_phase hh-pack ;;                         # Hearth & Hex's mods: launch, F3+T x2, relaunch
+    hh-pack-off) hh_pack_phase hh-pack-off MCMETAL_LOAD_FIXES=0 ;;  # the same with the load fixes off
     sound) sound_phase sound ;;                       # Sound Physics Remastered, rays off the sound engine thread
     sound-off) sound_phase sound-off MCMETAL_SOUND_PHYSICS_ASYNC=0 ;;  # the same with the fix off
     sound-apple) sound_phase sound-apple MCMETAL_AUDIO_ENGINE=apple MCMETAL_AL_TAP="$OUT/sound-apple/played.caf" ;;  # on Apple's audio engine (libmcmetal-al)
