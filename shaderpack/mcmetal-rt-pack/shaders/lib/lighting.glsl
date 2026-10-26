@@ -36,6 +36,10 @@ vec3 blockLightColor() { return vec3(BLOCK_LIGHT_R, BLOCK_LIGHT_G, BLOCK_LIGHT_B
 
 // Light arriving at a surface, before it's multiplied by the surface colour.
 // sh = sun shadow (1 lit, 0 shadowed); ao = vanilla corner darkening for now (ray-traced AO in step 2).
+// HELD_LIGHT_SHADOWS: 0 where something stands between this surface and the light in your hand (deferred4.fsh
+// traces it before lighting the pixel); 1 everywhere else
+float heldVis = 1.0;
+
 vec3 surfaceLight(vec3 p, vec3 n, vec2 lm, float ao, int mat, vec3 L, vec3 sunCol, vec3 skyAmb, vec3 sh) {
     float ndl = dot(n, L);
     float diff = mat == MAT_FOLIAGE ? 0.55 + 0.45 * abs(ndl) : max(ndl, 0.0);
@@ -49,7 +53,7 @@ vec3 surfaceLight(vec3 p, vec3 n, vec2 lm, float ao, int mat, vec3 L, vec3 sunCo
     vec3 sky = skyAmb * (hasSkylight ? lm.y * lm.y : 1.0) * (0.7 + 0.3 * n.y) * ao;
     // block light (torches etc.); the held light is a sphere around the player
     float held = float(max(heldBlockLightValue, heldBlockLightValue2));
-    float bl = max(lm.x, clamp((held - length(p)) / 15.0, 0.0, 1.0));
+    float bl = max(lm.x, clamp((held - length(p)) / 15.0, 0.0, 1.0) * heldVis);
 #ifdef STYLE_TOON
     bl = toonBands(bl);
 #endif

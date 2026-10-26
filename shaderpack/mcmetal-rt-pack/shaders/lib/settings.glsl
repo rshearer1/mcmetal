@@ -72,6 +72,15 @@
     #define LIGHT_SHAFTS_BLEND 0.125
 #endif
 
+//#define HELD_LIGHT_SHADOWS // the torch or lantern in your hand casts shadows (one ray per lit pixel while you hold a light)
+#define END_PORTAL_STARS // a deep starfield inside End portals and gateways instead of vanilla's flat layers
+#define END_PORTAL_BRIGHTNESS 1.0 // [0.5 1.0 1.5 2.0]
+//#define AURORA // northern lights at a real height over the world, in every look (you can fly through them); replaces Witchy's painted aurora
+#define AURORA_HEIGHT 400.0 // [250.0 400.0 600.0 1000.0]
+#define AURORA_SCALE 1.0 // [0.5 1.0 2.0]
+#define AURORA_SPEED 1.0 // [0.5 1.0 2.0 4.0]
+#define AURORA_BRIGHTNESS 1.0 // [0.5 1.0 2.0 3.0]
+//#define PIXEL_SHADOWS // sun shadows snap to the blocks' own pixels (stepped edges like Minecraft's textures; suits Storybook and Fairytale)
 #define LIGHTNING_FLASH // lightning bolts light up the land and the sky in a flickering blue-white flash
 #define LIGHTNING_STRENGTH 1.0 // [0.5 1.0 1.5 2.0]
 #define WAVING_PLANTS // grass, flowers, crops and leaves sway gently in the wind
@@ -188,6 +197,14 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef LIGHT_SHAFTS
 #endif
 #ifdef SHAFT_BUDGET
+#endif
+#ifdef HELD_LIGHT_SHADOWS
+#endif
+#ifdef END_PORTAL_STARS
+#endif
+#ifdef AURORA
+#endif
+#ifdef PIXEL_SHADOWS
 #endif
 #ifdef CAUSTICS
 #endif
