@@ -75,7 +75,7 @@ void main() {
         // under water: much thicker (the beams you see from below the surface), and blue-green
         if (underWater) { dist = min(dist, 32.0); density = 0.04 * (LIGHT_SHAFTS_STRENGTH * STYLE_SHAFTS); }
         float stepLen = dist / float(LIGHT_SHAFTS_STEPS);
-        float jitter = ign(gl_FragCoord.xy, frameCounter);
+        float jitter = ign(valid ? rayPixel(gl_FragCoord.xy, LIGHT_SHAFTS_RATE) : gl_FragCoord.xy, frameCounter);
         float lit = 0.0;
         for (int i = 0; i < LIGHT_SHAFTS_STEPS; i++) {
             float t = (float(i) + jitter) * stepLen;

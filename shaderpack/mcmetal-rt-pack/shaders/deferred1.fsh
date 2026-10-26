@@ -54,8 +54,12 @@ void main() {
         // level is 0 there; worlds without sky light, like the End, always trace)
         bool skyReach = nl.w > 0.5 / 15.0 || !hasSkylight;
         if (skyReach && (dot(ns, lightDir) > 0.0 || mat == MAT_FOLIAGE)) {
-            float a1 = ign(gl_FragCoord.xy + vec2(13.0, 71.0), frameCounter * 3 + 1) * 6.2832;
-            float a2 = sqrt(ign(gl_FragCoord.xy + vec2(91.0, 29.0), frameCounter * 5 + 2)) * radians(SUN_SOFTNESS);
+            vec2 q = gl_FragCoord.xy;
+  #ifdef SHADOW_CHECKERBOARD
+            if (valid) q = rayPixel(q, SHADOW_RATE);   // only 1 in SHADOW_RATE pixels traces (see rayRest above)
+  #endif
+            float a1 = ign(q + vec2(13.0, 71.0), frameCounter * 3 + 1) * 6.2832;
+            float a2 = sqrt(ign(q + vec2(91.0, 29.0), frameCounter * 5 + 2)) * radians(SUN_SOFTNESS);
             vec3 st = normalize(abs(lightDir.y) < 0.99 ? cross(lightDir, vec3(0.0, 1.0, 0.0)) : cross(lightDir, vec3(1.0, 0.0, 0.0)));
             vec3 sl = normalize(lightDir + (st * cos(a1) + cross(lightDir, st) * sin(a1)) * tan(a2));
             sh = sunShadow(p, ns, sl, mat);
