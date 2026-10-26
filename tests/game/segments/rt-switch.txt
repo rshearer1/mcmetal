@@ -1,0 +1,6 @@
+# pack-switch crash check (PR #79): from our RT pack to another pack and back, twice. Before #79 the game crashed
+# switching back (ray-tracing draws kept buffers the other pack had freed). Run from an ours-* phase.
+away1||||-|yes|complementary
+back1||||-|yes|mcmetal-rt
+away2||||-|yes|bliss
+back2||||-|yes|mcmetal-rt
