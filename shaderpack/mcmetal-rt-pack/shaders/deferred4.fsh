@@ -33,6 +33,9 @@ float mcm_trace(vec3 origin, vec3 dir, float tmax);
     // reflections on puddles and on smooth LabPBR surfaces
     #define SURFACE_RT
     #include "/lib/reflect.glsl"
+  #ifdef REFLECTION_DENOISE
+    #include "/lib/refldenoise.glsl"
+  #endif
 #endif
 
 uniform sampler2D colortex0, colortex1, colortex2, colortex3, colortex4, colortex5, colortex7, colortex10, depthtex0;
@@ -109,8 +112,10 @@ vec3 lightningLight(vec3 p) {
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outAlbedo;   // colortex15: diffuse albedo for MetalFX's denoiser (deferred6.fsh)
 layout(location = 2) out vec4 outMotion;   // colortex7 (free without our denoiser): motion for it, in pixels
+  #ifndef REFL_DENOISE_LIB   // (which declares these too)
 uniform mat4 gbufferPreviousModelView, gbufferPreviousProjection;
 uniform vec3 previousCameraPosition;
+  #endif
 
 // where this pixel was last frame minus where it is now, in pixels (GL's way up: +y is up the screen). Camera
 // motion only, like the TAA's reprojection (composite2.fsh); the held item moves with the camera, so it gets 0
@@ -356,6 +361,24 @@ void main() {
                 vec3 rdm = reflect(v, nm);
                 if (dot(rdm, n) < 0.02) rdm = reflect(v, n);
                 vec3 seen = mix(skyColor(rdm, sunDir) * smoothstep(0.3, 0.9, nl.w), envLight, smoothstep(0.1, 0.6, rough));
+  #if defined SURFACE_RT && defined GLOSSY_RT
+                // satin close by: one short traced ray around the mirror direction (GGX), so the sheen shows what is
+                // really there (a torch, the wall opposite) instead of the sky-or-surroundings guess. Fully rough
+                // surfaces keep the guess (their blur is the GI); TAA averages the scatter
+                float gw = smoothstep(0.2, 0.35, smoothness) * (1.0 - smoothstep(GLOSSY_RT_DISTANCE * 0.7, GLOSSY_RT_DISTANCE, length(p)));
+                if (gw > 0.0) {
+                    float u1 = rayRand(gl_FragCoord.xy, frameCounter, 3), u2 = rayRand(gl_FragCoord.xy, frameCounter, 4);
+                    float ct = sqrt((1.0 - u1) / (1.0 + (alpha * alpha - 1.0) * u1)), st = sqrt(1.0 - ct * ct), ph = 6.2832 * u2;
+                    vec3 tx = normalize(abs(nm.y) < 0.99 ? cross(nm, vec3(0.0, 1.0, 0.0)) : cross(nm, vec3(1.0, 0.0, 0.0)));
+                    vec3 hh = tx * (st * cos(ph)) + cross(nm, tx) * (st * sin(ph)) + nm * ct;
+                    vec3 rdg = reflect(v, hh);
+                    if (dot(rdg, n) < 0.02) rdg = rdm;
+                    float tg;
+                    vec3 traced = traceRadiance(p + n * 0.02, rdg, GLOSSY_RT_DISTANCE, lightDir, sunCol, skyAmb, sunDir, smoothstep(0.3, 0.9, nl.w), tg);
+                    traced /= 1.0 + luma(traced) * 0.08;   // one bright hit must not sparkle
+                    seen = mix(seen, traced, gw);
+                }
+  #endif
                 col += seen * spec * ao * (1.0 - w) * ROUGH_REFLECTIONS_STRENGTH;
             }
             if (w > 0.0 && (metal || luma(Fv) > 0.03)) {
@@ -368,6 +391,9 @@ void main() {
                 vec3 refl = skyColor(rd, sunDir) * skyOpen;
   #ifdef SURFACE_RT
                 refl = traceReflection(p + n * 0.02, rd, lightDir, sunCol, skyAmb, sunDir, skyOpen);
+    #ifdef REFLECTION_DENOISE
+                refl = reflDenoise(p, refl, alpha);
+    #endif
   #endif
                 refl /= 1.0 + luma(refl) * 0.08;
                 col = mix(col, refl * (metal ? a : vec3(1.0)), w * (metal ? 0.9 : luma(Fv)));

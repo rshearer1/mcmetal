@@ -149,7 +149,12 @@ void main() {
     // coloured block light: one nearby light per pixel and frame, averaged and filtered along with the GI. Where
     // Minecraft's own block light is zero no light block is in reach: skip the light list (most of a daytime view)
     if (texture(colortex1, texcoord).z > 0.05)
-    #if RT_NOISE == 1
+    #ifdef LIGHT_RESTIR
+    gi += min(coloredBlockLightReSTIR(p, n, mat, rayRand(gl_FragCoord.xy, frameCounter, 2),
+                                      rayRand(gl_FragCoord.xy, frameCounter, 3), rayRand(gl_FragCoord.xy, frameCounter, 4),
+                                      rayRand(gl_FragCoord.xy, frameCounter, 5),
+                                      puv * vec2(viewWidth, viewHeight) * GI_SCALE, valid, gl_FragCoord.xy), vec3(32.0));
+    #elif RT_NOISE == 1
     gi += min(coloredBlockLight(p, n, mat, rayRand(gl_FragCoord.xy, frameCounter, 2),
                                 rayRand(gl_FragCoord.xy, frameCounter, 3),
                                 rayRand(gl_FragCoord.xy, frameCounter, 4)), vec3(32.0));
@@ -178,4 +183,9 @@ void main() {
     outAO = vec4(mix(valid ? h.r : ao, ao, w), frames, dist, 1.0);
     vec3 hgi = valid ? texture(colortex4, puv * GI_SCALE).rgb : gi;
     outGI = vec4(mix(hgi, gi, w), 1.0);
+#if defined WORLD_CACHE && defined GI_CACHE
+    // feed the world-space light cache (lib/worldcache.glsl) from settled pixels, a quarter of them each frame
+    if (frames >= 4.0 && ((int(gl_FragCoord.x) + 2 * int(gl_FragCoord.y) + frameCounter) & 3) == 0)
+        wcStore(p + cameraPosition, octDecode(texture(colortex1, texcoord).xy), outGI.rgb);
+#endif
 }
