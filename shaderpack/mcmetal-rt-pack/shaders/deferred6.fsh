@@ -11,10 +11,11 @@
 #define MCMETAL_DENOISE_ALBEDO colortex15
 #define MCMETAL_DENOISE_ROUGHNESS colortex10 b
 #define MCMETAL_DENOISE_SPECULAR colortex10 a
+#define MCMETAL_DENOISE_MOTION colortex7      // rg: previous minus current position, in pixels, +y up (deferred4.fsh)
 #include "/lib/settings.glsl"
 #include "/lib/uniforms.glsl"
 
-uniform sampler2D colortex0, colortex1, colortex10, colortex15, depthtex0;
+uniform sampler2D colortex0, colortex1, colortex7, colortex10, colortex15, depthtex0;
 
 in vec2 texcoord;
 
@@ -26,5 +27,6 @@ void main() {
     // every named input must stay in the compiled shader, or mcmetal can't find its binding: read them behind a
     // condition that is never true at run time
     if (frameCounter < -1) outColor += texture(colortex1, texcoord) + texture(colortex10, texcoord)
-                                       + texture(colortex15, texcoord) + texture(depthtex0, texcoord);
+                                       + texture(colortex15, texcoord) + texture(depthtex0, texcoord)
+                                       + texture(colortex7, texcoord);
 }

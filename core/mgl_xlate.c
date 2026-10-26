@@ -791,6 +791,28 @@ static char *plain_derivatives(char *text, const char *orig)
     return out;
 }
 
+/* 16-bit maths (GL_EXT_shader_explicit_arithmetic_types_float16, which our RT pack enables with HALF_PRECISION):
+   glslang declares the float16 overloads of the built-ins (max, dot, exp...) only from #version 450, so an older
+   shader that enables it compiles as 450. Same profile, same line numbers; float16_t becomes Metal's half.
+   Returns a new copy (text is freed) or text itself when nothing matched. */
+static char *half_version(char *text, const char *orig)
+{
+    const char *base = text ? text : orig;
+    const char *v = strstr(base, "#version");
+    if (!v || atoi(v + 8) >= 450 || !strstr(base, "GL_EXT_shader_explicit_arithmetic_types_float16"))
+        return text;
+    size_t at = (size_t)(v + 8 - base);
+    while (base[at] == ' ' || base[at] == '\t')
+        at++;
+    if (!isdigit((unsigned char)base[at]) || !isdigit((unsigned char)base[at + 1]) ||
+        !isdigit((unsigned char)base[at + 2]) || isdigit((unsigned char)base[at + 3]))
+        return text;
+    char *out = strdup(base);
+    memcpy(out + at, "450", 3);
+    free(text);
+    return out;
+}
+
 static int xlate_once(const char *src[MGL_NUM_STAGES], mgl_xlate_result *r)
 {
     static int initialized;
@@ -814,7 +836,7 @@ static int xlate_once(const char *src[MGL_NUM_STAGES], mgl_xlate_result *r)
     for (int s = 0; s < MGL_NUM_STAGES; s++) {
         if (!src[s])
             continue;
-        char *patched = plain_derivatives(with_420pack(src[s]), src[s]);
+        char *patched = half_version(plain_derivatives(with_420pack(src[s]), src[s]), src[s]);
         glslang_input_t in = {
             .language = GLSLANG_SOURCE_GLSL,
             .stage = gl_stage[s],

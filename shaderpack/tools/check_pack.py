@@ -43,6 +43,11 @@ for f in sorted(root.glob("*.[vf]sh")):
             t.write(src)
         # the RT variant only differs when the preprocessed source calls mcm_trace: preprocess first
         pre = subprocess.run(["glslangValidator", "-E", t.name], capture_output=True, text=True).stdout
+        # mcmetal compiles a shader that enables 16-bit types as GLSL 4.50 (core/mgl_xlate.c, half_version)
+        if rt and "GL_EXT_shader_explicit_arithmetic_types_float16" in pre:
+            body16 = open(t.name).read()
+            with open(t.name, "w") as w:
+                w.write(re.sub(r"#version\s+[1-3]\d\d|#version\s+4[0-4]\d", "#version 450", body16, count=1))
         if rt and "mcm_trace" not in pre:
             # no rays in this program, but its MCMETAL_RT/MCMETAL_LIGHTS branches still have to compile
             args = ["glslangValidator", t.name]
