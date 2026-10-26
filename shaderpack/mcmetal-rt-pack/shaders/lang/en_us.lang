@@ -227,3 +227,7 @@ option.HALF_PRECISION=Half Precision
 option.HALF_PRECISION.comment=The denoiser's maths in 16-bit numbers, Apple's advice for faster shaders. Only on mcmetal from 10-26 or newer; elsewhere it does nothing.
 option.METALFX_DENOISE=MetalFX Denoiser
 option.METALFX_DENOISE.comment=Apple's denoiser cleans the whole lit picture. Needs mcmetal with MCMETAL_DENOISE=1, an M3 or newer and macOS 26. Replaces the pack's own denoiser.
+option.SHAFT_BUDGET=Light Shaft Budget
+option.SHAFT_BUDGET.comment=Fewer light-shaft rays where you look at something close (rooms, walls): one step every few blocks instead of the full count.
+option.SHAFT_STEP_LENGTH=Shaft Step Length
+option.SHAFT_STEP_LENGTH.comment=With Light Shaft Budget: blocks of air per light-shaft step. Longer is faster, shorter is smoother.

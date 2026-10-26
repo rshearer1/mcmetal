@@ -59,6 +59,8 @@
 #define LIGHT_SHAFTS_STRENGTH 1.0 // [0.25 0.5 0.75 1.0 1.5 2.0 3.0]
 #define LIGHT_SHAFTS_STEPS 6 // [4 6 8 12 16]
 #define LIGHT_SHAFTS_SCALE 0.5
+//#define SHAFT_BUDGET // fewer light-shaft rays where the view ray is short (rooms, close walls): one step every few blocks instead of the full count
+#define SHAFT_STEP_LENGTH 4.0 // [2.0 3.0 4.0 6.0 8.0] with the above: blocks of air per light-shaft step
 #define LAMP_FOG // torches, lanterns and glowing blocks light up the air round them: a soft glow in fog, rain and dusty rooms (needs coloured light)
 #define LAMP_FOG_STRENGTH 1.0 // [0.5 1.0 1.5 2.0 3.0]
 #define VOLUMETRIC_MIST // morning mist near the ground that the sun's beams light up (with Light Shafts)
@@ -184,6 +186,8 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef COLORED_LIGHT_GLASS
 #endif
 #ifdef LIGHT_SHAFTS
+#endif
+#ifdef SHAFT_BUDGET
 #endif
 #ifdef CAUSTICS
 #endif
