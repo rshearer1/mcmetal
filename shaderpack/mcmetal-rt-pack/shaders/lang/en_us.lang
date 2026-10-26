@@ -210,3 +210,5 @@ option.END_BEAMS_STRENGTH=End Beams Strength
 option.PHOTO_MODE=Photo Mode
 option.PHOTO_MODE.comment=While you stand still, rays keep averaging much longer for clean screenshots. Lights settle more slowly while still.
 option.PHOTO_FRAMES=Photo Mode Frames
+option.UNIFIED_TARGETS=One Pass For See-Through
+option.UNIFIED_TARGETS.comment=Particles, rain and other see-through things share the same buffers as water so they draw in one pass (faster on Metal).

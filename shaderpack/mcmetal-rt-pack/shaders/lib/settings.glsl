@@ -12,6 +12,7 @@
 
 #define RT_GI // ray-traced global illumination: bounce light, colour bleeding, sky light through openings
 #define GI_RATE 2 // [1 2 4] trace bounce light and AO for 1 in GI_RATE pixels each frame (the rest keep their average)
+#define UNIFIED_TARGETS // see-through things share water's buffer list, so they draw in one Metal render pass
 //#define PHOTO_MODE // standing still: rays keep averaging much longer, for clean screenshots (lights settle slower while still)
 #define PHOTO_FRAMES 128.0 // [32.0 64.0 128.0 256.0]
 #define RT_NOISE 1 // [0 1] random numbers for rays: 0 the old shifted noise, 1 decorrelated per dimension (Apple's denoiser advice)

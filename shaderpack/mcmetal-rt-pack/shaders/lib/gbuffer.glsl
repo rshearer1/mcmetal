@@ -164,12 +164,25 @@ layout(location = 1) out vec4 outMaterial;
 layout(location = 0) out vec4 outColor;   // rgb: light let through (multiplies what's behind)
 layout(location = 1) out vec4 outWater;   // colortex11: r water, gb glass refraction offset, a glass (nearest surface)
 layout(location = 2) out vec4 outAdd;     // colortex13: light from the surface itself (added)
+#elif defined UNIFIED_TARGETS && defined FORWARD
+// the other see-through things (particles, rain, glass panes held, translucent mobs) list the same buffers as water,
+// so mcmetal can draw them all in one Metal render pass instead of switching passes between them; their blending
+// leaves colortex11 and colortex13 as they are (shaders.properties)
+/* RENDERTARGETS: 0,11,13 */
+layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outWater;
+layout(location = 2) out vec4 outAdd;
+  #define KEEP_WATER_TARGETS
 #else
 /* RENDERTARGETS: 0 */
 layout(location = 0) out vec4 outColor;
 #endif
 
 void main() {
+#ifdef KEEP_WATER_TARGETS
+    outWater = vec4(0.0);   // (written, never kept: blending with ZERO would still turn garbage into NaN)
+    outAdd = vec4(0.0);
+#endif
 #ifdef NO_TEXTURE
     vec4 c = tint;
 #else
