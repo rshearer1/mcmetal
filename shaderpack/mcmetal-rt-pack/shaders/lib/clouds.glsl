@@ -6,12 +6,27 @@
 // silver linings, dark bellies). Needs common, uniforms.
 #include "/lib/style.glsl"
 
+// each day's weather: some days clear, some overcast, from the world's day number (the same for everyone in the
+// world), easing into the next day's over the evening. Negative = more cloud
+float dailyCover() {
+#ifdef DAILY_WEATHER
+    float t = float(worldTime) / 24000.0;
+    float a = fract(sin(float(worldDay) * 12.9898 + 4.1) * 43758.5453);
+    float b = fract(sin(float(worldDay + 1) * 12.9898 + 4.1) * 43758.5453);
+    float h = mix(a, b, smoothstep(0.7, 1.0, t));
+    return (0.5 - h) * 0.24;   // -0.12 (cloudy day) .. +0.12 (clear day)
+#else
+    return 0.0;
+#endif
+}
+
 float cloudDensity(vec2 w) {
     vec2 drift = vec2(frameTimeCounter * 0.6 * CLOUD_SPEED, frameTimeCounter * 0.15 * CLOUD_SPEED);
     w = (w + drift) * 0.0016 / STYLE_CLOUD.y;
     float d = valueNoise(w) * 0.55 + valueNoise(w * 2.03 + 7.1) * 0.27 + valueNoise(w * 4.1 + 3.7) * 0.13
             + valueNoise(w * 8.3 + 1.3) * 0.05;
-    float cover = mix(0.56, 0.32, rainStrength) - 0.06 * (CLOUD_AMOUNT - 1.0) - STYLE_CLOUD.x - seasonClouds(seasonWeights()).x;
+    float cover = mix(0.56, 0.32, rainStrength) - 0.06 * (CLOUD_AMOUNT - 1.0) - STYLE_CLOUD.x - seasonClouds(seasonWeights()).x
+                + dailyCover() * (1.0 - rainStrength);
     return smoothstep(cover, cover + STYLE_CLOUD.z, d);
 }
 
@@ -51,9 +66,29 @@ float cloudShadow(vec3 wp, vec3 lightDir) {
     return mix(1.0, max(tr, 0.3), CLOUD_SHADOW_STRENGTH);
 }
 
+#ifdef CIRRUS
+// thin streaks of ice cloud far above the main clouds (mares' tails): a flat layer of noise stretched along the
+// wind, lit bright by the sun, gone in rain
+vec3 drawCirrus(vec3 sky, vec3 dir, vec3 lightDir, vec3 sunCol, vec3 skyAmb) {
+    if (dir.y < 0.02) return sky;
+    vec2 w = dir.xz / dir.y * 6.0 + vec2(frameTimeCounter * 0.004 * CLOUD_SPEED, 0.0);
+    vec2 q = vec2(w.x * 0.35 + w.y * 0.2, w.y * 2.6 - w.x * 0.3);   // stretched and slanted: streaks
+    float n = valueNoise(q) * 0.6 + valueNoise(q * 2.3 + 4.7) * 0.3 + valueNoise(q * 5.1 + 1.9) * 0.1;
+    float c = smoothstep(0.55 - 0.08 * (CLOUD_AMOUNT - 1.0), 0.85, n) * (1.0 - rainStrength);
+    c *= smoothstep(0.02, 0.2, dir.y) * (0.6 + 0.4 * smoothstep(0.3, -0.3, dailyCover() * 4.0));
+    if (c <= 0.0) return sky;
+    float mu = dot(dir, lightDir);
+    vec3 lit = sunCol * (0.25 + 0.6 * pow(max(mu, 0.0), 8.0)) + skyAmb * 0.8;
+    return mix(sky, lit, c * 0.35);
+}
+#endif
+
 // sky colour behind, view direction, sun/moon direction and light: returns the sky with clouds over it
 vec3 drawClouds(vec3 sky, vec3 dir, vec3 lightDir, vec3 sunCol, vec3 skyAmb) {
     if (!hasSkylight) return sky;
+#ifdef CIRRUS
+    sky = drawCirrus(sky, dir, lightDir, sunCol, skyAmb);
+#endif
 #ifdef VOLUMETRIC_CLOUDS
     // where the view ray is inside the slab
     float camY = cameraPosition.y;

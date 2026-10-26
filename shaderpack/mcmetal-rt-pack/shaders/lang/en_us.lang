@@ -156,3 +156,7 @@ option.LIGHTNING_FLASH=Lightning Flashes
 option.LIGHTNING_FLASH.comment=Lightning bolts light up the land and the sky in a flickering blue-white flash.
 option.LIGHTNING_STRENGTH=Lightning Brightness
 option.LIGHTNING_STRENGTH.comment=How bright a lightning flash is.
+option.CIRRUS=High Wispy Clouds
+option.CIRRUS.comment=Thin streaks of ice cloud far above the main clouds.
+option.DAILY_WEATHER=Daily Skies
+option.DAILY_WEATHER.comment=Each day has its own sky: some clear, some cloudy. The same for everyone in the world.
