@@ -66,6 +66,18 @@ uniform mat4 dhProjectionInverse;
 in vec2 texcoord;
 flat in vec3 sunCol, skyAmb, lightDir, sunDir;
 
+#ifdef LIGHTNING_FLASH
+// lightning (Iris: lightningBoltPosition, w = 1 while a bolt is out, xyz player space): a flickering blue-white
+// flash on everything the sky can see, much brighter near the bolt
+uniform vec4 lightningBoltPosition;
+vec3 lightningLight(vec3 p) {
+    if (lightningBoltPosition.w < 0.5) return vec3(0.0);
+    float flicker = 0.55 + 0.45 * sin(frameTimeCounter * 47.0) * sin(frameTimeCounter * 13.0);
+    float d = length(p.xz - lightningBoltPosition.xz);
+    return vec3(0.75, 0.82, 1.0) * flicker * (0.35 + 3.0 / (1.0 + d * d / 400.0)) * LIGHTNING_STRENGTH;
+}
+#endif
+
 /* RENDERTARGETS: 0 */
 layout(location = 0) out vec4 outColor;
 
@@ -132,6 +144,9 @@ void main() {
     if (depth >= 1.0) {
         vec3 dir = normalize(p);
         col = skyColor(dir, sunDir);
+#ifdef LIGHTNING_FLASH
+        col += lightningLight(vec3(0.0)) * 0.08 * (0.3 + 0.7 * max(dir.y, 0.0));   // the clouds light up
+#endif
         // sun disc with darker edges; the moon and stars come from vanilla's textures (MAT_SKY)
         float cosSun = dot(dir, sunDir), edge = smoothstep(0.99955, 0.99975, cosSun);
         col += sunTransmittance() * edge * (60.0 * (0.6 + 0.4 * smoothstep(0.99955, 0.99995, cosSun)));
@@ -190,6 +205,18 @@ void main() {
 #else
         col = a * surfaceLight(p, nm, nl.zw, ao, mat, lightDir, sunCol, skyAmb, sh) + emission(a, mat);
         vec3 envLight = skyAmb * (nl.w * nl.w) * (0.7 + 0.3 * n.y);
+#endif
+#ifdef LIGHTNING_FLASH
+        col += a * lightningLight(p) * (nl.w * nl.w) * (0.6 + 0.4 * max(n.y, 0.0));
+#endif
+#ifdef SUBSURFACE
+        // leaves and grass let sunlight through: backlit, they glow a deeper green (light scattered inside the leaf
+        // comes out tinted by it twice). Strongest looking towards the sun, a little from every side
+        if (mat == MAT_FOLIAGE) {
+            float fwd = max(dot(normalize(p), lightDir), 0.0);
+            float through = 0.15 + 0.85 * pow(fwd, 6.0);
+            col += a * a * sunCol * sh * (through * 1.6 * SUBSURFACE_STRENGTH) * (1.0 - 0.5 * max(dot(n, lightDir), 0.0));
+        }
 #endif
         // metals have no diffuse light of their own: their colour is in what they reflect
         // (only as far as they get a reflection below: a rough metal reflects its surroundings blurred, which

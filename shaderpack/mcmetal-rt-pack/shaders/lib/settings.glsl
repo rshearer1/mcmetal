@@ -58,6 +58,10 @@
     #define LIGHT_SHAFTS_BLEND 0.125
 #endif
 
+#define LIGHTNING_FLASH // lightning bolts light up the land and the sky in a flickering blue-white flash
+#define LIGHTNING_STRENGTH 1.0 // [0.5 1.0 1.5 2.0]
+#define SUBSURFACE // leaves and grass glow a deeper green with the sun behind them (light through the leaf)
+#define SUBSURFACE_STRENGTH 1.0 // [0.5 1.0 1.5 2.0]
 #define LABPBR_NORMAL_STRENGTH 1.0 // [0.5 1.0 1.5 2.0 3.0] how deep LabPBR normal maps and height look
 #define LABPBR // LabPBR resource packs: normal maps, shiny and metal blocks, glowing texels
 #define RT_PBR_EMISSIVE // glowing texels of LabPBR packs (lamps, ores, lava) also light rooms in the bounce light and glow in reflections
@@ -182,6 +186,10 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef DEPTH_OF_FIELD
 #endif
 #ifdef MOTION_BLUR
+#endif
+#ifdef SUBSURFACE
+#endif
+#ifdef LIGHTNING_FLASH
 #endif
 #ifdef RT_PBR_EMISSIVE
 #endif
