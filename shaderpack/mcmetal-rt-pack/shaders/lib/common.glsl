@@ -12,7 +12,7 @@ const float PI = 3.14159265359;
 #define MAT_SKY      7   // stars and the moon, drawn into the sky
 #define MAT_LIT      8   // already lit (clouds etc.): deferred keeps the colour as it is
 #define MAT_GLASS   10   // glass and stained glass: refraction in gbuffers_water (lib/gbuffer.glsl)
-#define MAT_DH       9   // Distant Horizons terrain (far LODs): no rays, lit from the lightmap in deferred2.fsh
+#define MAT_DH       9   // Distant Horizons terrain (far LODs): no rays, lit from the lightmap in deferred4.fsh
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 vec3 toLinear(vec3 c) { return c * c * (c * 0.2 + 0.8); }     // cheap fit of the sRGB curve

@@ -166,7 +166,7 @@ void main() {
     }
 #endif
 #if defined USE_RT && defined LIGHT_SHAFTS
-    if (isEyeInWater <= 1) col += texture(colortex8, texcoord * LIGHT_SHAFTS_SCALE).rgb;   // deferred3.fsh
+    if (isEyeInWater <= 1) col += texture(colortex8, texcoord * LIGHT_SHAFTS_SCALE).rgb;   // deferred5.fsh
 #endif
 #if DEBUG_VIEW == 5 && defined USE_RT && defined LIGHT_SHAFTS
     { vec3 ls = texture(colortex8, texcoord * LIGHT_SHAFTS_SCALE).rgb * 4.0; col = ls / (ls + 1.0); }
