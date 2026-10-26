@@ -26,7 +26,7 @@ float mcm_hit_emission();
 #endif
 
 int materialOf(int blockId) {
-    if (blockId == 10001) return MAT_FOLIAGE;
+    if (blockId == 10001 || blockId == 10004) return MAT_FOLIAGE;
     if (blockId >= 10100 && blockId < 10200) return MAT_EMISSIVE;
     if (blockId >= 10200 && blockId < 10300) return MAT_GLOW;
     return MAT_NONE;

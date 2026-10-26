@@ -388,12 +388,20 @@ static void record_entity(const mgl_program *p, const mgl_draw *d)
         for (int r = 0; r < 3; r++)
             o[k * 3 + r] = m[r] * v[0] + m[4 + r] * v[1] + m[8 + r] * v[2] + m[12 + r];
     }
-    float far2 = 0; /* the held item and arm sit within 2 blocks of the eye; little in the world fits there whole */
+    /* the held item and arm sit within about a block of the eye; little in the world fits there whole. A body
+       drawn in first person (First-person Model) reaches its feet, 1.6 blocks down, so it stays: you see your
+       own shadow and reflection. MCMETAL_RT_NEAR=2 is the old 2-block cut (no first-person body in rays) */
+    static float near2 = -1;
+    if (near2 < 0) {
+        const char *e = getenv("MCMETAL_RT_NEAR");
+        near2 = e ? (float)atof(e) * (float)atof(e) : 1.2f * 1.2f;
+    }
+    float far2 = 0;
     for (int k = 0; k < tris * 3; k++) {
         float d2 = o[k * 3] * o[k * 3] + o[k * 3 + 1] * o[k * 3 + 1] + o[k * 3 + 2] * o[k * 3 + 2];
         far2 = d2 > far2 ? d2 : far2;
     }
-    if (far2 < 4.0f) {
+    if (far2 < near2) {
         ent_near_skipped += tris;
         return;
     }

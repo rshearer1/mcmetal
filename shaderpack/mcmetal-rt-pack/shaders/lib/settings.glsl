@@ -60,6 +60,9 @@
 
 #define LIGHTNING_FLASH // lightning bolts light up the land and the sky in a flickering blue-white flash
 #define LIGHTNING_STRENGTH 1.0 // [0.5 1.0 1.5 2.0]
+#define WAVING_PLANTS // grass, flowers, crops and leaves sway gently in the wind
+#define WAVING_AMOUNT 1.0 // [0.5 1.0 1.5 2.0]
+#define WAVING_SPEED 1.0 // [0.5 1.0 1.5 2.0]
 #define SUBSURFACE // leaves and grass glow a deeper green with the sun behind them (light through the leaf)
 #define SUBSURFACE_STRENGTH 1.0 // [0.5 1.0 1.5 2.0]
 #define LABPBR_NORMAL_STRENGTH 1.0 // [0.5 1.0 1.5 2.0 3.0] how deep LabPBR normal maps and height look
@@ -194,6 +197,8 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef MOTION_BLUR
 #endif
 #ifdef SUBSURFACE
+#endif
+#ifdef WAVING_PLANTS
 #endif
 #ifdef LIGHTNING_FLASH
 #endif

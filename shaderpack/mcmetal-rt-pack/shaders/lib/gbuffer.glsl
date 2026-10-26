@@ -38,10 +38,39 @@ flat out vec3 sunCol, skyAmb;
 #endif
 #ifdef TERRAIN
 in vec4 mc_Entity;
+  #ifdef WAVING_PLANTS
+in vec2 mc_midTexCoord;
+// plants and leaves sway in the wind: a slow lean plus a faster flutter, phase from the world position so
+// neighbours move together like a gust passing. Kept small (the ray-traced scene holds the still shapes, so
+// shadows and reflections don't follow the sway); stronger in rain
+vec3 waving(vec3 wp, float amount) {
+    float t = frameTimeCounter * WAVING_SPEED;
+    float gust = sin(t * 0.9 + wp.x * 0.11 + wp.z * 0.07) * 0.5 + 0.5;
+    vec2 lean = vec2(sin(t * 1.7 + wp.x * 0.6 + wp.z * 0.3), sin(t * 1.3 + wp.z * 0.6 - wp.x * 0.2));
+    float flutter = sin(t * 5.3 + dot(wp, vec3(2.1, 1.7, 2.9)));
+    vec2 xz = (lean * (0.5 + 0.5 * gust) + flutter * 0.25) * amount * WAVING_AMOUNT * (1.0 + rainStrength);
+    return vec3(xz.x, flutter * amount * WAVING_AMOUNT * 0.3, xz.y);
+}
+  #endif
 #endif
 
 void main() {
     gl_Position = gl_ProjectionMatrix * (gl_ModelViewMatrix * gl_Vertex);   // not ftransform(): Iris leaves it in line programs
+#if defined TERRAIN && defined WAVING_PLANTS
+    {
+        int wid = int(mc_Entity.x + 0.5);
+        if (wid == 10001 || wid == 10004) {
+            vec3 vp = (gl_ModelViewMatrix * gl_Vertex).xyz;
+            vec3 pp = mat3(gbufferModelViewInverse) * vp + gbufferModelViewInverse[3].xyz;
+            // plants: only the top corners move (the root stays in the ground); leaves: every corner, less
+            float amount = wid == 10004 ? 0.035 : (gl_MultiTexCoord0.y < mc_midTexCoord.y ? 0.07 : 0.0);
+            if (amount > 0.0) {
+                pp += waving(pp + cameraPosition, amount);
+                gl_Position = gl_ProjectionMatrix * (gbufferModelView * vec4(pp, 1.0));
+            }
+        }
+    }
+#endif
 #ifdef TAA
     // a different sub-pixel shift every frame (Halton 2,3 over 8 frames); composite2 blends them into smooth edges
     int k = frameCounter % 8 + 1;
@@ -62,7 +91,7 @@ void main() {
     mat = MATERIAL;
 #ifdef TERRAIN
     int id = int(mc_Entity.x + 0.5);
-    if (id == 10001) mat = MAT_FOLIAGE;
+    if (id == 10001 || id == 10004) mat = MAT_FOLIAGE;
     else if (id >= 10100 && id < 10200) mat = MAT_EMISSIVE;
     else if (id >= 10200 && id < 10300) mat = MAT_GLOW;
     else if (id == 10002) mat = MAT_WATER;
