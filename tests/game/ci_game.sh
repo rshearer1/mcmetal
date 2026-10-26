@@ -667,6 +667,10 @@ for p in $PHASES; do
         fetch_mod "$FIRST_PERSON" mcm-firstperson.jar || continue
         GAME_TP="${FP_TP:-~ ~ ~ ~ 55}" scene noon; PACK=mcmetal-rt-pack run_phase ours-fp 180 metal true MGL_RT_DEBUG=1
         rm -f "$G/mods/mcm-firstperson.jar" ;;
+    comp-fp) # the same with Complementary, to compare
+        fetch_mod "$FIRST_PERSON" mcm-firstperson.jar || continue
+        GAME_TP="${FP_TP:-~ ~ ~ ~ 55}" scene noon; run_phase comp-fp 180 metal true
+        rm -f "$G/mods/mcm-firstperson.jar" ;;
     ours-sunset) scene 12300; PACK=mcmetal-rt-pack run_phase ours-sunset 180 metal true ;;
     ours-dawn) scene 23300; PACK=mcmetal-rt-pack run_phase ours-dawn 180 metal true ;;  # just after sunrise: morning mist and low beams
     ours-night) scene midnight clear showcase; PACK=mcmetal-rt-pack run_phase ours-night 180 metal true ;;

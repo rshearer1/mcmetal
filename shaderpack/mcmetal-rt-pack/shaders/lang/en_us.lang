@@ -166,3 +166,7 @@ option.WAVING_AMOUNT=Waving Amount
 option.WAVING_AMOUNT.comment=How far plants and leaves sway.
 option.WAVING_SPEED=Waving Speed
 option.WAVING_SPEED.comment=How fast plants and leaves sway.
+option.AUTO_PBR=Automatic Materials
+option.AUTO_PBR.comment=Blocks without PBR maps still look their part: ores glint, metal blocks shine, gems and polished stone are glossy. Works on modded blocks too.
+option.AUTO_PBR_STRENGTH=Automatic Material Shine
+option.AUTO_PBR_STRENGTH.comment=How glossy the automatic materials are.

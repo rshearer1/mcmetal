@@ -29,6 +29,9 @@ out vec4 tint;
 out vec3 normalW;
 out vec3 playerPos;
 flat out int mat;
+#if defined TERRAIN && defined OPAQUE && defined AUTO_PBR
+flat out int autoMat;   // 10400-10403 (block.properties AUTO MATERIALS), else 0
+#endif
 #if defined OPAQUE && defined LABPBR
 in vec4 at_tangent;
 out vec4 tangentW;   // xyz tangent in player space, w handedness
@@ -96,6 +99,9 @@ void main() {
     else if (id >= 10200 && id < 10300) mat = MAT_GLOW;
     else if (id == 10002) mat = MAT_WATER;
     else if (id == 10003) mat = MAT_GLASS;
+  #if defined OPAQUE && defined AUTO_PBR
+    autoMat = id >= 10400 && id <= 10403 ? id : 0;
+  #endif
 #endif
 #if defined FORWARD && !defined UNLIT
     lightColors(sunCol, skyAmb);
@@ -129,6 +135,9 @@ in vec4 tint;
 in vec3 normalW;
 in vec3 playerPos;
 flat in int mat;
+#if defined TERRAIN && defined OPAQUE && defined AUTO_PBR
+flat in int autoMat;
+#endif
 #if defined OPAQUE && defined LABPBR
 in vec4 tangentW;
 uniform sampler2D normals, specular;   // LabPBR resource packs (Iris binds flat defaults without one)
@@ -233,6 +242,20 @@ void main() {
         }
         spec = texture(specular, texcoord);
         if (spec.a > 254.5 / 255.0) spec.a = 0.0;   // LabPBR: 255 = no emission
+    }
+  #endif
+  #if defined TERRAIN && defined AUTO_PBR
+    // blocks without PBR maps (no LabPBR pack, or a modded block the pack doesn't cover): ores glint where their
+    // coloured texels are, metal blocks shine like metal, gem blocks are glossy, polished stone has a soft sheen
+    if (autoMat != 0 && spec.r == 0.0 && spec.g == 0.0) {
+        float sat = max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b));
+        if (autoMat == 10400) {
+            float glint = max(smoothstep(0.12, 0.3, sat), smoothstep(0.72, 0.9, luma(c.rgb)));
+            spec.rg = vec2(0.82, 0.25) * glint;
+        } else if (autoMat == 10401) spec.rg = vec2(0.62, 1.0);
+        else if (autoMat == 10402) spec.rg = vec2(0.88, 0.17);
+        else spec.rg = vec2(0.42, 0.04);   // under 0.45: the sheen only, no rays (thousands of decor blocks)
+        spec.r *= AUTO_PBR_STRENGTH;
     }
   #endif
     outAlbedo = vec4(c.rgb, 1.0);
