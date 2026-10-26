@@ -593,6 +593,7 @@ print(f"{len(jobs)} mods ready")' "$SRC/tools" "$SRC/tests/game/hh-pack/mods.txt
         fi
         kill "$pid" 2>/dev/null; t=0; while [ $t -lt 20 ] && kill -0 "$pid" 2>/dev/null; do sleep 0.5; t=$((t + 1)); done
         kill -9 "$pid" 2>/dev/null
+        pkill -f crash_assistant 2>/dev/null # the pack's Crash Assistant watches the game from a JVM of its own
         cp "$H/client.log" "$OUT/$name/client-$run.log" 2>/dev/null
         echo "launch $run:" >> "$OUT/$name/summary.txt"
         grep -hE 'Game took|Resource cache state|Finished runtime resources generation|resources reloaded|load fixes: Moonlight|took [0-9.]+ s to run a deferred task|control failed' \
