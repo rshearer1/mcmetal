@@ -145,6 +145,16 @@ void main() {
 #ifdef MOTION_BLUR
     col = motionBlur(texcoord, col);
 #endif
+#ifdef PURKINJE
+    // night vision (the Purkinje shift): in very dim light the eye's rods take over, so colours fade and what is
+    // left leans blue. By the light actually reaching the eye, before exposure (bright lamps keep their colour)
+    {
+        float l = luma(col);
+        float rods = (1.0 - smoothstep(0.004, 0.08, l)) * PURKINJE_STRENGTH;
+        vec3 scotopic = vec3(0.62, 0.78, 1.0) * dot(col, vec3(0.06, 0.62, 0.32)) * 1.1;
+        col = mix(col, scotopic, clamp(rods, 0.0, 1.0));
+    }
+#endif
     col *= exposure;
 #ifdef STYLE_PAINT
     // painted finish (Kuwahara): of the four 3x3 corners around the pixel, take the average of the calmest one, so

@@ -20,6 +20,7 @@ const vec4 colortex10ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 #ifdef CLOUDS
     #include "/lib/clouds.glsl"
 #endif
+#include "/lib/stars.glsl"
 #if !defined USE_RT || defined RT_REFLECTIONS
     // (the ray-traced shadow comes from deferred1.fsh; with RT this is only for what reflections see)
     #include "/lib/shadow.glsl"
@@ -175,6 +176,9 @@ void main() {
         float near = max(cosSun, 0.0);
         col += sunTransmittance() * (pow(near, 4000.0) * 3.0 + pow(near, 300.0) * 0.25) * (1.0 - 0.8 * rainStrength) * (1.0 - edge);
         if (mat == MAT_SKY) col += toLinear(albedo.rgb) * 0.4 * (1.0 - 0.9 * rainStrength);
+#ifdef STARS
+        col += drawStars(dir, smoothstep(0.02, -0.15, sunDir.y));
+#endif
         col += styleAurora(dir, smoothstep(0.02, -0.12, sunDir.y)) * (1.0 - rainStrength);
   #ifdef CLOUDS
         col = drawClouds(col, dir, lightDir, sunCol, skyAmb);

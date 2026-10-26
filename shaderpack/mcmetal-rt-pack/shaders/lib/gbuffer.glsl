@@ -184,6 +184,9 @@ void main() {
 #ifdef STARS_ONLY
     // gbuffers_skybasic: keep only the stars; the sky colour itself is ours (deferred)
     if (renderStage != MC_RENDER_STAGE_STARS) discard;
+  #ifdef STARS
+    discard;   // our own stars instead (lib/stars.glsl)
+  #endif
 #endif
     if (c.a < 0.1) discard;
 #if defined TERRAIN && STYLE > 0

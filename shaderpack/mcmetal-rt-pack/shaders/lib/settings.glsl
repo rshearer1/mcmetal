@@ -81,6 +81,8 @@
 #define DOF_STRENGTH 1.0 // [0.5 1.0 2.0 4.0 8.0]
 //#define MOTION_BLUR // a soft blur while turning and moving, like a camera's shutter
 #define MOTION_BLUR_STRENGTH 1.0 // [0.5 1.0 1.5 2.0]
+#define PURKINJE // night vision: in very dim light colours fade and lean blue, as the eye sees them
+#define PURKINJE_STRENGTH 0.6 // [0.3 0.6 0.8 1.0]
 #define SHARPEN // a light sharpen after anti-aliasing, so textures stay crisp
 #define SHARPEN_STRENGTH 0.5 // [0.25 0.5 0.75 1.0 1.5]
 #define TONEMAP 0 // [0 1] 0 ACES filmic (punchy), 1 soft filmic (gentler highlights, truer bright colours)
@@ -89,6 +91,9 @@
 #define CLOUD_AMOUNT 1.0 // [0.0 0.5 1.0 1.5 2.0]
 #define CLOUD_SPEED 1.0 // [0.0 0.5 1.0 2.0 4.0]
 #define VOLUMETRIC_CLOUDS // clouds with real height: self-shadowed, silver edges towards the sun, dark bellies (off = flat layer, faster)
+#define STARS // our own steady night sky: stars of many sizes and colours that turn with the night
+#define MILKY_WAY // the Milky Way's faint band and dust lanes across the stars
+#define STARS_BRIGHTNESS 1.0 // [0.5 1.0 1.5 2.0 3.0]
 #define CIRRUS // thin, high streaks of ice cloud above the main clouds
 #define DAILY_WEATHER // each day has its own sky: some clear, some cloudy (the same for everyone in the world)
 #define CLOUD_SHADOWS // the clouds' shadows drift over the land
