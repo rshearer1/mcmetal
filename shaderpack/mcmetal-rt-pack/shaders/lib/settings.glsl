@@ -58,6 +58,7 @@
 
 #define LABPBR_NORMAL_STRENGTH 1.0 // [0.5 1.0 1.5 2.0 3.0] how deep LabPBR normal maps and height look
 #define LABPBR // LabPBR resource packs: normal maps, shiny and metal blocks, glowing texels
+#define ROUGH_REFLECTIONS_STRENGTH 1.0 // [0.0 0.5 1.0 1.5 2.0] the soft sheen of rough and satin PBR blocks (stone, wood, brick): a blurred reflection of their surroundings
 #define BLOOM // soft glow around the sun, lights and other bright things
 #define BLOOM_STRENGTH 1.0 // [0.25 0.5 0.75 1.0 1.5 2.0 3.0]
 #define TAA // temporal anti-aliasing: smooth edges, no shimmering plants and fences

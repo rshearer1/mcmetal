@@ -144,6 +144,7 @@ void main() {
         // GI brings the sky light and the bounced light, so the lightmap's sky guess is left out
         // the held item isn't in the ray scene's history: it gets the plain sky light instead
         vec3 gi = mat == MAT_HAND ? skyAmb * (nl.w * nl.w) * (0.7 + 0.3 * n.y) : filteredGI(n, length(p));
+        vec3 envLight = gi;   // what a rough surface sees all round (for its blurred reflection below)
   #ifdef LABPBR
         // the GI is traced for the block's face: let the normal map shade it too (light comes mostly from above
         // and from in front of the face), so bumps show in shade and under an overhead sun
@@ -159,6 +160,7 @@ void main() {
   #endif
 #else
         col = a * surfaceLight(p, nm, nl.zw, ao, mat, lightDir, sunCol, skyAmb, sh) + emission(a, mat);
+        vec3 envLight = skyAmb * (nl.w * nl.w) * (0.7 + 0.3 * n.y);
 #endif
         // metals have no diffuse light of their own: their colour is in what they reflect
         // (only as far as they get a reflection below: a rough metal reflects its surroundings blurred, which
@@ -181,6 +183,20 @@ void main() {
             col += sunCol * sh * D * G * F / max(4.0 * nv, 1e-3) * PI;   // x pi: our lights skip diffuse's 1/pi
             vec3 Fv = f0 + (1.0 - f0) * pow(1.0 - nv, 5.0) * smoothness;
             float w = smoothstep(0.45, 0.75, smoothness);
+            // rough and satin surfaces (most of a PBR pack: stone, wood, brick): a blurred reflection of their
+            // surroundings, no ray. What they reflect blends from the sky in the mirror direction (fairly smooth)
+            // to the light all round them (rough: the GI); how much from the split-sum fit (Karis 2014, mobile).
+            // The traced reflection below takes over where the surface gets smooth enough for a sharp one.
+            if (!metal && w < 1.0) {
+                float rough = 1.0 - smoothness;
+                vec4 r4 = rough * vec4(-1.0, -0.0275, -0.572, 0.022) + vec4(1.0, 0.0425, 1.04, -0.04);
+                vec2 ab = vec2(-1.04, 1.04) * (min(r4.x * r4.x, exp2(-9.28 * nv)) * r4.x + r4.y) + r4.zw;
+                vec3 spec = f0 * ab.x + ab.y;
+                vec3 rdm = reflect(v, nm);
+                if (dot(rdm, n) < 0.02) rdm = reflect(v, n);
+                vec3 seen = mix(skyColor(rdm, sunDir) * smoothstep(0.3, 0.9, nl.w), envLight, smoothstep(0.1, 0.6, rough));
+                col += seen * spec * ao * (1.0 - w) * ROUGH_REFLECTIONS_STRENGTH;
+            }
             if (w > 0.0 && (metal || luma(Fv) > 0.03)) {
                 // a little scatter around the mirror direction for rough-ish surfaces (TAA smooths the noise)
                 vec3 jit = vec3(ign(gl_FragCoord.xy, frameCounter), ign(gl_FragCoord.xy + 17.0, frameCounter + 3),
