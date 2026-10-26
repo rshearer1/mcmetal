@@ -112,7 +112,11 @@ void main() {
 #if defined USE_RT && (defined RT_AO || defined RT_GI)
     vec3 n = octDecode(texture(colortex1, texcoord).xy);
     // cosine-weighted direction around n, new random numbers each frame
+  #if RT_NOISE == 1
+    float u1 = rayRand(gl_FragCoord.xy, frameCounter, 0), u2 = rayRand(gl_FragCoord.xy, frameCounter, 1);
+  #else
     float u1 = ign(gl_FragCoord.xy, frameCounter), u2 = ign(gl_FragCoord.xy + vec2(47.0, 17.0), frameCounter * 7 + 3);
+  #endif
     float r = sqrt(u1), phi = 6.2832 * u2;
     vec3 t = normalize(abs(n.y) < 0.99 ? cross(n, vec3(0.0, 1.0, 0.0)) : cross(n, vec3(1.0, 0.0, 0.0)));
     vec3 d = normalize(t * (r * cos(phi)) + cross(n, t) * (r * sin(phi)) + n * sqrt(1.0 - u1));
@@ -128,9 +132,15 @@ void main() {
     // coloured block light: one nearby light per pixel and frame, averaged and filtered along with the GI. Where
     // Minecraft's own block light is zero no light block is in reach: skip the light list (most of a daytime view)
     if (texture(colortex1, texcoord).z > 0.05)
+    #if RT_NOISE == 1
+    gi += min(coloredBlockLight(p, n, mat, rayRand(gl_FragCoord.xy, frameCounter, 2),
+                                rayRand(gl_FragCoord.xy, frameCounter, 3),
+                                rayRand(gl_FragCoord.xy, frameCounter, 4)), vec3(32.0));
+    #else
     gi += min(coloredBlockLight(p, n, mat, ign(gl_FragCoord.xy + vec2(5.0, 37.0), frameCounter * 11 + 4),
                                 ign(gl_FragCoord.xy + vec2(61.0, 3.0), frameCounter * 13 + 5),
                                 ign(gl_FragCoord.xy + vec2(23.0, 83.0), frameCounter * 17 + 6)), vec3(32.0));
+    #endif
     #endif
   #else
     hit = mcm_trace(o, d, RT_AO_RADIUS);

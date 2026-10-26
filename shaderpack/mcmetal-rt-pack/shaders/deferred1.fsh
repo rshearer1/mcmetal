@@ -58,8 +58,13 @@ void main() {
   #ifdef SHADOW_CHECKERBOARD
             if (valid) q = rayPixel(q, SHADOW_RATE);   // only 1 in SHADOW_RATE pixels traces (see rayRest above)
   #endif
+  #if RT_NOISE == 1
+            float a1 = rayRand(q, frameCounter, 0) * 6.2832;
+            float a2 = sqrt(rayRand(q, frameCounter, 1)) * radians(SUN_SOFTNESS);
+  #else
             float a1 = ign(q + vec2(13.0, 71.0), frameCounter * 3 + 1) * 6.2832;
             float a2 = sqrt(ign(q + vec2(91.0, 29.0), frameCounter * 5 + 2)) * radians(SUN_SOFTNESS);
+  #endif
             vec3 st = normalize(abs(lightDir.y) < 0.99 ? cross(lightDir, vec3(0.0, 1.0, 0.0)) : cross(lightDir, vec3(1.0, 0.0, 0.0)));
             vec3 sl = normalize(lightDir + (st * cos(a1) + cross(lightDir, st) * sin(a1)) * tan(a2));
             sh = sunShadow(p, ns, sl, mat);

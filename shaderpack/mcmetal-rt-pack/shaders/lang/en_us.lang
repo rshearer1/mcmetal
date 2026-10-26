@@ -194,3 +194,7 @@ option.STARS.comment=Our own steady night sky: stars of many sizes and colours t
 option.MILKY_WAY=Milky Way
 option.MILKY_WAY.comment=The faint band of the Milky Way, with dark dust lanes.
 option.STARS_BRIGHTNESS=Star Brightness
+option.RT_NOISE=Ray Noise
+option.RT_NOISE.comment=How rays pick their random directions. Decorrelated noise leaves fewer patterns for the denoiser.
+value.RT_NOISE.0=Classic
+value.RT_NOISE.1=Decorrelated
