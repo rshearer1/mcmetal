@@ -12,6 +12,26 @@ in vec2 texcoord;
 
 layout(location = 0) out vec4 outColor;
 
+#ifdef BLOOM
+// soft glow around bright things (the sun, lights, lava, glowing texels), as SEUS and Bedrock RTX have: the picture
+// blurred at five widths, from colortex0's mip levels (composite3 has them made for metering). Each level takes 4
+// taps half a texel apart, so with filtering every level is a smooth tent instead of blocky squares.
+vec3 bloom(vec2 uv) {
+    vec3 sum = vec3(0.0);
+    float wsum = 0.0;
+    for (int i = 0; i < 5; i++) {
+        float lod = float(i + 2);
+        vec2 t = exp2(lod) * 0.5 / vec2(viewWidth, viewHeight);
+        vec3 c = textureLod(colortex0, uv + vec2(t.x, t.y), lod).rgb + textureLod(colortex0, uv + vec2(-t.x, t.y), lod).rgb
+               + textureLod(colortex0, uv + vec2(t.x, -t.y), lod).rgb + textureLod(colortex0, uv - t, lod).rgb;
+        float w = 1.0 + 0.5 * float(i);   // the wide levels a little stronger: a broad, soft halo
+        sum += c * (0.25 * w);
+        wsum += w;
+    }
+    return sum / wsum;
+}
+#endif
+
 void main() {
     float exposure = texelFetch(colortex6, ivec2(0), 0).r * EXPOSURE;   // from composite3
     vec3 col = texture(colortex0, texcoord).rgb * exposure;
@@ -49,6 +69,10 @@ void main() {
         glow += max(texture(colortex0, texcoord + d * 18.0).rgb * exposure - 0.6, 0.0) * 0.6;
     }
     col += glow * (STYLE_GLOW / 8.0);
+#endif
+#ifdef BLOOM
+    // a small share of the blurred picture: bright things spill light around them, dark ones barely change
+    col = mix(col, bloom(texcoord) * exposure, 0.04 * BLOOM_STRENGTH);
 #endif
     col = acesFitted(col);
     col = styleGrade(col, texcoord);
