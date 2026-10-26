@@ -36,6 +36,12 @@ flat out int autoMat;   // 10400-10403 (block.properties AUTO MATERIALS), else 0
 in vec4 at_tangent;
 out vec4 tangentW;   // xyz tangent in player space, w handedness
 #endif
+#ifdef POM
+out vec4 tileBox;    // this face's texture in the atlas: xy corner, zw size (parallax wraps inside it)
+  #ifndef WAVING_PLANTS
+in vec2 mc_midTexCoord;
+  #endif
+#endif
 #if defined FORWARD && !defined UNLIT
 flat out vec3 sunCol, skyAmb;
 #endif
@@ -91,6 +97,13 @@ void main() {
 #if defined OPAQUE && defined LABPBR
     tangentW = vec4(mat3(gbufferModelViewInverse) * normalize(gl_NormalMatrix * at_tangent.xyz), at_tangent.w);
 #endif
+#ifdef POM
+    {
+        vec2 mid = (gl_TextureMatrix[0] * vec4(mc_midTexCoord, 0.0, 1.0)).xy;
+        vec2 half_ = abs(texcoord - mid);
+        tileBox = vec4(mid - half_, half_ * 2.0);
+    }
+#endif
     mat = MATERIAL;
 #ifdef TERRAIN
     int id = int(mc_Entity.x + 0.5);
@@ -111,6 +124,10 @@ void main() {
     if (renderStage != MC_RENDER_STAGE_STARS) gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
 #endif
 }
+#endif
+
+#if defined TERRAIN && defined OPAQUE && defined LABPBR && defined PARALLAX
+    #define POM
 #endif
 
 #if defined FORWARD && !defined UNLIT && defined WATER_SHADOWS && (defined TERRAIN || defined TRACE_SHADOW)
@@ -141,6 +158,41 @@ flat in int autoMat;
 #if defined OPAQUE && defined LABPBR
 in vec4 tangentW;
 uniform sampler2D normals, specular;   // LabPBR resource packs (Iris binds flat defaults without one)
+#endif
+#ifdef POM
+in vec4 tileBox;
+// parallax occlusion (LabPBR height in the normal map's alpha, e.g. Vanilla RTX): march the view ray down into the
+// block's surface in texture space until it passes under the height map, and read every texture there instead.
+// Bricks and cobbles get real depth up close; fades out by 24 blocks; the ray-traced scene stays flat.
+vec2 parallaxCoord(vec2 uv, vec3 n, vec2 gx, vec2 gy) {   // gx, gy: uv's screen derivatives
+    float dist = length(playerPos);
+    float fade = 1.0 - smoothstep(12.0, 24.0, dist);
+    vec3 t = tangentW.xyz - n * dot(tangentW.xyz, n);
+    if (fade <= 0.0 || dot(t, t) < 1e-6 || tileBox.z <= 0.0 || tileBox.w <= 0.0) return uv;
+    t = normalize(t);
+    vec3 b = cross(t, n) * (tangentW.w < 0.0 ? -1.0 : 1.0);   // along +v of the texture
+    vec3 vd = playerPos / dist;
+    float vz = -dot(vd, n);
+    if (vz < 0.08) return uv;
+    vec2 local = (uv - tileBox.xy) / tileBox.zw;
+    vec2 dir = vec2(dot(vd, t), dot(vd, b)) / vz * (PARALLAX_DEPTH * fade);
+    const int steps = PARALLAX_STEPS;
+    vec2 stepUV = dir / float(steps);
+    float layer = 0.0, prevD = 0.0;
+    for (int i = 0; i < steps; i++) {
+        float d = 1.0 - textureGrad(normals, tileBox.xy + fract(local) * tileBox.zw, gx, gy).a;
+        if (d <= layer) {
+            // between the last two steps: where the ray actually met the height map
+            float a = (layer - d) / max((layer - d) + (prevD - (layer - 1.0 / float(steps))), 1e-4);
+            local -= stepUV * clamp(a, 0.0, 1.0);
+            break;
+        }
+        prevD = d;
+        local += stepUV;
+        layer += 1.0 / float(steps);
+    }
+    return tileBox.xy + fract(local) * tileBox.zw;
+}
 #endif
 #if defined FORWARD && !defined UNLIT
 flat in vec3 sunCol, skyAmb;
@@ -183,16 +235,20 @@ void main() {
     outWater = vec4(0.0);   // (written, never kept: blending with ZERO would still turn garbage into NaN)
     outAdd = vec4(0.0);
 #endif
+    vec2 tc = texcoord;
+#ifdef POM
+    tc = parallaxCoord(texcoord, normalize(gl_FrontFacing ? normalW : -normalW), dFdx(texcoord), dFdy(texcoord));
+#endif
 #ifdef NO_TEXTURE
     vec4 c = tint;
 #else
-    vec4 c = texture(gtexture, texcoord) * tint;
+    vec4 c = textureGrad(gtexture, tc, dFdx(texcoord), dFdy(texcoord)) * tint;
 #endif
     float ao = 1.0;
 #ifdef TERRAIN
     // Iris separateAo: vertex alpha is the corner darkening, the texture alpha is the real alpha
     ao = tint.a;
-    c.a = texture(gtexture, texcoord).a;
+    c.a = textureGrad(gtexture, tc, dFdx(texcoord), dFdy(texcoord)).a;
 #endif
 #ifdef STARS_ONLY
     // gbuffers_skybasic: keep only the stars; the sky colour itself is ours (deferred)
@@ -244,7 +300,7 @@ void main() {
     vec4 spec = vec4(0.0);
   #ifdef LABPBR
     {
-        vec4 nt = texture(normals, texcoord);
+        vec4 nt = textureGrad(normals, tc, dFdx(texcoord), dFdy(texcoord));
         // bumps fade out with distance: far away a texel is smaller than a pixel, and full-strength normals there
         // shimmer into wave-like patterns (moire) as the view moves
         float bump = LABPBR_NORMAL_STRENGTH * (1.0 - 0.75 * smoothstep(12.0, 40.0, length(playerPos)));
@@ -261,7 +317,7 @@ void main() {
             // ray-traced AO darkens the same cracks again)
             c.rgb *= max(nt.b * mix(1.0 - 0.3 * bump, 1.0, nt.a), 0.6);
         }
-        spec = texture(specular, texcoord);
+        spec = textureGrad(specular, tc, dFdx(texcoord), dFdy(texcoord));
         if (spec.a > 254.5 / 255.0) spec.a = 0.0;   // LabPBR: 255 = no emission
     }
   #endif

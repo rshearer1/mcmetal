@@ -71,6 +71,9 @@
 #define WAVING_SPEED 1.0 // [0.5 1.0 1.5 2.0]
 #define SUBSURFACE // leaves and grass glow a deeper green with the sun behind them (light through the leaf)
 #define SUBSURFACE_STRENGTH 1.0 // [0.5 1.0 1.5 2.0]
+#define PARALLAX // resource-pack height maps (Vanilla RTX) give bricks and cobbles real depth up close
+#define PARALLAX_DEPTH 0.2 // [0.1 0.15 0.2 0.25 0.3 0.4]
+#define PARALLAX_STEPS 16 // [8 12 16 24 32]
 #define LABPBR_NORMAL_STRENGTH 1.0 // [0.5 1.0 1.5 2.0 3.0] how deep LabPBR normal maps and height look
 #define LABPBR // LabPBR resource packs: normal maps, shiny and metal blocks, glowing texels
 #define RT_PBR_EMISSIVE // glowing texels of LabPBR packs (lamps, ores, lava) also light rooms in the bounce light and glow in reflections

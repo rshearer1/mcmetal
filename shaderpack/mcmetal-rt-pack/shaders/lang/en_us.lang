@@ -212,3 +212,7 @@ option.PHOTO_MODE.comment=While you stand still, rays keep averaging much longer
 option.PHOTO_FRAMES=Photo Mode Frames
 option.UNIFIED_TARGETS=One Pass For See-Through
 option.UNIFIED_TARGETS.comment=Particles, rain and other see-through things share the same buffers as water so they draw in one pass (faster on Metal).
+option.PARALLAX=Parallax Depth
+option.PARALLAX.comment=Resource packs with height maps (Vanilla RTX) give bricks and cobbles real depth up close.
+option.PARALLAX_DEPTH=Parallax Depth Amount
+option.PARALLAX_STEPS=Parallax Quality
