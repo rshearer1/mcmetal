@@ -5364,19 +5364,25 @@ static void rt_build_lights(const mgl_rt_geom *g, RtSection *__strong *secs, con
 }
 
 /* Entities (mgl_rt.c): one acceleration structure rebuilt every frame, since they move. Their triangles carry no
-   atlas texture (entity skins live elsewhere): flag 0x200 makes mcm_trace_hit use the colour alone, a mid grey. */
+   atlas texture (entity skins live elsewhere): flag 0x200 makes mcm_trace_hit use the colour alone: the skin's
+   colour at each triangle's centre (mgl_rt.c), or a mid grey. */
 static float *rt_ent;
-static int rt_ent_n, rt_ent_cap;
+static uint32_t *rt_ent_col; /* 3 colours per triangle (mgl_rt.c: the entity's texture x vertex colour), or none */
+static int rt_ent_n, rt_ent_cap, rt_ent_has_col;
 static mglb_buffer *rt_ent_tris; /* the record buffer in use by the current scene */
 
-void mglb_rt_dynamic(const float *tris, int n)
+void mglb_rt_dynamic(const float *tris, const uint32_t *colours, int n)
 {
     if (n > rt_ent_cap) {
         rt_ent_cap = n * 2;
         rt_ent = realloc(rt_ent, sizeof(float) * 9 * (size_t)rt_ent_cap);
+        rt_ent_col = realloc(rt_ent_col, sizeof(uint32_t) * 3 * (size_t)rt_ent_cap);
     }
     if (n)
         memcpy(rt_ent, tris, sizeof(float) * 9 * (size_t)n);
+    rt_ent_has_col = colours != NULL;
+    if (n && colours)
+        memcpy(rt_ent_col, colours, sizeof(uint32_t) * 3 * (size_t)n);
     rt_ent_n = n;
 }
 
@@ -5406,7 +5412,10 @@ static id<MTLAccelerationStructure> entity_as(mglb_buffer **tris_out)
             o[0] = (1 - fabsf(c[1])) * (c[0] >= 0 ? 1 : -1), o[1] = (1 - fabsf(c[0])) * (c[1] >= 0 ? 1 : -1);
         memset(r, 0, 48);
         r[3] = 0x200; /* solid, untextured */
-        r[4] = r[5] = r[6] = 0xFF999999u;
+        if (rt_ent_has_col)
+            r[4] = rt_ent_col[t * 3], r[5] = rt_ent_col[t * 3 + 1], r[6] = rt_ent_col[t * 3 + 2];
+        else
+            r[4] = r[5] = r[6] = 0xFF999999u;
         r[7] = (uint32_t)(uint16_t)(int16_t)lrintf(o[0] * 32767.0f) | (uint32_t)(uint16_t)(int16_t)lrintf(o[1] * 32767.0f) << 16;
         r[8] = r[9] = r[10] = 0xF000u; /* full sky light, no block light */
     }

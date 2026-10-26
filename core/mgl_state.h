@@ -129,6 +129,8 @@ typedef struct mgl_program {
     int rt_epos_loc, rt_emv_off, rt_eproj_off; /* entity capture (mgl_rt.c): float3 position, model-view, projection */
     int rt_entity;              /* 1 = draws entities (by Iris program name or the entity vertex format's overlay input) */
     int rt_atlas_slot;          /* x.textures[] entry holding the block atlas (u_BlockTex, gtexture...), or -1 */
+    int rt_spec_slot;           /* ... and Iris's LabPBR specular atlas ("specular"), or -1 */
+    int rt_euv_loc, rt_ecol_loc, rt_etex_slot; /* entity colours (mgl_rt.c): UV0, Color, the texture they sample */
     unsigned char *ublock[3];   /* default-block shadow per stage (vertex, fragment, compute) */
     int unit_of[MGL_MAX_TEXTURES * 3]; /* GL texture unit per x.textures[] entry (glUniform1i on a sampler) */
     int image_unit_of[MGL_MAX_TEXTURES * 3];
@@ -237,6 +239,10 @@ void mgl_rt_record(mgl_program *p, const mgl_draw *d);
 void mgl_rt_note_write(mglb_buffer *m, size_t offset, size_t size);
 void mgl_rt_note_free(mglb_buffer *m); /* the backend frees buffer memory for good */
 void mgl_rt_end_frame(void); /* called by the backend before present */
+/* entity colours: a CPU thumbnail of each RGBA8 2D texture's level 0, kept by uploads (mgl_texture.c) */
+void mgl_rt_thumb_upload(mglb_texture *m, const mglb_texture_desc *desc, int level, int x, int y, int z, int w, int h,
+                         const void *data, size_t bytes_per_row);
+void mgl_rt_thumb_forget(mglb_texture *m);
 /* Waits for a program's background compile and applies it; draws and dispatches call this before using p->gpu. */
 void mgl_program_wait(mgl_program *p);
 void mgl_program_drain(void); /* waits for every background link job */

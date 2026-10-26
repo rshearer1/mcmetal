@@ -37,6 +37,24 @@ bool cachedShadow(vec3 hp, out vec3 sh) {
     return true;
 }
 
+// light cache: a GI hit that was on screen last frame takes the light gathered there (colortex4, its averaged
+// GI) instead of the lightmap's flat sky and block light, so light bounces again each frame (multi-bounce)
+#if defined LIGHT_CACHE && defined RT_GI
+    #define GI_CACHE
+bool cachedGI(vec3 hp, out vec3 gi) {
+    vec3 prev = hp + cameraPosition - previousCameraPosition;
+    vec4 pc = gbufferPreviousProjection * (gbufferPreviousModelView * vec4(prev, 1.0));
+    if (pc.w <= 0.0) return false;
+    vec2 uv = pc.xy / pc.w * 0.5 + 0.5;
+    if (any(lessThan(uv, vec2(0.002))) || any(greaterThan(uv, vec2(0.998)))) return false;
+    vec4 a = texture(colortex3, uv * GI_SCALE);
+    float d = length(prev);
+    if (a.g < 2.0 || abs(a.b - d) > 0.03 * d + 0.15) return false;   // hidden, or no average there yet
+    gi = texture(colortex4, uv * GI_SCALE).rgb;
+    return true;
+}
+#endif
+
 #if defined USE_RT && (defined RT_AO || defined RT_GI)
   #ifdef GI_COARSE_RAYS
     #define COARSE_RAYS   // bounce light and AO: leaves and plants count as solid (lib/reflect.glsl)
@@ -82,6 +100,12 @@ void main() {
   #else
     bool skip = ((q.x & 1) + 2 * (q.y & 1)) != (frameCounter & 3);
   #endif
+  #ifdef GI_ADAPTIVE
+    // spend the rays where they're needed: a pixel just uncovered (few frames in its average) traces every frame,
+    // one whose average has settled traces 1 frame in 4
+    if (h.g < 4.0) skip = false;
+    else if (h.g >= RT_AO_FRAMES * 0.75) skip = ((q.x & 1) + 2 * (q.y & 1)) != (frameCounter & 3);
+  #endif
     if (valid && skip) {
         outAO = vec4(h.r, h.g, dist, 1.0);
         outGI = vec4(texture(colortex4, puv * GI_SCALE).rgb, 1.0);
@@ -94,7 +118,11 @@ void main() {
 #if defined USE_RT && (defined RT_AO || defined RT_GI)
     vec3 n = octDecode(texture(colortex1, texcoord).xy);
     // cosine-weighted direction around n, new random numbers each frame
+  #if RT_NOISE == 1
+    float u1 = rayRand(gl_FragCoord.xy, frameCounter, 0), u2 = rayRand(gl_FragCoord.xy, frameCounter, 1);
+  #else
     float u1 = ign(gl_FragCoord.xy, frameCounter), u2 = ign(gl_FragCoord.xy + vec2(47.0, 17.0), frameCounter * 7 + 3);
+  #endif
     float r = sqrt(u1), phi = 6.2832 * u2;
     vec3 t = normalize(abs(n.y) < 0.99 ? cross(n, vec3(0.0, 1.0, 0.0)) : cross(n, vec3(1.0, 0.0, 0.0)));
     vec3 d = normalize(t * (r * cos(phi)) + cross(n, t) * (r * sin(phi)) + n * sqrt(1.0 - u1));
@@ -110,9 +138,15 @@ void main() {
     // coloured block light: one nearby light per pixel and frame, averaged and filtered along with the GI. Where
     // Minecraft's own block light is zero no light block is in reach: skip the light list (most of a daytime view)
     if (texture(colortex1, texcoord).z > 0.05)
+    #if RT_NOISE == 1
+    gi += min(coloredBlockLight(p, n, mat, rayRand(gl_FragCoord.xy, frameCounter, 2),
+                                rayRand(gl_FragCoord.xy, frameCounter, 3),
+                                rayRand(gl_FragCoord.xy, frameCounter, 4)), vec3(32.0));
+    #else
     gi += min(coloredBlockLight(p, n, mat, ign(gl_FragCoord.xy + vec2(5.0, 37.0), frameCounter * 11 + 4),
                                 ign(gl_FragCoord.xy + vec2(61.0, 3.0), frameCounter * 13 + 5),
                                 ign(gl_FragCoord.xy + vec2(23.0, 83.0), frameCounter * 17 + 6)), vec3(32.0));
+    #endif
     #endif
   #else
     hit = mcm_trace(o, d, RT_AO_RADIUS);
@@ -120,7 +154,15 @@ void main() {
     ao = hit < 0.0 ? 1.0 : smoothstep(0.0, RT_AO_RADIUS, hit);
 #endif
 
-    float frames = valid ? min(h.g + 1.0, RT_AO_FRAMES) : 1.0;
+    float cap = RT_AO_FRAMES;
+#ifdef PHOTO_MODE
+    // standing still and not turning: keep averaging far longer, for clean screenshots (a light switched on
+    // nearby takes a few seconds to settle while you stand still)
+    bool still = length(cameraPosition - previousCameraPosition) < 1e-4
+              && distance(gbufferModelView[2].xyz, gbufferPreviousModelView[2].xyz) < 1e-5;
+    if (still) cap = PHOTO_FRAMES;
+#endif
+    float frames = valid ? min(h.g + 1.0, cap) : 1.0;
     float w = 1.0 / frames;
     outAO = vec4(mix(valid ? h.r : ao, ao, w), frames, dist, 1.0);
     vec3 hgi = valid ? texture(colortex4, puv * GI_SCALE).rgb : gi;

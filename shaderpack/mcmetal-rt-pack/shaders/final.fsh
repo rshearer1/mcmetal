@@ -9,6 +9,65 @@
 uniform sampler2D colortex0, colortex6, depthtex0;
 
 in vec2 texcoord;
+#if defined DEPTH_OF_FIELD || defined MOTION_BLUR
+uniform sampler2D colortex2;   // material (the held item stays sharp)
+float viewDist(vec2 uv, float depth) {
+    vec4 v = gbufferProjectionInverse * vec4(vec3(uv, depth) * 2.0 - 1.0, 1.0);
+    return length(v.xyz / v.w);
+}
+#endif
+#ifdef DEPTH_OF_FIELD
+// depth of field, as SEUS has (off by default): what's nearer or further than the block in the middle of the screen
+// goes soft, more so the further from that focus. A disc of 16 taps from colortex0's mip levels (smooth, cheap)
+uniform float centerDepthSmooth;
+const float centerDepthHalflife = 1.0;   // the focus follows what you look at over about a second
+vec3 depthOfField(vec2 uv, vec3 col) {
+    float depth = texture(depthtex0, uv).r;
+    int mat = int(texture(colortex2, uv).r * 255.0 + 0.5);
+    if (mat == MAT_HAND) return col;
+    float focus = viewDist(vec2(0.5), centerDepthSmooth), dist = depth >= 1.0 ? 1e4 : viewDist(uv, depth);
+    // blur radius in pixels: like a camera lens, by how far 1/distance is from the focus's
+    float coc = min(abs(1.0 / max(focus, 0.5) - 1.0 / dist) * DOF_STRENGTH * viewHeight * 0.02, 12.0);
+    if (coc < 0.5) return col;
+    float lod = log2(max(coc / 4.0, 1.0));
+    vec2 px = coc / vec2(viewWidth, viewHeight);
+    vec3 sum = col;
+    for (int i = 0; i < 16; i++) {
+        float r = sqrt((float(i) + 0.5) / 16.0), a = float(i) * 2.39996;
+        sum += textureLod(colortex0, uv + vec2(cos(a), sin(a)) * r * px, lod).rgb;
+    }
+    return sum / 17.0;
+}
+#endif
+#ifdef MOTION_BLUR
+// motion blur from turning and moving the camera (off by default): 8 taps along where this pixel moved since
+// the last frame, like a camera's shutter
+uniform mat4 gbufferPreviousModelView, gbufferPreviousProjection;
+uniform vec3 previousCameraPosition;
+vec3 motionBlur(vec2 uv, vec3 col) {
+    float depth = texture(depthtex0, uv).r;
+    if (int(texture(colortex2, uv).r * 255.0 + 0.5) == MAT_HAND) return col;
+    vec4 pc;
+    if (depth < 1.0) {
+        vec4 v = gbufferProjectionInverse * vec4(vec3(uv, depth) * 2.0 - 1.0, 1.0);
+        vec3 p = mat3(gbufferModelViewInverse) * (v.xyz / v.w) + gbufferModelViewInverse[3].xyz;
+        pc = gbufferPreviousProjection * (gbufferPreviousModelView * vec4(p + cameraPosition - previousCameraPosition, 1.0));
+    } else {
+        vec4 v = gbufferProjectionInverse * vec4(uv * 2.0 - 1.0, 0.0, 1.0);
+        pc = gbufferPreviousProjection * vec4(mat3(gbufferPreviousModelView) * (mat3(gbufferModelViewInverse) * (v.xyz / v.w)), 1.0);
+    }
+    if (pc.w <= 0.0) return col;
+    vec2 vel = (uv - (pc.xy / pc.w * 0.5 + 0.5)) * MOTION_BLUR_STRENGTH * 0.5;
+    float l = length(vel);
+    if (l * viewHeight < 1.0) return col;
+    vel *= min(l, 0.04) / l;   // at most 4% of the screen: fast turns stay readable
+    vec3 sum = col;
+    float jit = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    for (int i = 1; i <= 7; i++)
+        sum += texture(colortex0, uv - vel * ((float(i) + jit - 0.5) / 7.0 - 0.5)).rgb;
+    return sum / 8.0;
+}
+#endif
 
 layout(location = 0) out vec4 outColor;
 
@@ -68,7 +127,35 @@ vec3 lensFlare(vec2 uv) {
 
 void main() {
     float exposure = texelFetch(colortex6, ivec2(0), 0).r * EXPOSURE;   // from composite3
-    vec3 col = texture(colortex0, texcoord).rgb * exposure;
+    vec3 col = texture(colortex0, texcoord).rgb;
+#ifdef SHARPEN
+    {   // a light sharpen after TAA's blending: the pixel pushed away from its 4 neighbours, less where they
+        // already differ a lot (edges stay clean, no halos)
+        vec2 px = 1.0 / vec2(viewWidth, viewHeight);
+        vec3 a = texture(colortex0, texcoord + vec2(px.x, 0.0)).rgb, b = texture(colortex0, texcoord - vec2(px.x, 0.0)).rgb;
+        vec3 c2 = texture(colortex0, texcoord + vec2(0.0, px.y)).rgb, d = texture(colortex0, texcoord - vec2(0.0, px.y)).rgb;
+        vec3 mn = min(min(a, b), min(c2, min(d, col))), mx = max(max(a, b), max(c2, max(d, col)));
+        vec3 amount = clamp(1.0 - (mx - mn) / max(mx, vec3(1e-3)), 0.0, 1.0) * SHARPEN_STRENGTH * 0.5;
+        col = max(col + (col - (a + b + c2 + d) * 0.25) * amount, 0.0);
+    }
+#endif
+#ifdef DEPTH_OF_FIELD
+    col = depthOfField(texcoord, col);
+#endif
+#ifdef MOTION_BLUR
+    col = motionBlur(texcoord, col);
+#endif
+#ifdef PURKINJE
+    // night vision (the Purkinje shift): in very dim light the eye's rods take over, so colours fade and what is
+    // left leans blue. By the light actually reaching the eye, before exposure (bright lamps keep their colour)
+    {
+        float l = luma(col);
+        float rods = (1.0 - smoothstep(0.004, 0.08, l)) * PURKINJE_STRENGTH;
+        vec3 scotopic = vec3(0.62, 0.78, 1.0) * dot(col, vec3(0.06, 0.62, 0.32)) * 1.1;
+        col = mix(col, scotopic, clamp(rods, 0.0, 1.0));
+    }
+#endif
+    col *= exposure;
 #ifdef STYLE_PAINT
     // painted finish (Kuwahara): of the four 3x3 corners around the pixel, take the average of the calmest one, so
     // flat areas become soft dabs of colour while edges stay sharp
@@ -111,7 +198,11 @@ void main() {
 #ifdef LENS_FLARE
     col += lensFlare(texcoord);
 #endif
+#if TONEMAP == 1
+    col = softFilmic(col);
+#else
     col = acesFitted(col);
+#endif
     col = styleGrade(col, texcoord);
 #ifdef STYLE_POSTER
     if (texture(depthtex0, texcoord).r < 1.0) {   // flat poster colour on the world (the sky stays smooth)

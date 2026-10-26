@@ -64,6 +64,9 @@ void main() {
     // fast camera moves: trust the new frame more
     float motion = length((puv - texcoord) * vec2(viewWidth, viewHeight));
     float w = valid ? mix(0.9, 0.7, clamp(motion / 20.0, 0.0, 1.0)) : 0.0;
+  #ifdef PHOTO_MODE
+    if (motion < 0.01 && length(cameraPosition - previousCameraPosition) < 1e-4) w = valid ? 0.97 : 0.0;
+  #endif
     cur = unsquash(fromYCoCg(mix(toYCoCg(squash(cur)), h, w)));
 #endif
     outColor = vec4(cur, 1.0);

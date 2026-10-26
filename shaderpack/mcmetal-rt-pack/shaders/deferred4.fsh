@@ -20,6 +20,7 @@ const vec4 colortex10ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 #ifdef CLOUDS
     #include "/lib/clouds.glsl"
 #endif
+#include "/lib/stars.glsl"
 #if !defined USE_RT || defined RT_REFLECTIONS
     // (the ray-traced shadow comes from deferred1.fsh; with RT this is only for what reflections see)
     #include "/lib/shadow.glsl"
@@ -32,6 +33,32 @@ const vec4 colortex10ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 
 uniform sampler2D colortex0, colortex1, colortex2, colortex3, colortex4, colortex5, colortex7, colortex10, depthtex0;
 
+// the sun shadow (colortex5: rgb shadow, a distance), cleaned of the grain left by one ray per pixel and frame:
+// a 3x3 blur over pixels at the same distance facing the same way, so shadow edges between objects stay sharp
+vec3 filteredShadow(vec2 uv, vec3 n) {
+    vec4 c = texture(colortex5, uv);
+#ifdef SHADOW_FILTER
+    if (c.a <= 0.0) return c.rgb;
+    vec2 px = 1.0 / vec2(viewWidth, viewHeight);
+    vec3 sum = c.rgb;
+    float wsum = 1.0, tol = 0.02 * c.a + 0.05;
+    for (int y = -1; y <= 1; y++)
+        for (int x = -1; x <= 1; x++) {
+            if (x == 0 && y == 0) continue;
+            vec2 q = uv + vec2(x, y) * px;
+            vec4 s = texture(colortex5, q);
+            float w = (abs(x) + abs(y) == 2 ? 0.5 : 1.0)
+                    * step(abs(s.a - c.a), tol)
+                    * pow(max(dot(octDecode(texture(colortex1, q).xy), n), 0.0), 16.0);
+            sum += s.rgb * w;
+            wsum += w;
+        }
+    return sum / wsum;
+#else
+    return c.rgb;
+#endif
+}
+
 #ifdef DISTANT_HORIZONS
 uniform sampler2D dhDepthTex0;
 uniform mat4 dhProjectionInverse;
@@ -39,6 +66,39 @@ uniform mat4 dhProjectionInverse;
 
 in vec2 texcoord;
 flat in vec3 sunCol, skyAmb, lightDir, sunDir;
+
+#if defined RAIN_PUDDLES && defined RAIN_RIPPLES
+// rings spreading from raindrops on a puddle: the normal of a few cells of rings (two layers, offset), each cell
+// one drop at a random spot and time; rings grow and fade over a second. Flat when it isn't raining.
+vec3 rippleNormal(vec2 w) {
+    vec2 g = vec2(0.0);
+    for (int l = 0; l < 2; l++) {
+        vec2 q = w * 2.2 + float(l) * vec2(0.37, 0.71);
+        vec2 cell = floor(q), f = fract(q);
+        float h = hash12(cell + float(l) * 17.0);
+        vec2 c = 0.3 + 0.4 * vec2(h, fract(h * 13.7));
+        float t = fract(frameTimeCounter * 1.1 + h * 7.0);
+        vec2 d = f - c;
+        float r = length(d), R = t * 0.45;
+        float ring = sin(clamp((r - R) * 40.0, -3.1416, 3.1416)) * (1.0 - t) * (1.0 - t) * step(abs(r - R), 0.08);
+        g += d / max(r, 1e-3) * ring;
+    }
+    g *= 0.12 * rainStrength;
+    return normalize(vec3(-g.x, 1.0, -g.y));
+}
+#endif
+
+#ifdef LIGHTNING_FLASH
+// lightning (Iris: lightningBoltPosition, w = 1 while a bolt is out, xyz player space): a flickering blue-white
+// flash on everything the sky can see, much brighter near the bolt
+uniform vec4 lightningBoltPosition;
+vec3 lightningLight(vec3 p) {
+    if (lightningBoltPosition.w < 0.5) return vec3(0.0);
+    float flicker = 0.55 + 0.45 * sin(frameTimeCounter * 47.0) * sin(frameTimeCounter * 13.0);
+    float d = length(p.xz - lightningBoltPosition.xz);
+    return vec3(0.75, 0.82, 1.0) * flicker * (0.35 + 3.0 / (1.0 + d * d / 400.0)) * LIGHTNING_STRENGTH;
+}
+#endif
 
 /* RENDERTARGETS: 0 */
 layout(location = 0) out vec4 outColor;
@@ -106,6 +166,12 @@ void main() {
     if (depth >= 1.0) {
         vec3 dir = normalize(p);
         col = skyColor(dir, sunDir);
+#ifdef END_BEAMS
+        if (!hasSkylight && !hasCeiling) col += drawEndSky(dir);
+#endif
+#ifdef LIGHTNING_FLASH
+        col += lightningLight(vec3(0.0)) * 0.08 * (0.3 + 0.7 * max(dir.y, 0.0));   // the clouds light up
+#endif
         // sun disc with darker edges; the moon and stars come from vanilla's textures (MAT_SKY)
         float cosSun = dot(dir, sunDir), edge = smoothstep(0.99955, 0.99975, cosSun);
         col += sunTransmittance() * edge * (60.0 * (0.6 + 0.4 * smoothstep(0.99955, 0.99995, cosSun)));
@@ -113,6 +179,32 @@ void main() {
         float near = max(cosSun, 0.0);
         col += sunTransmittance() * (pow(near, 4000.0) * 3.0 + pow(near, 300.0) * 0.25) * (1.0 - 0.8 * rainStrength) * (1.0 - edge);
         if (mat == MAT_SKY) col += toLinear(albedo.rgb) * 0.4 * (1.0 - 0.9 * rainStrength);
+#ifdef STARS
+        col += drawStars(dir, smoothstep(0.02, -0.15, sunDir.y));
+#endif
+#ifdef LIGHT_POLLUTION
+        {   // the glow of your own lamps in the night haze: a warm band low in the sky, by how much block light is
+            // around the player (a lit village glows, a dark forest doesn't); stronger in rain (more to light up)
+            float night = smoothstep(0.05, -0.1, sunDir.y);
+            float lamps = float(eyeBrightnessSmooth.x) / 240.0;
+            float low = exp(-max(dir.y, 0.0) * 6.0);
+            col += vec3(1.0, 0.62, 0.32) * low * night * lamps * (0.015 + 0.03 * rainStrength) * LIGHT_POLLUTION_STRENGTH;
+        }
+#endif
+#ifdef RAINBOW
+        {   // a rainbow opposite the sun as the rain clears (wet air, little rain left): red outside at 42 degrees,
+            // violet inside at 40, a faint second bow at 51 with the colours the other way round
+            float ang = degrees(acos(clamp(dot(dir, -sunDir), -1.0, 1.0)));
+            float bow = clamp(wetness * 1.5 - rainStrength * 3.0, 0.0, 1.0) * smoothstep(0.0, 0.1, sunDir.y)
+                      * smoothstep(0.6, 0.2, sunDir.y) * smoothstep(-0.02, 0.06, dir.y);
+            if (bow > 0.0) {
+                float t1 = (ang - 40.0) / 2.5, t2 = (53.0 - ang) / 3.0;
+                vec3 c1 = clamp(vec3(1.0 - abs(t1 - 0.9) * 3.0, 1.0 - abs(t1 - 0.55) * 3.0, 1.0 - abs(t1 - 0.15) * 3.0), 0.0, 1.0);
+                vec3 c2 = clamp(vec3(1.0 - abs(t2 - 0.9) * 3.0, 1.0 - abs(t2 - 0.55) * 3.0, 1.0 - abs(t2 - 0.15) * 3.0), 0.0, 1.0);
+                col += (c1 + c2 * 0.35) * sunCol * 0.06 * bow * RAINBOW_STRENGTH;
+            }
+        }
+#endif
         col += styleAurora(dir, smoothstep(0.02, -0.12, sunDir.y)) * (1.0 - rainStrength);
   #ifdef CLOUDS
         col = drawClouds(col, dir, lightDir, sunCol, skyAmb);
@@ -131,7 +223,7 @@ void main() {
         vec3 f0 = metal ? a : vec3(max(pbr.w, 0.02));
         vec3 sh = vec3(0.0);
 #ifdef USE_RT
-        sh = mat == MAT_HAND ? vec3(1.0) : texture(colortex5, texcoord).rgb;   // traced and averaged in deferred1.fsh
+        sh = mat == MAT_HAND ? vec3(1.0) : filteredShadow(texcoord, n);   // traced and averaged in deferred1.fsh
 #else
         if (dot(sunCol, sunCol) > 1e-6 && (dot(n, lightDir) > 0.0 || mat == MAT_FOLIAGE))
             sh = sunShadow(p, n, lightDir, mat);
@@ -164,6 +256,18 @@ void main() {
 #else
         col = a * surfaceLight(p, nm, nl.zw, ao, mat, lightDir, sunCol, skyAmb, sh) + emission(a, mat);
         vec3 envLight = skyAmb * (nl.w * nl.w) * (0.7 + 0.3 * n.y);
+#endif
+#ifdef LIGHTNING_FLASH
+        col += a * lightningLight(p) * (nl.w * nl.w) * (0.6 + 0.4 * max(n.y, 0.0));
+#endif
+#ifdef SUBSURFACE
+        // leaves and grass let sunlight through: backlit, they glow a deeper green (light scattered inside the leaf
+        // comes out tinted by it twice). Strongest looking towards the sun, a little from every side
+        if (mat == MAT_FOLIAGE) {
+            float fwd = max(dot(normalize(p), lightDir), 0.0);
+            float through = 0.15 + 0.85 * pow(fwd, 6.0);
+            col += a * a * sunCol * sh * (through * 1.6 * SUBSURFACE_STRENGTH) * (1.0 - 0.5 * max(dot(n, lightDir), 0.0));
+        }
 #endif
         // metals have no diffuse light of their own: their colour is in what they reflect
         // (only as far as they get a reflection below: a rough metal reflects its surroundings blurred, which
@@ -221,7 +325,11 @@ void main() {
         if (m.b > 0.01) {
             vec3 v = normalize(p);
             vec3 pn = vec3(0.0, 1.0, 0.0);
+  #ifdef RAIN_RIPPLES
+            pn = rippleNormal(p.xz + cameraPosition.xz);
+  #endif
             vec3 rd = reflect(v, pn);
+            rd.y = abs(rd.y);   // ripples never send a ray into the ground
             // (at least 15%: a real puddle seen from above is dark and still shows the sky; pure Fresnel's 2% vanishes)
             float f = max(0.02 + 0.98 * pow(1.0 - clamp(-v.y, 0.0, 1.0), 5.0), 0.15);
             float skyOpen = smoothstep(0.3, 0.9, nl.w);

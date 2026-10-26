@@ -55,6 +55,18 @@ float ign(vec2 pixel, int frame) {
     return fract(52.9829189 * fract(0.06711056 * pixel.x + 0.00583715 * pixel.y));
 }
 
+// RT_NOISE 1: the extra random numbers of a ray (its second angle, the light it picks) are not shifted copies of the
+// same noise: each pixel gets its own fixed offset, stepped every frame along a different irrational increment per
+// dimension (Cranley-Patterson rotation of an R-sequence). Apple's ray-tracing guidance warns that correlated
+// numbers across a ray's dimensions show up as patterns the denoiser can't remove. Dimension 0 stays IGN (its
+// even spread on screen is what the a-trous filter likes).
+float hash12b(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973)); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+float rayRand(vec2 pixel, int frame, int dim) {
+    if (dim == 0) return ign(pixel, frame);
+    const float step[6] = float[6](0.0, 0.7548777, 0.5698403, 0.6180340, 0.4142136, 0.7320508);
+    return fract(hash12b(pixel + float(dim) * vec2(17.31, 41.73)) + float(frame & 4095) * step[min(dim, 5)]);
+}
+
 // smooth value noise in 2D (0..1), for puddle shapes
 float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 float valueNoise(vec2 p) {

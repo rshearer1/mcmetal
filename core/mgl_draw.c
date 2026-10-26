@@ -252,6 +252,10 @@ static void gather_textures(mgl_draw *d, mgl_program *p, int compute)
                 bt->tex = mgl_rt_atlas; /* mcm_trace's alpha test reads the terrain's block atlas */
                 mgl_sampler_defaults(&bt->sampler);
                 bt->sampler.min_filter = bt->sampler.mag_filter = GL_NEAREST;
+            } else if (p->x.uses_scene && !strcmp(slot->name, "mcm_specular")) {
+                bt->tex = mgl_rt_specular; /* mcm_hit_emission: the terrain's LabPBR specular atlas */
+                mgl_sampler_defaults(&bt->sampler);
+                bt->sampler.min_filter = bt->sampler.mag_filter = GL_NEAREST;
             } else {
                 int unit = p->unit_of[i];
                 if (unit < 0 || unit >= MGL_MAX_UNITS)

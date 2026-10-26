@@ -29,19 +29,57 @@ out vec4 tint;
 out vec3 normalW;
 out vec3 playerPos;
 flat out int mat;
+#if defined TERRAIN && defined OPAQUE && defined AUTO_PBR
+flat out int autoMat;   // 10400-10403 (block.properties AUTO MATERIALS), else 0
+#endif
 #if defined OPAQUE && defined LABPBR
 in vec4 at_tangent;
 out vec4 tangentW;   // xyz tangent in player space, w handedness
+#endif
+#ifdef POM
+out vec4 tileBox;    // this face's texture in the atlas: xy corner, zw size (parallax wraps inside it)
+  #ifndef WAVING_PLANTS
+in vec2 mc_midTexCoord;
+  #endif
 #endif
 #if defined FORWARD && !defined UNLIT
 flat out vec3 sunCol, skyAmb;
 #endif
 #ifdef TERRAIN
 in vec4 mc_Entity;
+  #ifdef WAVING_PLANTS
+in vec2 mc_midTexCoord;
+// plants and leaves sway in the wind: a slow lean plus a faster flutter, phase from the world position so
+// neighbours move together like a gust passing. Kept small (the ray-traced scene holds the still shapes, so
+// shadows and reflections don't follow the sway); stronger in rain
+vec3 waving(vec3 wp, float amount) {
+    float t = frameTimeCounter * WAVING_SPEED;
+    float gust = sin(t * 0.9 + wp.x * 0.11 + wp.z * 0.07) * 0.5 + 0.5;
+    vec2 lean = vec2(sin(t * 1.7 + wp.x * 0.6 + wp.z * 0.3), sin(t * 1.3 + wp.z * 0.6 - wp.x * 0.2));
+    float flutter = sin(t * 5.3 + dot(wp, vec3(2.1, 1.7, 2.9)));
+    vec2 xz = (lean * (0.5 + 0.5 * gust) + flutter * 0.25) * amount * WAVING_AMOUNT * (1.0 + rainStrength);
+    return vec3(xz.x, flutter * amount * WAVING_AMOUNT * 0.3, xz.y);
+}
+  #endif
 #endif
 
 void main() {
     gl_Position = gl_ProjectionMatrix * (gl_ModelViewMatrix * gl_Vertex);   // not ftransform(): Iris leaves it in line programs
+#if defined TERRAIN && defined WAVING_PLANTS
+    {
+        int wid = int(mc_Entity.x + 0.5);
+        if (wid == 10001 || wid == 10004) {
+            vec3 vp = (gl_ModelViewMatrix * gl_Vertex).xyz;
+            vec3 pp = mat3(gbufferModelViewInverse) * vp + gbufferModelViewInverse[3].xyz;
+            // plants: only the top corners move (the root stays in the ground); leaves: every corner, less
+            float amount = wid == 10004 ? 0.035 : (gl_MultiTexCoord0.y < mc_midTexCoord.y ? 0.07 : 0.0);
+            if (amount > 0.0) {
+                pp += waving(pp + cameraPosition, amount);
+                gl_Position = gl_ProjectionMatrix * (gbufferModelView * vec4(pp, 1.0));
+            }
+        }
+    }
+#endif
 #ifdef TAA
     // a different sub-pixel shift every frame (Halton 2,3 over 8 frames); composite2 blends them into smooth edges
     int k = frameCounter % 8 + 1;
@@ -59,14 +97,24 @@ void main() {
 #if defined OPAQUE && defined LABPBR
     tangentW = vec4(mat3(gbufferModelViewInverse) * normalize(gl_NormalMatrix * at_tangent.xyz), at_tangent.w);
 #endif
+#ifdef POM
+    {
+        vec2 mid = (gl_TextureMatrix[0] * vec4(mc_midTexCoord, 0.0, 1.0)).xy;
+        vec2 half_ = abs(texcoord - mid);
+        tileBox = vec4(mid - half_, half_ * 2.0);
+    }
+#endif
     mat = MATERIAL;
 #ifdef TERRAIN
     int id = int(mc_Entity.x + 0.5);
-    if (id == 10001) mat = MAT_FOLIAGE;
+    if (id == 10001 || id == 10004) mat = MAT_FOLIAGE;
     else if (id >= 10100 && id < 10200) mat = MAT_EMISSIVE;
     else if (id >= 10200 && id < 10300) mat = MAT_GLOW;
     else if (id == 10002) mat = MAT_WATER;
     else if (id == 10003) mat = MAT_GLASS;
+  #if defined OPAQUE && defined AUTO_PBR
+    autoMat = id >= 10400 && id <= 10403 ? id : 0;
+  #endif
 #endif
 #if defined FORWARD && !defined UNLIT
     lightColors(sunCol, skyAmb);
@@ -76,6 +124,10 @@ void main() {
     if (renderStage != MC_RENDER_STAGE_STARS) gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
 #endif
 }
+#endif
+
+#if defined TERRAIN && defined OPAQUE && defined LABPBR && defined PARALLAX
+    #define POM
 #endif
 
 #if defined FORWARD && !defined UNLIT && defined WATER_SHADOWS && (defined TERRAIN || defined TRACE_SHADOW)
@@ -100,9 +152,47 @@ in vec4 tint;
 in vec3 normalW;
 in vec3 playerPos;
 flat in int mat;
+#if defined TERRAIN && defined OPAQUE && defined AUTO_PBR
+flat in int autoMat;
+#endif
 #if defined OPAQUE && defined LABPBR
 in vec4 tangentW;
 uniform sampler2D normals, specular;   // LabPBR resource packs (Iris binds flat defaults without one)
+#endif
+#ifdef POM
+in vec4 tileBox;
+// parallax occlusion (LabPBR height in the normal map's alpha, e.g. Vanilla RTX): march the view ray down into the
+// block's surface in texture space until it passes under the height map, and read every texture there instead.
+// Bricks and cobbles get real depth up close; fades out by 24 blocks; the ray-traced scene stays flat.
+vec2 parallaxCoord(vec2 uv, vec3 n, vec2 gx, vec2 gy) {   // gx, gy: uv's screen derivatives
+    float dist = length(playerPos);
+    float fade = 1.0 - smoothstep(12.0, 24.0, dist);
+    vec3 t = tangentW.xyz - n * dot(tangentW.xyz, n);
+    if (fade <= 0.0 || dot(t, t) < 1e-6 || tileBox.z <= 0.0 || tileBox.w <= 0.0) return uv;
+    t = normalize(t);
+    vec3 b = cross(t, n) * (tangentW.w < 0.0 ? -1.0 : 1.0);   // along +v of the texture
+    vec3 vd = playerPos / dist;
+    float vz = -dot(vd, n);
+    if (vz < 0.08) return uv;
+    vec2 local = (uv - tileBox.xy) / tileBox.zw;
+    vec2 dir = vec2(dot(vd, t), dot(vd, b)) / vz * (PARALLAX_DEPTH * fade);
+    const int steps = PARALLAX_STEPS;
+    vec2 stepUV = dir / float(steps);
+    float layer = 0.0, prevD = 0.0;
+    for (int i = 0; i < steps; i++) {
+        float d = 1.0 - textureGrad(normals, tileBox.xy + fract(local) * tileBox.zw, gx, gy).a;
+        if (d <= layer) {
+            // between the last two steps: where the ray actually met the height map
+            float a = (layer - d) / max((layer - d) + (prevD - (layer - 1.0 / float(steps))), 1e-4);
+            local -= stepUV * clamp(a, 0.0, 1.0);
+            break;
+        }
+        prevD = d;
+        local += stepUV;
+        layer += 1.0 / float(steps);
+    }
+    return tileBox.xy + fract(local) * tileBox.zw;
+}
 #endif
 #if defined FORWARD && !defined UNLIT
 flat in vec3 sunCol, skyAmb;
@@ -126,26 +216,46 @@ layout(location = 1) out vec4 outMaterial;
 layout(location = 0) out vec4 outColor;   // rgb: light let through (multiplies what's behind)
 layout(location = 1) out vec4 outWater;   // colortex11: r water, gb glass refraction offset, a glass (nearest surface)
 layout(location = 2) out vec4 outAdd;     // colortex13: light from the surface itself (added)
+#elif defined UNIFIED_TARGETS && defined FORWARD
+// the other see-through things (particles, rain, glass panes held, translucent mobs) list the same buffers as water,
+// so mcmetal can draw them all in one Metal render pass instead of switching passes between them; their blending
+// leaves colortex11 and colortex13 as they are (shaders.properties)
+/* RENDERTARGETS: 0,11,13 */
+layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outWater;
+layout(location = 2) out vec4 outAdd;
+  #define KEEP_WATER_TARGETS
 #else
 /* RENDERTARGETS: 0 */
 layout(location = 0) out vec4 outColor;
 #endif
 
 void main() {
+#ifdef KEEP_WATER_TARGETS
+    outWater = vec4(0.0);   // (written, never kept: blending with ZERO would still turn garbage into NaN)
+    outAdd = vec4(0.0);
+#endif
+    vec2 tc = texcoord;
+#ifdef POM
+    tc = parallaxCoord(texcoord, normalize(gl_FrontFacing ? normalW : -normalW), dFdx(texcoord), dFdy(texcoord));
+#endif
 #ifdef NO_TEXTURE
     vec4 c = tint;
 #else
-    vec4 c = texture(gtexture, texcoord) * tint;
+    vec4 c = textureGrad(gtexture, tc, dFdx(texcoord), dFdy(texcoord)) * tint;
 #endif
     float ao = 1.0;
 #ifdef TERRAIN
     // Iris separateAo: vertex alpha is the corner darkening, the texture alpha is the real alpha
     ao = tint.a;
-    c.a = texture(gtexture, texcoord).a;
+    c.a = textureGrad(gtexture, tc, dFdx(texcoord), dFdy(texcoord)).a;
 #endif
 #ifdef STARS_ONLY
     // gbuffers_skybasic: keep only the stars; the sky colour itself is ours (deferred)
     if (renderStage != MC_RENDER_STAGE_STARS) discard;
+  #ifdef STARS
+    discard;   // our own stars instead (lib/stars.glsl)
+  #endif
 #endif
     if (c.a < 0.1) discard;
 #if defined TERRAIN && STYLE > 0
@@ -170,6 +280,11 @@ void main() {
     // rain wets what the sky reaches (full sky light only: the lightmap fades in diamonds, which drew straight
     // diagonal puddle edges near roofs): darker, richer colours; on flat ground, water gathers in patches
     float wet = wetness * smoothstep(0.93, 0.99, lmcoord.y) * float(mat == MAT_NONE);
+  #ifdef WET_SHEEN
+    // leaves get wet too (darker, a little shine); puddles stay on blocks
+    float wetAll = wetness * smoothstep(0.93, 0.99, lmcoord.y) * float(mat == MAT_NONE || mat == MAT_FOLIAGE);
+    if (mat == MAT_FOLIAGE) c.rgb = pow(c.rgb, vec3(1.0 + 0.3 * wetAll)) * (1.0 - 0.15 * wetAll);
+  #endif
     if (wet > 0.001) {
         vec2 w = playerPos.xz + cameraPosition.xz;
         // two noise layers add up to a narrow range around 0.5: stretch it, then keep the top ~quarter as puddles
@@ -185,7 +300,7 @@ void main() {
     vec4 spec = vec4(0.0);
   #ifdef LABPBR
     {
-        vec4 nt = texture(normals, texcoord);
+        vec4 nt = textureGrad(normals, tc, dFdx(texcoord), dFdy(texcoord));
         // bumps fade out with distance: far away a texel is smaller than a pixel, and full-strength normals there
         // shimmer into wave-like patterns (moire) as the view moves
         float bump = LABPBR_NORMAL_STRENGTH * (1.0 - 0.75 * smoothstep(12.0, 40.0, length(playerPos)));
@@ -202,13 +317,32 @@ void main() {
             // ray-traced AO darkens the same cracks again)
             c.rgb *= max(nt.b * mix(1.0 - 0.3 * bump, 1.0, nt.a), 0.6);
         }
-        spec = texture(specular, texcoord);
+        spec = textureGrad(specular, tc, dFdx(texcoord), dFdy(texcoord));
         if (spec.a > 254.5 / 255.0) spec.a = 0.0;   // LabPBR: 255 = no emission
+    }
+  #endif
+  #if defined TERRAIN && defined AUTO_PBR
+    // blocks without PBR maps (no LabPBR pack, or a modded block the pack doesn't cover): ores glint where their
+    // coloured texels are, metal blocks shine like metal, gem blocks are glossy, polished stone has a soft sheen
+    if (autoMat != 0 && spec.r == 0.0 && spec.g == 0.0) {
+        float sat = max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b));
+        if (autoMat == 10400) {
+            float glint = max(smoothstep(0.12, 0.3, sat), smoothstep(0.72, 0.9, luma(c.rgb)));
+            spec.rg = vec2(0.82, 0.25) * glint;
+        } else if (autoMat == 10401) spec.rg = vec2(0.62, 1.0);
+        else if (autoMat == 10402) spec.rg = vec2(0.88, 0.17);
+        else spec.rg = vec2(0.42, 0.04);   // under 0.45: the sheen only, no rays (thousands of decor blocks)
+        spec.r *= AUTO_PBR_STRENGTH;
     }
   #endif
     outAlbedo = vec4(c.rgb, 1.0);
     // puddles are flat and mirror-smooth
     spec.r = max(spec.r, puddle);
+  #if defined TERRAIN && defined RAIN_PUDDLES && defined WET_SHEEN
+    // a film of water: a soft shine, kept under the 0.45 that starts traced reflections (the whole world gets it)
+    spec.r = max(spec.r, 0.4 * wetAll);
+    spec.g = max(spec.g, 0.02 * wetAll);
+  #endif
     outMaterial = vec4(float(mat) / 255.0, ao, puddle, spec.a);
     outPBR = vec4(octEncode(nm), spec.r, spec.g);
 #else

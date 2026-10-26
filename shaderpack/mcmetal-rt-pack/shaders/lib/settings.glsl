@@ -12,6 +12,12 @@
 
 #define RT_GI // ray-traced global illumination: bounce light, colour bleeding, sky light through openings
 #define GI_RATE 2 // [1 2 4] trace bounce light and AO for 1 in GI_RATE pixels each frame (the rest keep their average)
+#define GI_ADAPTIVE // rays where needed: just-uncovered pixels trace every frame, settled ones 1 frame in 4
+#define UNIFIED_TARGETS // see-through things share water's buffer list, so they draw in one Metal render pass
+//#define PHOTO_MODE // standing still: rays keep averaging much longer, for clean screenshots (lights settle slower while still)
+#define PHOTO_FRAMES 128.0 // [32.0 64.0 128.0 256.0]
+#define RT_NOISE 1 // [0 1] random numbers for rays: 0 the old shifted noise, 1 decorrelated per dimension (Apple's denoiser advice)
+#define SHADOW_FILTER // smooth the grain out of ray-traced sun shadows (a small blur that keeps edges between objects)
 #define SHADOW_CHECKERBOARD // trace the sun shadow for half the pixels each frame (the rest keep their average)
 #define SHADOW_RATE 2 // [2 4] with the above: sun shadows and light shafts traced for 1 in this many pixels each frame
 #if defined SHADOW_CHECKERBOARD && SHADOW_RATE == 4
@@ -20,6 +26,7 @@
     #define SHADOW_BLEND 0.125
 #endif
 #define GI_COARSE_RAYS // bounce light rays see leaves and plants beyond 2 blocks as solid (no alpha test: faster in forests; needs mcmetal from 10-25 or newer)
+#define LIGHT_CACHE // light bounces more than once: ray hits that are on screen reuse the bounce light already gathered there (brighter, more even rooms; no extra rays)
 #define DENOISER // two extra filter rounds that clean the GI's grain but keep its light and shadow edges (a-trous, like SVGF)
 #define GI_FILTER 9 // [9 25] taps in the GI blur/upscale (9: 6% less GPU on the M3, no visible difference)
 #define GI_HALF_RES 1 // [0 1] trace GI and AO for every 2x2 pixels (about half the cost), then upscale
@@ -47,6 +54,8 @@
 #define LIGHT_SHAFTS_STRENGTH 1.0 // [0.25 0.5 0.75 1.0 1.5 2.0 3.0]
 #define LIGHT_SHAFTS_STEPS 6 // [4 6 8 12 16]
 #define LIGHT_SHAFTS_SCALE 0.5
+#define LAMP_FOG // torches, lanterns and glowing blocks light up the air round them: a soft glow in fog, rain and dusty rooms (needs coloured light)
+#define LAMP_FOG_STRENGTH 1.0 // [0.5 1.0 1.5 2.0 3.0]
 #define VOLUMETRIC_MIST // morning mist near the ground that the sun's beams light up (with Light Shafts)
 #define MIST_AMOUNT 1.0 // [0.0 0.5 1.0 1.5 2.0 3.0]
 #define LIGHT_SHAFTS_RATE 4 // [2 4] light shafts traced for 1 in this many pixels each frame (the rest keep their average; shafts are soft, 4 is enough)
@@ -56,23 +65,58 @@
     #define LIGHT_SHAFTS_BLEND 0.125
 #endif
 
+#define LIGHTNING_FLASH // lightning bolts light up the land and the sky in a flickering blue-white flash
+#define LIGHTNING_STRENGTH 1.0 // [0.5 1.0 1.5 2.0]
+#define WAVING_PLANTS // grass, flowers, crops and leaves sway gently in the wind
+#define WAVING_AMOUNT 1.0 // [0.5 1.0 1.5 2.0]
+#define WAVING_SPEED 1.0 // [0.5 1.0 1.5 2.0]
+#define SUBSURFACE // leaves and grass glow a deeper green with the sun behind them (light through the leaf)
+#define SUBSURFACE_STRENGTH 1.0 // [0.5 1.0 1.5 2.0]
+#define PARALLAX // resource-pack height maps (Vanilla RTX) give bricks and cobbles real depth up close
+#define PARALLAX_DEPTH 0.2 // [0.1 0.15 0.2 0.25 0.3 0.4]
+#define PARALLAX_STEPS 16 // [8 12 16 24 32]
 #define LABPBR_NORMAL_STRENGTH 1.0 // [0.5 1.0 1.5 2.0 3.0] how deep LabPBR normal maps and height look
 #define LABPBR // LabPBR resource packs: normal maps, shiny and metal blocks, glowing texels
+#define RT_PBR_EMISSIVE // glowing texels of LabPBR packs (lamps, ores, lava) also light rooms in the bounce light and glow in reflections
+#define AUTO_PBR // blocks without PBR maps still look their part: ores glint, metal blocks shine, gems and polished stone are glossy (also modded blocks)
+#define AUTO_PBR_STRENGTH 1.0 // [0.5 0.75 1.0]
 #define ROUGH_REFLECTIONS_STRENGTH 1.0 // [0.0 0.5 1.0 1.5 2.0] the soft sheen of rough and satin PBR blocks (stone, wood, brick): a blurred reflection of their surroundings
 #define BLOOM // soft glow around the sun, lights and other bright things
 #define BLOOM_STRENGTH 1.0 // [0.25 0.5 0.75 1.0 1.5 2.0 3.0]
 //#define LENS_FLARE // a camera's lens flare from the sun: soft coloured ghosts across the screen
 #define LENS_FLARE_STRENGTH 1.0 // [0.5 1.0 1.5 2.0]
+//#define DEPTH_OF_FIELD // like a camera: what's nearer or further than what you look at goes soft
+#define DOF_STRENGTH 1.0 // [0.5 1.0 2.0 4.0 8.0]
+//#define MOTION_BLUR // a soft blur while turning and moving, like a camera's shutter
+#define MOTION_BLUR_STRENGTH 1.0 // [0.5 1.0 1.5 2.0]
+#define PURKINJE // night vision: in very dim light colours fade and lean blue, as the eye sees them
+#define PURKINJE_STRENGTH 0.6 // [0.3 0.6 0.8 1.0]
+#define SHARPEN // a light sharpen after anti-aliasing, so textures stay crisp
+#define SHARPEN_STRENGTH 0.5 // [0.25 0.5 0.75 1.0 1.5]
+#define TONEMAP 0 // [0 1] 0 ACES filmic (punchy), 1 soft filmic (gentler highlights, truer bright colours)
 #define TAA // temporal anti-aliasing: smooth edges, no shimmering plants and fences
 #define CLOUDS // our own soft cloud layer (replaces Minecraft's blocky clouds)
 #define CLOUD_AMOUNT 1.0 // [0.0 0.5 1.0 1.5 2.0]
 #define CLOUD_SPEED 1.0 // [0.0 0.5 1.0 2.0 4.0]
 #define VOLUMETRIC_CLOUDS // clouds with real height: self-shadowed, silver edges towards the sun, dark bellies (off = flat layer, faster)
+#define STARS // our own steady night sky: stars of many sizes and colours that turn with the night
+#define MILKY_WAY // the Milky Way's faint band and dust lanes across the stars
+#define STARS_BRIGHTNESS 1.0 // [0.5 1.0 1.5 2.0 3.0]
+#define LIGHT_POLLUTION // your lamps light up the night haze: a warm glow low in the sky over a lit base
+#define LIGHT_POLLUTION_STRENGTH 1.0 // [0.5 1.0 2.0 3.0]
+#define END_BEAMS // the End's sky: violet beams rising out of the void, and faint stars
+#define END_BEAMS_STRENGTH 1.0 // [0.5 1.0 2.0 3.0]
+#define RAINBOW // a rainbow opposite the sun as the rain clears
+#define RAINBOW_STRENGTH 1.0 // [0.5 1.0 1.5 2.0]
+#define CIRRUS // thin, high streaks of ice cloud above the main clouds
+#define DAILY_WEATHER // each day has its own sky: some clear, some cloudy (the same for everyone in the world)
 #define CLOUD_SHADOWS // the clouds' shadows drift over the land
 #define CLOUD_SHADOW_STRENGTH 0.8 // [0.4 0.6 0.8 1.0]
 #define CLOUD_STEPS 12 // [6 8 12 16 24] samples through the clouds per pixel (more = smoother, slower)
 #define RAIN_PUDDLES // puddles on open ground in the rain, with ray-traced reflections
 #define PUDDLE_AMOUNT 1.0 // [0.5 1.0 1.5 2.0]
+#define RAIN_RIPPLES // raindrops make rings on puddles
+#define WET_SHEEN // rain leaves a soft wet shine on every surface the sky reaches: walls, roofs, leaves
 #define GLASS_REFRACTION // glass bends and tints what is behind it, with clean see-through panes
 #define GLASS_REFRACTION_STRENGTH 1.0 // [0.0 0.5 1.0 2.0 3.0]
 #define CAUSTICS // moving light patterns on the bottom of sunlit water
@@ -146,7 +190,11 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #endif
 #ifdef DENOISER
 #endif
+#ifdef LIGHT_CACHE
+#endif
 #ifdef SHADOW_CHECKERBOARD
+#endif
+#ifdef SHADOW_FILTER
 #endif
 #ifdef GLASS_REFRACTION
 #endif
@@ -158,6 +206,10 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #endif
 #ifdef CLOUD_SHADOWS
 #endif
+#ifdef CIRRUS
+#endif
+#ifdef DAILY_WEATHER
+#endif
 #ifdef TAA
 #endif
 #ifdef BLOOM
@@ -167,4 +219,22 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef VOLUMETRIC_MIST
 #endif
 #ifdef LABPBR
+#endif
+#ifdef DEPTH_OF_FIELD
+#endif
+#ifdef MOTION_BLUR
+#endif
+#ifdef SUBSURFACE
+#endif
+#ifdef WAVING_PLANTS
+#endif
+#ifdef AUTO_PBR
+#endif
+#ifdef LAMP_FOG
+#endif
+#ifdef SHARPEN
+#endif
+#ifdef LIGHTNING_FLASH
+#endif
+#ifdef RT_PBR_EMISSIVE
 #endif

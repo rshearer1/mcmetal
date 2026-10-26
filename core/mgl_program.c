@@ -293,6 +293,8 @@ GLboolean glIsShader(GLuint name) { return shader_obj(name) != NULL; }
        int mcm_lights_near(vec3 p, int slot, out vec3 pos, out int blockId); // the slot-th nearest light block within
                                               // 16 blocks of p (ids from "#define MCMETAL_LIGHT_IDS lo hi", default
                                               // 10100 10299): index or -1; pos = block centre. MCMETAL_LIGHTS is defined.
+       float mcm_hit_emission();                      // LabPBR emission (specular alpha, 0..1) at the last
+                                              // mcm_trace_hit / _coarse hit; 0 for entities. MCMETAL_RT_PBR is defined.
    in plain GLSL (so Iris's own parser accepts it) and calls it; origin/dir are in Iris's player space
    (camera-relative world space). We supply the body with a GL_EXT_ray_query against the terrain scene. */
 static void add_ray_tracing(mgl_shader *s)
@@ -313,6 +315,7 @@ static void add_ray_tracing(mgl_shader *s)
                                "layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer McmTris { uint w[]; };\n"
                                "layout(std430, binding = 15) readonly buffer McmInstances { McmTris mcm_tris[]; };\n"
                                "uniform sampler2D mcm_atlas;\n"
+                               "uniform sampler2D mcm_specular; // the terrain's LabPBR specular atlas (Iris's specular)\n"
                                "#define MCMETAL_LIGHTS 1\n"
                                "#define MCMETAL_RT_COARSE 1 // mcm_trace_coarse, mcm_trace_hit_coarse\n"
                                /* light list (mglb_rt_update): count, lights (camera-relative block centre, id),
@@ -359,7 +362,9 @@ static void add_ray_tracing(mgl_shader *s)
         "  cut = t.w[uint(rayQueryGetIntersectionPrimitiveIndexEXT(mcm_q, true)) * 12u + 3u] & 0xFFu;\n"
         "  return rayQueryGetIntersectionTEXT(mcm_q, true);\n"
         "}\n"
-        /* what a hit is: face normal (towards the ray), atlas texel x vertex colour, light, Iris block id */
+        /* what a hit is: face normal (towards the ray), atlas texel x vertex colour, light, Iris block id; and
+           where in the atlas, for mcm_hit_emission */
+        "vec2 mcm_hit_uv_; bool mcm_hit_tex_;\n"
         "void mcm_hit_attrs(uint inst, uint prim, vec2 w, vec3 dir, out vec3 normal, out vec4 albedo, out vec2 lightmap,\n"
         "                   out int blockId) {\n"
         "  McmTris t = mcm_tris[inst];\n"
@@ -369,7 +374,9 @@ static void add_ray_tracing(mgl_shader *s)
         "  if (n.z < 0.0) n.xy = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);\n"
         "  normal = normalize(n);\n"
         "  if (dot(normal, dir) > 0.0) normal = -normal; /* the face the ray hit */\n"
-        "  albedo = ((t.w[b + 3u] & 0x200u) != 0u ? vec4(1.0) : textureLod(mcm_atlas, mcm_uv(t, b, w), 0.0))\n"
+        "  mcm_hit_tex_ = (t.w[b + 3u] & 0x200u) == 0u;\n"
+        "  mcm_hit_uv_ = mcm_uv(t, b, w);\n"
+        "  albedo = (mcm_hit_tex_ ? textureLod(mcm_atlas, mcm_hit_uv_, 0.0) : vec4(1.0))\n"
         "         * vec4(mcm_colour(t, b, w).rgb, 1.0);\n"
         "  uvec3 l = uvec3(t.w[b + 8u], t.w[b + 9u], t.w[b + 10u]);\n"
         "  vec3 wv = vec3(1.0 - w.x - w.y, w.x, w.y);\n"
@@ -386,6 +393,12 @@ static void add_ray_tracing(mgl_shader *s)
         "                uint(rayQueryGetIntersectionPrimitiveIndexEXT(mcm_q, true)),\n"
         "                rayQueryGetIntersectionBarycentricsEXT(mcm_q, true), dir, normal, albedo, lightmap, blockId);\n"
         "  return rayQueryGetIntersectionTEXT(mcm_q, true);\n"
+        "}\n"
+        /* MCMETAL_RT_PBR: the LabPBR emission (0..1, specular alpha; 255 = none) of the last mcm_trace_hit's hit */
+        "float mcm_hit_emission() {\n"
+        "  if (!mcm_hit_tex_) return 0.0;\n"
+        "  float e = textureLod(mcm_specular, mcm_hit_uv_, 0.0).a;\n"
+        "  return e > 254.5 / 255.0 ? 0.0 : e;\n"
         "}\n"
         /* coarse rays (MCMETAL_RT_COARSE): every triangle counts as solid, so the ray hardware never stops to run
            the alpha test of leaves, grass and flowers. For blurry light (bounce light, AO), where a leaf's holes

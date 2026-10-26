@@ -38,6 +38,8 @@ static int ent_near_skipped; /* debug: triangles left out as the held item */
 static char ent_debug[2048]; /* debug: this frame's entity draws */
 static int ent_debug_draws;
 static int ent_why[5];       /* debug: entity draws left out: no camera yet / not triangles / projection / rotation / other */
+static uint32_t *ent_col;    /* this frame's entity triangle colours, RGBA8 per corner (3 each), as mcm_trace reads */
+static int ent_col_cap, ent_coloured;
 static float *snap_ent;      /* MGL_RT_SNAPSHOT: the last whole frame's entity triangles */
 static int snap_ent_n, snap_ent_cap;
 
@@ -76,14 +78,20 @@ void mgl_rt_link(mgl_program *p)
     }
     if (p->rt_pos_loc < 0 || p->rt_region_off < 0)
         p->rt_pos_loc = -1; /* not a terrain program */
-    p->rt_atlas_slot = -1; /* the block atlas, for mcm_trace's alpha test */
+    p->rt_atlas_slot = p->rt_spec_slot = -1; /* the block atlas, for mcm_trace's alpha test; its LabPBR twin */
     for (int i = 0; i < p->x.num_textures; i++) {
         const char *n = p->x.textures[i].name;
         if (!strcmp(n, "u_BlockTex") || !strcmp(n, "gtexture") || !strcmp(n, "tex") || !strcmp(n, "texture"))
             p->rt_atlas_slot = i;
+        if (!strcmp(n, "specular"))
+            p->rt_spec_slot = i;
     }
     /* entities: a float3 position (vanilla's Position, or Iris's / OptiFine-style core names) and a model-view */
-    p->rt_epos_loc = p->rt_emv_off = p->rt_eproj_off = -1;
+    p->rt_epos_loc = p->rt_emv_off = p->rt_eproj_off = p->rt_euv_loc = p->rt_ecol_loc = -1;
+    p->rt_etex_slot = p->rt_atlas_slot;
+    for (int i = 0; i < p->x.num_textures && p->rt_etex_slot < 0; i++)
+        if (!strcmp(p->x.textures[i].name, "Sampler0") || !strcmp(p->x.textures[i].name, "iris_Sampler0"))
+            p->rt_etex_slot = i;
     p->rt_entity = 0;
     int overlay = 0;
     for (int i = 0; i < p->x.num_attribs; i++) {
@@ -91,6 +99,10 @@ void mgl_rt_link(mgl_program *p)
         if ((!strcmp(n, "Position") || !strcmp(n, "iris_Position") || !strcmp(n, "vaPosition")) &&
             !p->x.attribs[i].is_int && p->x.attribs[i].vecsize == 3)
             p->rt_epos_loc = p->x.attribs[i].location;
+        if ((!strcmp(n, "UV0") || !strcmp(n, "iris_UV0") || !strcmp(n, "vaUV0")) && p->x.attribs[i].vecsize == 2)
+            p->rt_euv_loc = p->x.attribs[i].location;
+        if ((!strcmp(n, "Color") || !strcmp(n, "iris_Color") || !strcmp(n, "vaColor")) && p->x.attribs[i].vecsize == 4)
+            p->rt_ecol_loc = p->x.attribs[i].location;
         /* the overlay coordinate (hurt flash) is only in the entity vertex format: entities, block entities, items */
         overlay |= !strcmp(n, "UV1") || !strcmp(n, "iris_UV1") || !strcmp(n, "vaUV1");
     }
@@ -135,6 +147,181 @@ static void rigid_inverse(const float *m, float *o) /* rotation + translation, c
         o[12 + r] = -(o[r] * m[12] + o[4 + r] * m[13] + o[8 + r] * m[14]);
     o[3] = o[7] = o[11] = 0;
     o[15] = 1;
+}
+
+/* Entity colours. mcm_trace_hit shows entities in their corner colours (they carry no atlas texture), so each
+   entity triangle gets its own texture's colour at the triangle's centre, times its vertex colour (dyed wool,
+   leather). That needs the texture on the CPU: a thumbnail of every RGBA8 2D texture's level 0, kept up to date
+   by its uploads. Textures up to 256 a side are copied whole (entity skins are 64x64); bigger ones (atlases) are
+   box-averaged down to 256, ignoring clear texels. MCMETAL_RT_ENTITY_COLOR=0: grey entities, as before. */
+typedef struct rt_thumb {
+    const mglb_texture *key;
+    int w, h, tw, th;
+    uint32_t *px;
+} rt_thumb;
+static rt_thumb *thumbs;
+static int thumb_n, thumb_cap, thumb_last = -1;
+static size_t thumb_bytes;
+
+static int thumb_enabled(void)
+{
+    static int on = -1;
+    if (on < 0)
+        on = !getenv("MCMETAL_RT_ENTITY_COLOR") || strcmp(getenv("MCMETAL_RT_ENTITY_COLOR"), "0");
+    return on;
+}
+
+static rt_thumb *thumb_find(const mglb_texture *m)
+{
+    if (thumb_last >= 0 && thumb_last < thumb_n && thumbs[thumb_last].key == m)
+        return &thumbs[thumb_last];
+    for (int i = 0; i < thumb_n; i++)
+        if (thumbs[i].key == m) {
+            thumb_last = i;
+            return &thumbs[i];
+        }
+    return NULL;
+}
+
+void mgl_rt_thumb_forget(mglb_texture *m)
+{
+    rt_thumb *t = m ? thumb_find(m) : NULL;
+    if (!t)
+        return;
+    thumb_bytes -= (size_t)t->tw * t->th * 4;
+    free(t->px);
+    *t = thumbs[--thumb_n];
+    thumb_last = -1;
+}
+
+void mgl_rt_thumb_upload(mglb_texture *m, const mglb_texture_desc *desc, int level, int x, int y, int z, int w, int h,
+                         const void *data, size_t bytes_per_row)
+{
+    if (level || z || desc->type != MGLT_2D || (desc->format != MGLF_RGBA8 && desc->format != MGLF_SRGB8_A8) ||
+        !data || !thumb_enabled())
+        return;
+    int W = desc->width, H = desc->height;
+    rt_thumb *t = thumb_find(m);
+    if (t && (t->w != W || t->h != H)) {
+        mgl_rt_thumb_forget(m);
+        t = NULL;
+    }
+    if (!t) {
+        int tw = W < 256 ? W : 256, th = H < 256 ? H : 256;
+        if (tw <= 0 || th <= 0 || thumb_bytes + (size_t)tw * th * 4 > ((size_t)64 << 20))
+            return; /* 64 MB of thumbnails is far more than any pack's entity textures */
+        if (thumb_n == thumb_cap) {
+            thumb_cap = thumb_cap ? thumb_cap * 2 : 256;
+            thumbs = realloc(thumbs, sizeof *thumbs * (size_t)thumb_cap);
+        }
+        t = &thumbs[thumb_n++];
+        *t = (rt_thumb){m, W, H, tw, th, calloc((size_t)tw * th, 4)};
+        thumb_bytes += (size_t)tw * th * 4;
+    }
+    if (x < 0 || y < 0 || x + w > W || y + h > H)
+        return;
+    /* thumbnail texel (i, j) covers source columns [i * W / tw, (i + 1) * W / tw), rows likewise */
+    int i0 = (int)((int64_t)x * t->tw / W), i1 = (int)((int64_t)(x + w - 1) * t->tw / W);
+    int j0 = (int)((int64_t)y * t->th / H), j1 = (int)((int64_t)(y + h - 1) * t->th / H);
+    for (int j = j0; j <= j1; j++) {
+        int sy0 = (int)((int64_t)j * H / t->th), sy1 = (int)((int64_t)(j + 1) * H / t->th);
+        sy0 = sy0 < y ? y : sy0;
+        sy1 = sy1 > y + h ? y + h : sy1;
+        for (int i = i0; i <= i1; i++) {
+            int sx0 = (int)((int64_t)i * W / t->tw), sx1 = (int)((int64_t)(i + 1) * W / t->tw);
+            sx0 = sx0 < x ? x : sx0;
+            sx1 = sx1 > x + w ? x + w : sx1;
+            uint32_t sum[4] = {0, 0, 0, 0}, n = 0;
+            for (int sy = sy0; sy < sy1; sy++) {
+                const unsigned char *row = (const unsigned char *)data + (size_t)(sy - y) * bytes_per_row;
+                for (int sx = sx0; sx < sx1; sx++) {
+                    const unsigned char *c = row + (size_t)(sx - x) * 4;
+                    n++;
+                    if (c[3] < 26)
+                        continue; /* clear: leave it out of the colour */
+                    sum[0] += c[0], sum[1] += c[1], sum[2] += c[2], sum[3]++;
+                }
+            }
+            if (!n)
+                continue;
+            uint32_t v = 0;
+            if (sum[3])
+                v = (sum[0] / sum[3]) | (sum[1] / sum[3]) << 8 | (sum[2] / sum[3]) << 16 | (255u * sum[3] / n) << 24;
+            t->px[(size_t)j * t->tw + i] = v;
+        }
+    }
+}
+
+/* the colour (RGBA8, R in the low byte) a triangle with these texture coordinates shows; alpha 0 = unknown */
+static uint32_t thumb_colour(const rt_thumb *t, const float uv[3][2])
+{
+    float u = (uv[0][0] + uv[1][0] + uv[2][0]) / 3.0f, v = (uv[0][1] + uv[1][1] + uv[2][1]) / 3.0f;
+    if (!(u >= 0.0f && u < 1.0f && v >= 0.0f && v < 1.0f))
+        return 0;
+    int i = (int)(u * t->tw), j = (int)(v * t->th);
+    uint32_t c = t->px[(size_t)j * t->tw + i];
+    for (int k = 0; k < 3 && !(c >> 24); k++) { /* the centre is clear (a thin part): try towards each corner */
+        int ci = (int)((u + uv[k][0]) * 0.5f * t->tw), cj = (int)((v + uv[k][1]) * 0.5f * t->th);
+        if (ci >= 0 && ci < t->tw && cj >= 0 && cj < t->th)
+            c = t->px[(size_t)cj * t->tw + ci];
+    }
+    return c;
+}
+
+/* record_entity's colours for its tris triangles at ent_n: texture colour at each triangle's centre x vertex colour */
+static void entity_colours(const mgl_program *p, const mgl_draw *d, const unsigned char *ib, int tris)
+{
+    uint32_t *out = ent_col + (size_t)ent_n * 3;
+    const rt_thumb *t = NULL;
+    if (p->rt_etex_slot >= 0) {
+        int idx = p->x.textures[p->rt_etex_slot].msl_index[MGL_FRAGMENT];
+        if (idx >= 0 && idx < MGL_MAX_TEXTURES && d->textures[MGL_FRAGMENT][idx].tex)
+            t = thumb_find(d->textures[MGL_FRAGMENT][idx].tex);
+    }
+    const mgl_vertex_attr *ua = p->rt_euv_loc >= 0 ? &d->attrs[p->rt_euv_loc] : NULL;
+    const mgl_vertex_attr *ca = p->rt_ecol_loc >= 0 ? &d->attrs[p->rt_ecol_loc] : NULL;
+    if (ua && (!ua->enabled || ua->type != MGLV_FLOAT || ua->size < 2 || ua->buffer < 0 || ua->buffer >= d->num_vbufs))
+        ua = NULL;
+    if (ca && (!ca->enabled || ca->type != MGLV_UBYTE || ca->size < 4 || ca->buffer < 0 || ca->buffer >= d->num_vbufs))
+        ca = NULL;
+    const unsigned char *ub = ua ? mglb_buffer_ptr(d->vbufs[ua->buffer].buf) : NULL;
+    const unsigned char *cb = ca ? mglb_buffer_ptr(d->vbufs[ca->buffer].buf) : NULL;
+    if (!t || !ub)
+        t = NULL;
+    for (int tr = 0; tr < tris; tr++) {
+        uint32_t idx[3];
+        for (int c = 0; c < 3; c++) {
+            int k = tr * 3 + c;
+            if (ib) {
+                size_t at = d->index_offset + (size_t)k * (d->index_type == GL_UNSIGNED_SHORT ? 2 : 4);
+                idx[c] = d->index_type == GL_UNSIGNED_SHORT ? *(const uint16_t *)(ib + at) : *(const uint32_t *)(ib + at);
+            } else
+                idx[c] = (uint32_t)(d->first + k);
+        }
+        uint32_t tex = 0;
+        if (t) {
+            const mgl_vertex_buf *vb = &d->vbufs[ua->buffer];
+            float uv[3][2];
+            for (int c = 0; c < 3; c++)
+                memcpy(uv[c], ub + vb->offset + ua->offset + (size_t)((int64_t)idx[c] + d->base_vertex) * (size_t)vb->stride,
+                       sizeof uv[c]);
+            tex = thumb_colour(t, (const float(*)[2])uv);
+        }
+        if (tex >> 24)
+            ent_coloured++;
+        else
+            tex = 0xFF999999u; /* no texture we know: mid grey, as before */
+        for (int c = 0; c < 3; c++) {
+            uint32_t v = tex;
+            if (cb) {
+                const mgl_vertex_buf *vb = &d->vbufs[ca->buffer];
+                const unsigned char *vc = cb + vb->offset + ca->offset + (size_t)((int64_t)idx[c] + d->base_vertex) * (size_t)vb->stride;
+                v = ((tex & 0xFF) * vc[0] / 255) | ((tex >> 8 & 0xFF) * vc[1] / 255) << 8 |
+                    ((tex >> 16 & 0xFF) * vc[2] / 255) << 16 | 0xFF000000u;
+            }
+            out[tr * 3 + c] = v | 0xFF000000u;
+        }
+    }
 }
 
 /* An entity draw: its triangles, moved into the terrain's camera-relative space, appended to this frame's list.
@@ -185,6 +372,10 @@ static void record_entity(const mgl_program *p, const mgl_draw *d)
         ent_cap = (ent_n + tris) * 2;
         ent_tris = realloc(ent_tris, sizeof(float) * 9 * (size_t)ent_cap);
     }
+    if (thumb_enabled() && ent_n + tris > ent_col_cap) {
+        ent_col_cap = ent_cap;
+        ent_col = realloc(ent_col, sizeof(uint32_t) * 3 * (size_t)ent_col_cap);
+    }
     float *o = ent_tris + (size_t)ent_n * 9;
     for (int k = 0; k < tris * 3; k++) {
         uint32_t idx;
@@ -197,12 +388,20 @@ static void record_entity(const mgl_program *p, const mgl_draw *d)
         for (int r = 0; r < 3; r++)
             o[k * 3 + r] = m[r] * v[0] + m[4 + r] * v[1] + m[8 + r] * v[2] + m[12 + r];
     }
-    float far2 = 0; /* the held item and arm sit within 2 blocks of the eye; little in the world fits there whole */
+    /* the held item and arm sit within about a block of the eye; little in the world fits there whole. A body
+       drawn in first person (First-person Model) reaches its feet, 1.6 blocks down, so it stays: you see your
+       own shadow and reflection. MCMETAL_RT_NEAR=2 is the old 2-block cut (no first-person body in rays) */
+    static float near2 = -1;
+    if (near2 < 0) {
+        const char *e = getenv("MCMETAL_RT_NEAR");
+        near2 = e ? (float)atof(e) * (float)atof(e) : 1.2f * 1.2f;
+    }
+    float far2 = 0;
     for (int k = 0; k < tris * 3; k++) {
         float d2 = o[k * 3] * o[k * 3] + o[k * 3 + 1] * o[k * 3 + 1] + o[k * 3 + 2] * o[k * 3 + 2];
         far2 = d2 > far2 ? d2 : far2;
     }
-    if (far2 < 4.0f) {
+    if (far2 < near2) {
         ent_near_skipped += tris;
         return;
     }
@@ -218,6 +417,8 @@ static void record_entity(const mgl_program *p, const mgl_draw *d)
                  lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
         ent_debug_draws++;
     }
+    if (thumb_enabled())
+        entity_colours(p, d, ib, tris);
     ent_n += tris;
 }
 
@@ -528,7 +729,7 @@ static void rt_debug_tick(void)
     }
 }
 
-mglb_texture *mgl_rt_atlas;
+mglb_texture *mgl_rt_atlas, *mgl_rt_specular;
 int mgl_rt_light_ids[2] = {-1, -1};
 float mgl_rt_radius;
 
@@ -578,6 +779,11 @@ void mgl_rt_record(mgl_program *p, const mgl_draw *d)
         int idx = p->x.textures[p->rt_atlas_slot].msl_index[MGL_FRAGMENT];
         if (idx >= 0 && idx < MGL_MAX_TEXTURES && d->textures[MGL_FRAGMENT][idx].tex)
             mgl_rt_atlas = d->textures[MGL_FRAGMENT][idx].tex;
+    }
+    if (p->rt_spec_slot >= 0) { /* Iris's specular atlas (same layout), for mcm_hit_emission */
+        int idx = p->x.textures[p->rt_spec_slot].msl_index[MGL_FRAGMENT];
+        if (idx >= 0 && idx < MGL_MAX_TEXTURES && d->textures[MGL_FRAGMENT][idx].tex)
+            mgl_rt_specular = d->textures[MGL_FRAGMENT][idx].tex;
     }
     const mgl_vertex_buf *vb = &d->vbufs[a->buffer];
     int ent_off = -1; /* Iris: ((id + 1) << 1) | render type, 4 bytes */
@@ -728,9 +934,10 @@ void mgl_rt_end_frame(void)
     if (rt_debug() && (ent_n || ent_why[0] + ent_why[1] + ent_why[2] + ent_why[3] + ent_why[4])) {
         static double last;
         if (now_s() - last > 1.0) {
-            mgl_log("rt debug: %d entity triangles this frame (%d left out next to the eye; draws left out: %d before "
+            mgl_log("rt debug: %d entity triangles this frame (%d coloured from %d texture thumbnails, %zu KB; %d left "
+                    "out next to the eye; draws left out: %d before "
                     "the terrain camera, %d not triangles/depth, %d other projection, %d other rotation, %d no "
-                    "position data);%s", ent_n, ent_near_skipped, ent_why[0], ent_why[1], ent_why[2], ent_why[3],
+                    "position data);%s", ent_n, ent_coloured, thumb_n, thumb_bytes >> 10, ent_near_skipped, ent_why[0], ent_why[1], ent_why[2], ent_why[3],
                     ent_why[4], ent_debug);
             last = now_s();
         }
@@ -746,7 +953,7 @@ void mgl_rt_end_frame(void)
         snap_ent_n = ent_n;
     }
     if (!scene_wanted || now_s() - scene_wanted > 5.0 || !num_draws) {
-        ent_n = ent_near_skipped = ent_debug_draws = 0; /* snapshot-only capture: start each frame afresh */
+        ent_n = ent_near_skipped = ent_debug_draws = ent_coloured = 0; /* snapshot-only capture: start each frame afresh */
         ent_debug[0] = 0;
         return;
     }
@@ -759,9 +966,10 @@ void mgl_rt_end_frame(void)
     for (int i = 0; i < num_draws; i++)
         list[i] = draws[i].g;
 
-    mglb_rt_dynamic(ent_tris, ent_n);
+    mglb_rt_dynamic(ent_tris, thumb_enabled() ? ent_col : NULL, ent_n);
     ent_n = 0;
     ent_near_skipped = 0;
+    ent_coloured = 0;
     ent_debug[0] = 0;
     ent_debug_draws = 0;
     mglb_rt_update(list, num_draws);

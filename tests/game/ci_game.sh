@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
-#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary sound sound-off sound-apple water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain lightlist lightlist-off lightlist-PACK lightlist-off-PACK nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-dawn ours-night ours-rain ours-gl ours-storm ours-nether ours-end ours-shadow ours-ao ours-gi ours-gi-fine ours-pan ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-water ours-water-full ours-underwater ours-vista ours-flare ours-vista-STYLE-TIME ours-season-SEASON[-STYLE]
+#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary sound sound-off sound-apple water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain lightlist lightlist-off lightlist-PACK lightlist-off-PACK nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-fp ours-down ours-sunset ours-dawn ours-night ours-rain ours-gl ours-storm ours-nether ours-end ours-shadow ours-ao ours-gi ours-gi-fine ours-pan ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-water ours-water-full ours-underwater ours-vista ours-flare ours-vista-STYLE-TIME ours-season-SEASON[-STYLE]
 #   pbr-VIEW[+RP] (material gallery for resource packs: VIEW ours comp comp-pom comp-ipbr plain, RP as GAME_RP)
 #   menu menu-noif menu-shaders creative creative-shaders creative-scroll particles ab-menu ab-menu-noif ab-menu-shaders ab-creative ab-creative-shaders ab-particles (JEI, ImmediatelyFast, Particle Rain)
 #   pack-NAME packnight-NAME packshadow-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
@@ -456,6 +456,7 @@ dh_phase() { # dh / dh-shaders / dh-PACK: Distant Horizons at noon, without a pa
 JEI="https://cdn.modrinth.com/data/u6dRKJwZ/versions/ufHUqt9b/jei-1.21.1-neoforge-19.51.0.418.jar|d19552586f686eae4ef5e7199f31604d1d3cfca7"
 IMMEDIATELYFAST="https://cdn.modrinth.com/data/5ZwdcRci/versions/EJzmEPZV/ImmediatelyFast-NeoForge-1.6.15%2B1.21.1.jar|f991166f7c82b493481c876e3c83c9fac4159671"
 PARTICLE_RAIN="https://cdn.modrinth.com/data/nrikgvxm/versions/RxfaR4ud/particlerain-4.0.2%2B1.21.1-neoforge.jar|444c6f221e57cca8e433702b18c4643faa82545a"
+FIRST_PERSON="https://cdn.modrinth.com/data/H5XMjpHi/versions/eaj8cYpD/firstperson-neoforge-2.7.3-mc1.21.1.jar|6e0be1de6a5aab6cda8496984376a0114cf5a840"
 fetch_mod() { # "url|sha" file-in-mods/
     local url sha; IFS='|' read -r url sha <<< "$1"
     python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import bare_mc; bare_mc.fetch(*sys.argv[2:])' \
@@ -662,6 +663,15 @@ for p in $PHASES; do
     # our own pack (shaderpack/mcmetal-rt-pack): morning, noon, sunset, night with lights, rain, and on Apple GL
     ours) scene 1500; PACK=mcmetal-rt-pack run_phase ours 180 metal true ;;
     ours-noon) scene noon; PACK=mcmetal-rt-pack run_phase ours-noon 180 metal true ;;
+    ours-fp) # First-person Model: our pack looking down at your own body (MGL_RT_DEBUG=1 logs whether it reaches the rays)
+        fetch_mod "$FIRST_PERSON" mcm-firstperson.jar || continue
+        GAME_TP="${FP_TP:-~ ~ ~ ~ 55}" scene noon; PACK=mcmetal-rt-pack run_phase ours-fp 180 metal true MGL_RT_DEBUG=1
+        rm -f "$G/mods/mcm-firstperson.jar" ;;
+    ours-down) GAME_TP="${FP_TP:-~ ~ ~ ~ 55}" scene noon; PACK=mcmetal-rt-pack run_phase ours-down 180 metal true ;;  # ours-fp's view without the mod
+    comp-fp) # the same with Complementary, to compare
+        fetch_mod "$FIRST_PERSON" mcm-firstperson.jar || continue
+        GAME_TP="${FP_TP:-~ ~ ~ ~ 55}" scene noon; run_phase comp-fp 180 metal true
+        rm -f "$G/mods/mcm-firstperson.jar" ;;
     ours-sunset) scene 12300; PACK=mcmetal-rt-pack run_phase ours-sunset 180 metal true ;;
     ours-dawn) scene 23300; PACK=mcmetal-rt-pack run_phase ours-dawn 180 metal true ;;  # just after sunrise: morning mist and low beams
     ours-night) scene midnight clear showcase; PACK=mcmetal-rt-pack run_phase ours-night 180 metal true ;;

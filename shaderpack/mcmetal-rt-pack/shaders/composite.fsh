@@ -39,6 +39,23 @@ bool cachedShadow(vec3 hp, out vec3 sh) {
     sh = c.rgb;
     return true;
 }
+// light cache: a reflected block that is on screen takes this frame's GI there (colortex4) instead of the
+// lightmap's flat sky and block light
+#if defined LIGHT_CACHE && defined RT_GI
+    #define GI_CACHE
+uniform sampler2D colortex3, colortex4;
+bool cachedGI(vec3 hp, out vec3 gi) {
+    vec4 pc = gbufferProjection * (gbufferModelView * vec4(hp, 1.0));
+    if (pc.w <= 0.0) return false;
+    vec2 uv = pc.xy / pc.w * 0.5 + 0.5;
+    if (any(lessThan(uv, vec2(0.002))) || any(greaterThan(uv, vec2(0.998)))) return false;
+    vec4 a = texture(colortex3, uv * GI_SCALE);
+    float d = length(hp);
+    if (a.g < 2.0 || abs(a.b - d) > 0.03 * d + 0.15) return false;
+    gi = texture(colortex4, uv * GI_SCALE).rgb;
+    return true;
+}
+#endif
 #include "/lib/shadow.glsl"
 #include "/lib/reflect.glsl"
 #include "/lib/waves.glsl"
