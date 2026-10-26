@@ -100,6 +100,12 @@ void main() {
   #else
     bool skip = ((q.x & 1) + 2 * (q.y & 1)) != (frameCounter & 3);
   #endif
+  #ifdef GI_ADAPTIVE
+    // spend the rays where they're needed: a pixel just uncovered (few frames in its average) traces every frame,
+    // one whose average has settled traces 1 frame in 4
+    if (h.g < 4.0) skip = false;
+    else if (h.g >= RT_AO_FRAMES * 0.75) skip = ((q.x & 1) + 2 * (q.y & 1)) != (frameCounter & 3);
+  #endif
     if (valid && skip) {
         outAO = vec4(h.r, h.g, dist, 1.0);
         outGI = vec4(texture(colortex4, puv * GI_SCALE).rgb, 1.0);

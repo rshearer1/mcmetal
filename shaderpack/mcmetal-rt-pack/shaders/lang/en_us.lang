@@ -216,3 +216,5 @@ option.PARALLAX=Parallax Depth
 option.PARALLAX.comment=Resource packs with height maps (Vanilla RTX) give bricks and cobbles real depth up close.
 option.PARALLAX_DEPTH=Parallax Depth Amount
 option.PARALLAX_STEPS=Parallax Quality
+option.GI_ADAPTIVE=Adaptive Ray Rate
+option.GI_ADAPTIVE.comment=Newly seen spots trace bounce light every frame, settled ones less often. Faster; lights change a little more slowly.
