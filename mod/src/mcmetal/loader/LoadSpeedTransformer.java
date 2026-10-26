@@ -43,6 +43,8 @@ import org.objectweb.asm.tree.VarInsnNode;
  * Moonlight: its generated-asset cache fingerprint holds each resource pack's description as text, which for translated
  * descriptions changes once the mods' language files load, so Every Compat rebuilt its assets on the first F3+T or
  * resource pack change of every session (27.8 s of a 77 s cloud F3+T, 2026-10-26); see load/PackTextHooks.
+ * Entity Model Features: each custom model file it looks for and doesn't find was searched for in every resource pack
+ * (~4 s of the render thread per F3+T in the cloud, 2026-10-26); see load/ModelFileHooks.
  */
 final class LoadSpeedTransformer implements ITransformer<ClassNode> {
     static final String HEXEREI = "net.joefoxe.hexerei.data.recipes.WoodcutterRecipes";
@@ -59,6 +61,8 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
     static final String STATE_HOOKS = "mcmetal/loader/load/StateNameHooks";
     static final String MOONLIGHT_CACHE = "net.mehvahdjukaar.moonlight.api.resources.pack.GlobalCachedStrategy";
     static final String PACK_HOOKS = "mcmetal/loader/load/PackTextHooks";
+    static final String EMF_CACHE = "traben.entity_model_features.utils.EMFResourceCaching";
+    static final String MODEL_FILE_HOOKS = "mcmetal/loader/load/ModelFileHooks";
     static final String PREFIX = GpuCullTransformer.PREFIX;
     /** createRecipes() of Hexerei 0.5.0.3 (see fingerprint()); any other version keeps its own loop. */
     static final Set<String> KNOWN_CREATE_RECIPES = Set.of("1f31c51f74d9f41b");
@@ -85,6 +89,8 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
             stateNames(c);
         else if (c.name.equals(MOONLIGHT_CACHE.replace('.', '/')))
             packFingerprint(c);
+        else if (c.name.equals(EMF_CACHE.replace('.', '/')))
+            emfFiles(c);
         return c;
     }
 
@@ -353,6 +359,36 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
         MetalBootstrap.log("load fixes: Moonlight's asset cache check reads pack descriptions the same in every language (MCMETAL_LOAD_FIXES)");
     }
 
+    /**
+     * resourceExists(manager, location): "manager.getResource(location)" (exactly once) becomes
+     * "mcmetal$getResource(manager, location)", and clearCache() starts with "mcmetal$reset()"; see load/ModelFileHooks.
+     */
+    static void emfFiles(ClassNode c) {
+        String rm = "net/minecraft/server/packs/resources/ResourceManager", loc = "net/minecraft/resources/ResourceLocation";
+        java.util.List<MethodInsnNode> calls = new java.util.ArrayList<>();
+        MethodNode clear = null;
+        for (MethodNode m : c.methods) {
+            if (m.name.equals("clearCache") && m.desc.equals("()V") && (m.access & Opcodes.ACC_STATIC) != 0)
+                clear = m;
+            if (m.name.equals("resourceExists") && m.desc.equals("(L" + rm + ";L" + loc + ";)Z") && (m.access & Opcodes.ACC_STATIC) != 0)
+                for (AbstractInsnNode n : m.instructions.toArray())
+                    if (n instanceof MethodInsnNode mi && mi.getOpcode() == Opcodes.INVOKEINTERFACE && mi.owner.equals(rm)
+                            && mi.name.equals("getResource") && mi.desc.equals("(L" + loc + ";)Ljava/util/Optional;"))
+                        calls.add(mi);
+        }
+        ClassNode hooks = GpuCullTransformer.readHooks(MODEL_FILE_HOOKS);
+        if (hooks != null && hooks.methods.stream().anyMatch(m -> m.name.equals("<clinit>")))
+            hooks = null;
+        if (calls.size() != 1 || clear == null || hooks == null) {
+            MetalBootstrap.log("load fixes: Entity Model Features' model file check is not the expected one, left as it is");
+            return;
+        }
+        GpuCullTransformer.merge(hooks, c);
+        redirect(calls.get(0), c.name, "getResource", "(L" + rm + ";L" + loc + ";)Ljava/util/Optional;");
+        clear.instructions.insert(new MethodInsnNode(Opcodes.INVOKESTATIC, c.name, PREFIX + "reset", "()V", false));
+        MetalBootstrap.log("load fixes: Entity Model Features looks for model files in one listing of its folders (MCMETAL_LOAD_FIXES)");
+    }
+
     /** A call on the object in front of its arguments becomes a static call of the merged hook with the same order. */
     static void redirect(MethodInsnNode mi, String owner, String hook, String desc) {
         mi.setOpcode(Opcodes.INVOKESTATIC);
@@ -407,7 +443,8 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
     @Override
     public Set<Target<ClassNode>> targets() {
         return Set.of(Target.targetClass(HEXEREI), Target.targetClass(VEGAN), Target.targetClass(CARRYON), Target.targetClass(KUBEJS),
-                Target.targetClass(CREATE_STACK), Target.targetClass(SHAPER), Target.targetClass(MOONLIGHT_CACHE));
+                Target.targetClass(CREATE_STACK), Target.targetClass(SHAPER), Target.targetClass(MOONLIGHT_CACHE),
+                Target.targetClass(EMF_CACHE));
     }
 
     @Override
