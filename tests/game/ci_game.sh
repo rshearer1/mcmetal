@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
-#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary sound sound-off sound-apple water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain lightlist lightlist-off lightlist-PACK lightlist-off-PACK nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-fp ours-down ours-sunset ours-dawn ours-night ours-rain ours-gl ours-storm ours-nether ours-end ours-portal ours-aurora ours-shadow ours-ao ours-gi ours-gi-fine ours-pan ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-water ours-water-full ours-underwater ours-vista ours-flare ours-vista-STYLE-TIME ours-season-SEASON[-STYLE]
+#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary sound sound-off sound-apple water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain lightlist lightlist-off lightlist-PACK lightlist-off-PACK nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-fp ours-down ours-sunset ours-dawn ours-night ours-rain ours-gl ours-storm ours-nether ours-end ours-portal ours-aurora ours-cave ours-shadow ours-ao ours-gi ours-gi-fine ours-pan ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-water ours-water-full ours-underwater ours-vista ours-flare ours-vista-STYLE-TIME ours-season-SEASON[-STYLE]
 #   pbr-VIEW[+RP] (material gallery for resource packs: VIEW ours comp comp-pom comp-ipbr plain, RP as GAME_RP)
 #   menu menu-noif menu-shaders creative creative-shaders creative-scroll particles ab-menu ab-menu-noif ab-menu-shaders ab-creative ab-creative-shaders ab-particles (JEI, ImmediatelyFast, Particle Rain)
 #   pack-NAME packnight-NAME packshadow-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
@@ -369,6 +369,7 @@ scene() { # time [weather [stage]]: copy the test datapack into the world; it bu
     [ "${3:-scene}" = nether ] && echo 'tp @s 0.5 64 0.5 -90 7' > "$f/look.mcfunction" # held in the Nether room
     [ "${3:-scene}" = dh ] && echo 'tp @s 0.5 150 0.5 -45 12' > "$f/look.mcfunction" # high up, looking at the horizon
     [ "${3:-scene}" = herd ] && echo 'tp @s ~ ~ ~ -90 20' > "$f/look.mcfunction" # above the farm, looking down at it
+    [ "${3:-scene}" = cave ] && echo 'tp @s ~ ~ ~ -90 5' > "$f/look.mcfunction" # into the cave, from its far end
     [ "${3:-scene}" = portal ] && echo 'tp @s ~ ~ ~ -90 40' > "$f/look.mcfunction" # down at the End portal in front
     # GAME_LOOK="yaw pitch" turns the player where the scene put them; "x y z yaw pitch" also moves them there
     if [ -n "${GAME_LOOK:-}" ]; then
@@ -679,6 +680,7 @@ for p in $PHASES; do
     ours-rain) scene 3000 rain; PACK=mcmetal-rt-pack run_phase ours-rain 180 metal true ;;
     ours-storm) scene 6000 thunder; PACK=mcmetal-rt-pack run_phase ours-storm 180 metal true ;;  # thunderstorm, lightning
     ours-nether) scene noon clear nether; PACK=mcmetal-rt-pack run_phase ours-nether 240 metal true ;;  # Nether room
+    ours-cave) scene noon clear cave; PACK=mcmetal-rt-pack run_phase ours-cave 180 metal true ;;  # sealed cave: torches, lantern, lichen, lava, no sky light
     ours-aurora) GAME_TP="~ 88 ~ 0 -35" scene 18000; PACK_OPTS="AURORA=true ${PACK_OPTS:-}" PACK=mcmetal-rt-pack run_phase ours-aurora 180 metal true ;;  # night sky from y 88, looking up: northern lights
     ours-portal) scene 18000 clear portal; PACK=mcmetal-rt-pack run_phase ours-portal 180 metal true ;;  # End portal and gateway at night (END_PORTAL_STARS)
     ours-end) GAME_TP="__END__ ${END_TP:-60.5 75 0.5 90 15}" scene 6000; PACK=mcmetal-rt-pack run_phase ours-end 240 metal true ;;  # the End: above the main island's edge, looking at the pillars
