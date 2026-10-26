@@ -148,7 +148,15 @@ void main() {
     ao = hit < 0.0 ? 1.0 : smoothstep(0.0, RT_AO_RADIUS, hit);
 #endif
 
-    float frames = valid ? min(h.g + 1.0, RT_AO_FRAMES) : 1.0;
+    float cap = RT_AO_FRAMES;
+#ifdef PHOTO_MODE
+    // standing still and not turning: keep averaging far longer, for clean screenshots (a light switched on
+    // nearby takes a few seconds to settle while you stand still)
+    bool still = length(cameraPosition - previousCameraPosition) < 1e-4
+              && distance(gbufferModelView[2].xyz, gbufferPreviousModelView[2].xyz) < 1e-5;
+    if (still) cap = PHOTO_FRAMES;
+#endif
+    float frames = valid ? min(h.g + 1.0, cap) : 1.0;
     float w = 1.0 / frames;
     outAO = vec4(mix(valid ? h.r : ao, ao, w), frames, dist, 1.0);
     vec3 hgi = valid ? texture(colortex4, puv * GI_SCALE).rgb : gi;

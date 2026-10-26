@@ -207,3 +207,6 @@ option.LIGHT_POLLUTION_STRENGTH=Lamp Glow Strength
 option.END_BEAMS=End Sky Beams
 option.END_BEAMS.comment=In the End, violet beams rise out of the void under faint stars.
 option.END_BEAMS_STRENGTH=End Beams Strength
+option.PHOTO_MODE=Photo Mode
+option.PHOTO_MODE.comment=While you stand still, rays keep averaging much longer for clean screenshots. Lights settle more slowly while still.
+option.PHOTO_FRAMES=Photo Mode Frames
