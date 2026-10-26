@@ -203,7 +203,7 @@ flat in vec3 sunCol, skyAmb;
 layout(location = 0) out vec4 outAlbedo;
 layout(location = 1) out vec4 outNormalLight;
 layout(location = 2) out vec4 outMaterial;
-layout(location = 3) out vec4 outPBR;   // colortex10: xy normal with the normal map, z smoothness, w F0/metal (LabPBR)
+layout(location = 3) out vec4 outPBR;   // colortex10: xy normal with the normal map, z linear roughness, w F0/metal (LabPBR)
 #elif defined KEEP_MATERIAL
 /* RENDERTARGETS: 0,2 */
 layout(location = 0) out vec4 outColor;
@@ -344,7 +344,7 @@ void main() {
     spec.g = max(spec.g, 0.02 * wetAll);
   #endif
     outMaterial = vec4(float(mat) / 255.0, ao, puddle, spec.a);
-    outPBR = vec4(octEncode(nm), spec.r, spec.g);
+    outPBR = vec4(octEncode(nm), 1.0 - spec.r, spec.g);   // roughness = 1 - smoothness
 #else
     vec3 albedo = toLinear(c.rgb);
   #ifdef UNLIT
