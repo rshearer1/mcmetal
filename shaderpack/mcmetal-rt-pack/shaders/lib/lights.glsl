@@ -96,4 +96,103 @@ vec3 coloredBlockLight(vec3 p, vec3 n, int mat, float u1, float u2, float u3) {
 #endif
     return l * (total / w[pick]) * COLORED_LIGHT_STRENGTH * STYLE_BLOCK_TINT;
 }
+#ifdef LIGHT_RESTIR
+// Reservoir reuse over time (ReSTIR, the temporal half): each GI pixel keeps the light it picked last frame and how
+// much evidence is behind that pick (a reservoir, in Iris shader storage buffer 1). This frame's fresh pick competes
+// with last frame's, weighted by what each could add here now, so with 30 candles the pixel settles on the ones that
+// matter and that it can see (an occluded pick is stored with weight 0: visibility reuse). Less noise per frame,
+// so the averaged block light settles faster and lags less behind a moving camera.
+#extension GL_ARB_shader_storage_buffer_object : enable
+layout(std430, binding = 1) buffer LightReservoirs { uvec2 lrCells[]; };   // x light block (10 bits per axis,
+const int LR_HALF = 2097152;                                                 // world mod 1024; bit 30 set), y W, M
+int lrIndex(vec2 px, int frame) {
+    ivec2 q = ivec2(px);
+    int stride = int(ceil(viewWidth * GI_SCALE));
+    int i = q.y * stride + q.x;
+    return q.x < 0 || q.y < 0 || q.x >= stride || i >= LR_HALF ? -1 : i + (frame & 1) * LR_HALF;
+}
+uint lrPackPos(vec3 playerPos) {
+    ivec3 b = ivec3(floor(playerPos + cameraPosition));
+    return uint(b.x & 1023) | (uint(b.y & 1023) << 10) | (uint(b.z & 1023) << 20) | (1u << 30);
+}
+vec3 lrUnpackPos(uint v) {   // the light block's centre in player space (the copy of it nearest the camera)
+    ivec3 cb = ivec3(floor(cameraPosition));
+    ivec3 s = ivec3(int(v & 1023u), int((v >> 10) & 1023u), int((v >> 20) & 1023u));
+    ivec3 d = (s - cb) & 1023;
+    d -= ivec3(greaterThanEqual(d, ivec3(512))) * 1024;
+    return vec3(cb + d) + 0.5 - cameraPosition;
+}
+
+// u1-u4 random numbers in [0,1); prevPx: this point's GI pixel last frame (prevOk: it was this surface); px: now
+vec3 coloredBlockLightReSTIR(vec3 p, vec3 n, int mat, float u1, float u2, float u3, float u4, vec2 prevPx, bool prevOk, vec2 px) {
+    // a fresh pick among the nearest lights, in proportion to their unshadowed light (as coloredBlockLight)
+    vec3 lp[LIGHT_SLOTS]; int ids[LIGHT_SLOTS]; float w[LIGHT_SLOTS];
+    float total = 0.0;
+    int count = 0;
+    for (int i = 0; i < LIGHT_SLOTS; i++) {
+        vec3 pos; int id;
+        if (mcm_lights_near(p, i, pos, id) < 0) break;
+        vec3 dir; float dist;
+        w[i] = luma(lightFrom(p, n, mat, pos, id, dir, dist));
+        lp[i] = pos; ids[i] = id;
+        total += w[i];
+        count++;
+    }
+    vec3 yPos = vec3(0.0); int yId = -1; float yPhat = 0.0;
+    float wsum = 0.0, M = 0.0;
+    if (total > 0.0) {
+        int pick = count - 1;
+        float x = u1 * total;
+        for (int i = 0; i < count; i++) {
+            if (x < w[i]) { pick = i; break; }
+            x -= w[i];
+        }
+        yPos = lp[pick]; yId = ids[pick]; yPhat = w[pick];
+        wsum = total;   // its target over its pick chance: w / (w / total)
+        M = 1.0;
+    }
+    // last frame's pick, if that light is still there and this pixel saw the same surface
+    int pi = prevOk ? lrIndex(prevPx, frameCounter + 1) : -1;
+    if (pi >= 0) {
+        uvec2 e = lrCells[pi];
+        vec2 wm = unpackHalf2x16(e.y);
+        if ((e.x & (1u << 30)) != 0u && wm.x > 0.0 && wm.y > 0.0) {
+            vec3 pp = lrUnpackPos(e.x), qpos; int qid;
+            if (mcm_lights_near(pp, 0, qpos, qid) >= 0 && distance(qpos, pp) < 0.1) {
+                vec3 dir; float dist;
+                float phat = luma(lightFrom(p, n, mat, qpos, qid, dir, dist));
+                float pm = min(wm.y, 20.0);   // caps how long an old pick outweighs fresh ones
+                float wp = phat * wm.x * pm;
+                wsum += wp;
+                M += pm;
+                if (u4 * wsum < wp) { yPos = qpos; yId = qid; yPhat = phat; }
+            }
+        }
+    }
+    int ci = lrIndex(px, frameCounter);
+    if (yPhat <= 0.0 || M <= 0.0) {
+        if (ci >= 0) lrCells[ci] = uvec2(0u);
+        return vec3(0.0);
+    }
+    float W = wsum / (M * yPhat);
+  #ifdef SHARP_LIGHT_SHADOWS
+    vec3 target = yPos;
+  #else
+    vec3 target = yPos + (vec3(u2, u3, fract(u2 + u3 * 1.618)) - 0.5) * 0.5;
+  #endif
+    vec3 dir; float dist;
+    vec3 l = lightFrom(p, n, mat, target, yId, dir, dist);
+    vec3 o = mat == MAT_FOLIAGE ? p + dir * 0.06 : p + n * 0.02 + dir * 0.01;
+  #ifdef COLORED_LIGHT_GLASS
+    vec3 transmit = vec3(1.0);
+    bool blocked = dist > 0.9 && mcm_trace_tinted(o, dir, dist - 0.9, transmit) > 0.0;
+    l *= max(mix(vec3(luma(transmit)), transmit, 3.0), vec3(0.0));
+  #else
+    bool blocked = dist > 0.9 && mcm_trace(o, dir, dist - 0.9) > 0.0;
+  #endif
+    if (ci >= 0) lrCells[ci] = uvec2(lrPackPos(yPos), packHalf2x16(vec2(blocked ? 0.0 : W, min(M, 20.0))));
+    if (blocked) return vec3(0.0);
+    return l * W * COLORED_LIGHT_STRENGTH * STYLE_BLOCK_TINT;
+}
+#endif
 #endif

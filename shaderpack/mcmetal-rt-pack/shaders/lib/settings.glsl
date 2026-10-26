@@ -5,6 +5,7 @@
 #define SHARP_LIGHT_SHADOWS // block light casts crisp shadows (rays aim at the light's centre); off = soft shadows
 #define COLORED_LIGHT_STRENGTH 1.0 // [0.5 0.7 0.85 1.0 1.2 1.5 2.0]
 #define LIGHT_SLOTS 4 // [2 4 6 8] how many of the nearest light blocks each pixel considers (more = slower)
+//#define LIGHT_RESTIR // coloured light picks carry over between frames (ReSTIR): with many lights, each pixel settles on the ones it can see
 #define RT_MODE 1 // [0 1 2] 0 = shadow map only, 1 = hardware ray tracing when mcmetal provides it, 2 = always ray tracing
 #if RT_MODE == 2 || (RT_MODE == 1 && defined MCMETAL_RT)
     #define USE_RT
@@ -229,6 +230,8 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef LIGHT_CACHE
 #endif
 #ifdef WORLD_CACHE
+#endif
+#ifdef LIGHT_RESTIR
 #endif
 #if defined WORLD_CACHE && !(defined USE_RT && defined LIGHT_CACHE && defined RT_GI)
     #undef WORLD_CACHE   // it extends the light cache

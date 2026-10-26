@@ -149,7 +149,12 @@ void main() {
     // coloured block light: one nearby light per pixel and frame, averaged and filtered along with the GI. Where
     // Minecraft's own block light is zero no light block is in reach: skip the light list (most of a daytime view)
     if (texture(colortex1, texcoord).z > 0.05)
-    #if RT_NOISE == 1
+    #ifdef LIGHT_RESTIR
+    gi += min(coloredBlockLightReSTIR(p, n, mat, rayRand(gl_FragCoord.xy, frameCounter, 2),
+                                      rayRand(gl_FragCoord.xy, frameCounter, 3), rayRand(gl_FragCoord.xy, frameCounter, 4),
+                                      rayRand(gl_FragCoord.xy, frameCounter, 5),
+                                      puv * vec2(viewWidth, viewHeight) * GI_SCALE, valid, gl_FragCoord.xy), vec3(32.0));
+    #elif RT_NOISE == 1
     gi += min(coloredBlockLight(p, n, mat, rayRand(gl_FragCoord.xy, frameCounter, 2),
                                 rayRand(gl_FragCoord.xy, frameCounter, 3),
                                 rayRand(gl_FragCoord.xy, frameCounter, 4)), vec3(32.0));
