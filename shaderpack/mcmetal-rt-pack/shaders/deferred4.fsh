@@ -136,6 +136,9 @@ void main() {
         if (dot(sunCol, sunCol) > 1e-6 && (dot(n, lightDir) > 0.0 || mat == MAT_FOLIAGE))
             sh = sunShadow(p, n, lightDir, mat);
 #endif
+#if defined CLOUDS && defined CLOUD_SHADOWS
+        if (mat != MAT_HAND) sh *= cloudShadow(p + cameraPosition, lightDir);
+#endif
         float ao = m.g;
 #if defined USE_RT && defined RT_AO
         ao = texture(colortex3, texcoord * GI_SCALE).r * (0.6 + 0.4 * m.g);   // keep a little of the corner shading
