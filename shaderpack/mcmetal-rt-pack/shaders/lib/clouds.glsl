@@ -35,6 +35,22 @@ float cloudVolume(vec3 p, bool fine) {
 float cloudPhase(float mu, float g) { return (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * mu, 1.5); }  // Henyey-Greenstein x4pi
 #endif
 
+// how much sun gets through the clouds to world point wp (1 clear .. about 0.3 under a thick cloud): the clouds'
+// shadows drifting over the land. One look-up where the light's path crosses the middle of the cloud layer.
+float cloudShadow(vec3 wp, vec3 lightDir) {
+    if (!hasSkylight || lightDir.y < 0.02) return 1.0;
+#ifdef VOLUMETRIC_CLOUDS
+    float mid = 0.5 * (CLOUD_BASE + CLOUD_TOP);
+    vec3 q = wp + lightDir * ((mid - wp.y) / lightDir.y);
+    float d = cloudVolume(q, false);
+    float tr = exp(-d * 0.02 * (1.0 + rainStrength) * 90.0);
+#else
+    vec2 w = wp.xz + lightDir.xz / lightDir.y * (cameraPosition.y + 900.0 - wp.y);
+    float tr = 1.0 - 0.7 * cloudDensity(w);
+#endif
+    return mix(1.0, max(tr, 0.3), CLOUD_SHADOW_STRENGTH);
+}
+
 // sky colour behind, view direction, sun/moon direction and light: returns the sky with clouds over it
 vec3 drawClouds(vec3 sky, vec3 dir, vec3 lightDir, vec3 sunCol, vec3 skyAmb) {
     if (!hasSkylight) return sky;
