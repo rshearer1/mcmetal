@@ -8,10 +8,8 @@
 #extension GL_ARB_shader_storage_buffer_object : enable
 layout(std430, binding = 2) buffer ReflHistory { uvec2 rhCells[]; };   // x light (RGB9E5), y distance, frames
 const int RH_HALF = 4194304;   // two frames x 4M pixels (2560x1600) x 8 bytes
-#ifndef METALFX_DENOISE
 uniform mat4 gbufferPreviousModelView, gbufferPreviousProjection;
 uniform vec3 previousCameraPosition;
-#endif
 
 int rhIndex(vec2 px, int frame) {
     ivec2 q = ivec2(px);

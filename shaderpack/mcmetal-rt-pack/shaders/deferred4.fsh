@@ -112,8 +112,10 @@ vec3 lightningLight(vec3 p) {
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outAlbedo;   // colortex15: diffuse albedo for MetalFX's denoiser (deferred6.fsh)
 layout(location = 2) out vec4 outMotion;   // colortex7 (free without our denoiser): motion for it, in pixels
+  #ifndef REFL_DENOISE_LIB   // (which declares these too)
 uniform mat4 gbufferPreviousModelView, gbufferPreviousProjection;
 uniform vec3 previousCameraPosition;
+  #endif
 
 // where this pixel was last frame minus where it is now, in pixels (GL's way up: +y is up the screen). Camera
 // motion only, like the TAA's reprojection (composite2.fsh); the held item moves with the camera, so it gets 0
