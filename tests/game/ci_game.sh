@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs real Minecraft 1.21.1 + NeoForge + Sodium + Iris on mcmetal and saves timed screenshots (MGL_SHOT_DIR).
-#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary sound sound-off sound-apple water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain lightlist lightlist-off lightlist-PACK lightlist-off-PACK nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-night ours-rain ours-gl ours-storm ours-nether ours-end ours-shadow ours-ao ours-gi ours-gi-fine ours-pan ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-water ours-water-full ours-underwater ours-vista ours-vista-STYLE-TIME ours-season-SEASON[-STYLE]
+#   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary sound sound-off sound-apple water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain lightlist lightlist-off lightlist-PACK lightlist-off-PACK nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-sunset ours-dawn ours-night ours-rain ours-gl ours-storm ours-nether ours-end ours-shadow ours-ao ours-gi ours-gi-fine ours-pan ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-water ours-water-full ours-underwater ours-vista ours-vista-STYLE-TIME ours-season-SEASON[-STYLE]
 #   pbr-VIEW[+RP] (material gallery for resource packs: VIEW ours comp comp-pom comp-ipbr plain, RP as GAME_RP)
 #   menu menu-noif menu-shaders creative creative-shaders creative-scroll particles ab-menu ab-menu-noif ab-menu-shaders ab-creative ab-creative-shaders ab-particles (JEI, ImmediatelyFast, Particle Rain)
 #   pack-NAME packnight-NAME packshadow-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
@@ -579,6 +579,7 @@ for p in $PHASES; do
     ours) scene 1500; PACK=mcmetal-rt-pack run_phase ours 180 metal true ;;
     ours-noon) scene noon; PACK=mcmetal-rt-pack run_phase ours-noon 180 metal true ;;
     ours-sunset) scene 12300; PACK=mcmetal-rt-pack run_phase ours-sunset 180 metal true ;;
+    ours-dawn) scene 23300; PACK=mcmetal-rt-pack run_phase ours-dawn 180 metal true ;;  # just after sunrise: morning mist and low beams
     ours-night) scene midnight clear showcase; PACK=mcmetal-rt-pack run_phase ours-night 180 metal true ;;
     ours-rain) scene 3000 rain; PACK=mcmetal-rt-pack run_phase ours-rain 180 metal true ;;
     ours-storm) scene 6000 thunder; PACK=mcmetal-rt-pack run_phase ours-storm 180 metal true ;;  # thunderstorm, lightning
