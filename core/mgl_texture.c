@@ -317,8 +317,10 @@ void glDeleteTextures(GLsizei n, const GLuint *names)
         mgl_texture *t = mgl_texture_obj(names[i]);
         if (!t)
             continue;
-        if (t->mem)
+        if (t->mem) {
+            mgl_rt_thumb_forget(t->mem);
             mglb_texture_release(t->mem);
+        }
         free(t);
         mgl_table_remove(&mgl->textures, names[i]);
         for (int u = 0; u < MGL_MAX_UNITS; u++)
@@ -429,8 +431,10 @@ static void define_storage(mgl_texture *t, GLenum internal, int w, int h, int d,
     if (t->mem && t->desc.format == f && t->desc.width == w && t->desc.height == h && t->desc.depth == d &&
         t->desc.levels >= want)
         return;
-    if (t->mem)
+    if (t->mem) {
+        mgl_rt_thumb_forget(t->mem);
         mglb_texture_release(t->mem);
+    }
     t->desc.type = tex_type(target);
     t->desc.format = f;
     t->desc.width = w;
@@ -466,6 +470,8 @@ static void upload(mgl_texture *t, int level, int x, int y, int z, int w, int h,
     void *tmp;
     const void *data = prepare_pixels(t->desc.format, w, h, d, format, type, src, &row, &image, &tmp);
     mglb_texture_upload(t->mem, level, x, y, z, w, h, d, data, row, image);
+    if (d == 1)
+        mgl_rt_thumb_upload(t->mem, &t->desc, level, x, y, z, w, h, data, row);
     free(tmp);
 }
 

@@ -203,7 +203,7 @@ void mglb_rt_update(const mgl_rt_geom *g, int n);
 void mglb_rt_forget(mglb_buffer *b, size_t offset, size_t size);
 /* This frame's entity triangles (mobs, players, item frames, chests...): camera-relative float3 corners, 9 floats
    per triangle, solid. Called just before mglb_rt_update; the backend adds them to that scene. */
-void mglb_rt_dynamic(const float *tris, int n);
+void mglb_rt_dynamic(const float *tris, const uint32_t *colours /* 3 per triangle, or NULL */, int n);
 mglb_buffer *mglb_rt_instances(void); /* this frame's per-instance triangle-data addresses (mcm_trace's McmInstances) */
 /* The block atlas the terrain was last drawn with, for mcm_trace's alpha test (mcm_atlas); set by mgl_rt.c. */
 extern mglb_texture *mgl_rt_atlas;
