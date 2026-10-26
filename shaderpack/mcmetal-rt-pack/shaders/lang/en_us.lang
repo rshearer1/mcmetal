@@ -221,3 +221,5 @@ option.GI_ADAPTIVE.comment=Newly seen spots trace bounce light every frame, sett
 option.GI_SHORT_RAYS=Short Bounce Rays
 option.GI_SHORT_RAYS.comment=Faster: bounce-light rays stop after a few blocks and use the sky light Minecraft gives beyond that.
 option.GI_SHORT_DISTANCE=Short Ray Length
+option.DENOISE_PASSES=Denoiser Passes
+option.DENOISE_PASSES.comment=Rounds of the bounce-light denoiser. One does the same reach in a single wider pass, which is one render pass fewer.
