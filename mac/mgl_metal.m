@@ -5202,6 +5202,10 @@ static void gs_flush_at(int line)
 /* this frame's build, between the decode pass and the build pass */
 @property(nonatomic) mglb_buffer *pos;
 @property(nonatomic, strong) MTLPrimitiveAccelerationStructureDescriptor *desc;
+/* MGL_RT_REGIONS: the positions of its last build, kept for its region's structure, and their layout
+   (0 one non-opaque geometry, 1 one opaque, 2 opaque + non-opaque halves); dead: dropped from the cache */
+@property(nonatomic) mglb_buffer *kept;
+@property(nonatomic) int layout, dead;
 @end
 @implementation RtSection
 - (void)dealloc
@@ -5209,6 +5213,7 @@ static void gs_flush_at(int line)
     mglb_buffer_release(_tris);
     mglb_buffer_release(_lights);
     mglb_buffer_release(_pos);
+    mglb_buffer_release(_kept);
 }
 @end
 static mglb_buffer *rt_inst;                    /* GPU address of each scene instance's triangle data */
@@ -5317,6 +5322,7 @@ static void rt_tab_drop(size_t at)
     rt_tab[at].sec = NULL; /* h stays: probes keep going past it */
     rt_tab_live--;
     rt_tab_dead++;
+    s.dead = 1;
     rt_retire(s);
 }
 
@@ -5803,6 +5809,206 @@ static id<MTLAccelerationStructure> entity_as(mglb_buffer **tris_out)
     return as;
 }
 
+/* MGL_RT_REGIONS=1 (off by default; an A/B test of Apple's "fewer instances" advice): one scene instance per
+   Sodium region (one vertex buffer, 8x4x8 sections) instead of one per section, so a long ray enters far fewer
+   instances. A region's structure is built from copies of its sections' positions and triangle records (two
+   geometries, opaque and not, like a split section), so it stands on its own: primitive ids index the region's
+   own records and mcm_trace needs no change. It holds the sections drawn this frame and those seen in the last
+   ~4 s that are still cached (so turning doesn't rebuild it). It is rebuilt when one of its sections is new,
+   rebuilt or dropped, at most a few regions a frame; until a region has a structure, its sections go in one by
+   one as before. Costs: the kept positions (36 or 72 bytes a triangle) and the region rebuilds. */
+@interface RtRegion : NSObject
+@property(nonatomic, strong) id<MTLAccelerationStructure> as;
+@property(nonatomic) mglb_buffer *tris;
+@property(nonatomic, strong) NSMutableArray<RtSection *> *members, *seen;
+@property(nonatomic, strong) NSMutableArray<NSNumber *> *seen_idx; /* their index in this frame's section list */
+@property(nonatomic, strong) NSHashTable<RtSection *> *member_set;
+@property(nonatomic) uint64_t built_frame, seen_frame;
+@property(nonatomic) int ntris;
+@end
+@implementation RtRegion
+- (void)dealloc { mglb_buffer_release(_tris); }
+@end
+static NSMutableDictionary<NSNumber *, RtRegion *> *rt_region_tab;
+static unsigned long rt_region_builds, rt_region_build_tris;
+
+static int rt_regions_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        on = opt("MGL_RT_REGIONS");
+        if (on)
+            mgl_log("ray tracing: one scene instance per region (MGL_RT_REGIONS)");
+    }
+    return on;
+}
+
+static NSHashTable *rt_ptr_set(void)
+{
+    return [NSHashTable hashTableWithOptions:NSPointerFunctionsStrongMemory | NSPointerFunctionsObjectPointerPersonality];
+}
+
+/* (Re)build a region's structure from its sections; 0 if it has none to build from */
+static int rt_region_build(RtRegion *r)
+{
+    NSMutableArray<RtSection *> *mem = [NSMutableArray array];
+    NSHashTable *set = rt_ptr_set();
+    long total = 0;
+    for (int pass = 0; pass < 2; pass++)
+        for (RtSection *s in pass ? r.members : r.seen)
+            if (s.kept && !s.dead && ![set containsObject:s] && (!pass || rt_frame - s.last_frame <= 240)) {
+                [mem addObject:s];
+                [set addObject:s];
+                total += s.ntris;
+            }
+    if (!total)
+        return 0;
+    mglb_buffer *pos = mglb_buffer_new((size_t)total * 72), *tris = mglb_buffer_new((size_t)total * 48);
+    if (!pos || !tris) {
+        mglb_buffer_release(pos);
+        mglb_buffer_release(tris);
+        return 0;
+    }
+    end_encoders();
+    id<MTLBlitCommandEncoder> b = [current_cb() blitCommandEncoder];
+    id<MTLBuffer> P = OBJ(id<MTLBuffer>, pos->mtl), T = OBJ(id<MTLBuffer>, tris->mtl);
+    [b fillBuffer:P range:NSMakeRange(0, (NSUInteger)total * 72) value:0]; /* zero triangles: in neither geometry */
+    size_t half = (size_t)total * 36, o = 0;
+    for (RtSection *s in mem) {
+        id<MTLBuffer> K = OBJ(id<MTLBuffer>, s.kept->mtl);
+        size_t n = (size_t)s.ntris * 36;
+        if (s.layout == 2) {
+            [b copyFromBuffer:K sourceOffset:0 toBuffer:P destinationOffset:o * 36 size:n];
+            [b copyFromBuffer:K sourceOffset:n toBuffer:P destinationOffset:half + o * 36 size:n];
+        } else {
+            [b copyFromBuffer:K sourceOffset:0 toBuffer:P destinationOffset:(s.layout ? 0 : half) + o * 36 size:n];
+        }
+        [b copyFromBuffer:OBJ(id<MTLBuffer>, s.tris->mtl) sourceOffset:0 toBuffer:T destinationOffset:o * 48
+                     size:(size_t)s.ntris * 48];
+        use_buffer(s.kept);
+        use_buffer(s.tris);
+        o += (size_t)s.ntris;
+    }
+    [b endEncoding];
+    MTLPrimitiveAccelerationStructureDescriptor *pd = [MTLPrimitiveAccelerationStructureDescriptor descriptor];
+    pd.geometryDescriptors = @[ tri_geometry(pos, 0, (int)total, YES, tris), tri_geometry(pos, (size_t)total, (int)total, NO, tris) ];
+#if defined(__MAC_26_0) && __MAC_OS_X_VERSION_MAX_ALLOWED >= __MAC_26_0
+    if (@available(macOS 26.0, *))
+        pd.usage = MTLAccelerationStructureUsagePreferFastIntersection;
+#endif
+    id<MTLAccelerationStructure> as = build_as(pd, "rt build regions");
+    use_buffer(pos);
+    mglb_buffer_release(pos); /* copied into the structure; the pool keeps it until the build has run */
+    if (!as) {
+        mglb_buffer_release(tris);
+        return 0;
+    }
+    rt_retire(r.as);
+    use_buffer(r.tris);
+    mglb_buffer_release(r.tris);
+    r.as = as;
+    r.tris = tris;
+    r.members = mem;
+    r.member_set = set;
+    r.ntris = (int)total;
+    r.built_frame = rt_frame;
+    rt_region_builds++;
+    rt_region_build_tris += (unsigned long)total;
+    return 1;
+}
+
+static void rt_instance(MTLAccelerationStructureUserIDInstanceDescriptor *d, const float *origin, int translucent,
+                        int index, int user)
+{
+    memset(d, 0, sizeof *d);
+    d->transformationMatrix.columns[0] = MTLPackedFloat3Make(1, 0, 0);
+    d->transformationMatrix.columns[1] = MTLPackedFloat3Make(0, 1, 0);
+    d->transformationMatrix.columns[2] = MTLPackedFloat3Make(0, 0, 1);
+    d->transformationMatrix.columns[3] = MTLPackedFloat3Make(origin[0], origin[1], origin[2]);
+    d->options = MTLAccelerationStructureInstanceOptionNone;
+    d->mask = translucent ? 0x02 : 0x01;
+    d->accelerationStructureIndex = (uint32_t)index;
+    d->userID = (uint32_t)user;
+}
+
+/* This frame's instances with MGL_RT_REGIONS: one per region that has a structure, else its sections one by one */
+static int rt_region_instances(const mgl_rt_geom *g, RtSection *__strong *secs, const int *sec_geom, int nsec,
+                               MTLAccelerationStructureUserIDInstanceDescriptor *descs, uint64_t *addr,
+                               NSMutableArray<id<MTLAccelerationStructure>> *parts)
+{
+    @autoreleasepool { /* the render thread has no pool of its own */
+    if (!rt_region_tab)
+        rt_region_tab = [NSMutableDictionary dictionary];
+    NSMutableArray<RtRegion *> *live = [NSMutableArray array];
+    NSMutableArray<NSNumber *> *first = [NSMutableArray array]; /* a section of each, for its origin and mask */
+    for (int i = 0; i < nsec; i++) {
+        const mgl_rt_geom *gi = &g[sec_geom[i]];
+        NSNumber *key = @((uintptr_t)gi->vbuf | (gi->translucent ? 1u : 0u));
+        RtRegion *r = rt_region_tab[key];
+        if (!r)
+            r = rt_region_tab[key] = [RtRegion new];
+        if (r.seen_frame != rt_frame) {
+            r.seen_frame = rt_frame;
+            r.seen = [NSMutableArray array];
+            r.seen_idx = [NSMutableArray array];
+            [live addObject:r];
+            [first addObject:@(i)];
+        }
+        [r.seen addObject:secs[i]];
+        [r.seen_idx addObject:@(i)];
+    }
+    int builds = 0, count = 0;
+    long build_tris = 0;
+    for (NSUInteger j = 0; j < live.count; j++) {
+        RtRegion *r = live[j];
+        int dirty = !r.as;
+        for (RtSection *s in r.seen) /* (a section without kept positions can't be in it: no use rebuilding for it) */
+            dirty |= s.kept && (![r.member_set containsObject:s] || s.built_frame > r.built_frame);
+        for (RtSection *s in r.members)
+            dirty |= s.dead;
+        if (dirty && builds < 8 && build_tris < 1500000) {
+            int before = r.ntris;
+            if (rt_region_build(r)) {
+                builds++;
+                build_tris += r.ntris > before ? r.ntris : before;
+            }
+        }
+        int fi = first[j].intValue;
+        const mgl_rt_geom *g0 = &g[sec_geom[fi]];
+        if (r.as) {
+            addr[count] = OBJ(id<MTLBuffer>, r.tris->mtl).gpuAddress;
+            rt_tris_c[count] = OBJ(id<MTLBuffer>, r.tris->mtl);
+            use_buffer(r.tris);
+            rt_instance(&descs[count], g0->region, g0->translucent, count, sec_geom[fi]);
+            [parts addObject:r.as];
+            count++;
+            continue;
+        }
+        for (NSNumber *ix in r.seen_idx) { /* no structure yet: its sections as before */
+            int i = ix.intValue;
+            addr[count] = OBJ(id<MTLBuffer>, secs[i].tris->mtl).gpuAddress;
+            rt_tris_c[count] = OBJ(id<MTLBuffer>, secs[i].tris->mtl);
+            rt_instance(&descs[count], g[sec_geom[i]].region, g[sec_geom[i]].translucent, count, sec_geom[i]);
+            [parts addObject:secs[i].as];
+            count++;
+        }
+    }
+    if (rt_frame % 60 == 0) /* regions unseen for ~4 s */
+        for (NSNumber *key in rt_region_tab.allKeys)
+            if (rt_frame - rt_region_tab[key].seen_frame > 240) {
+                rt_retire(rt_region_tab[key]);
+                [rt_region_tab removeObjectForKey:key];
+            }
+    static int logged;
+    if (rt_frame % 120 == 0 || !logged++)
+        mgl_log("ray tracing: %d instances for %d sections in %lu regions; %lu region builds (%luk triangles) lately",
+                count, nsec, (unsigned long)live.count, rt_region_builds, rt_region_build_tris / 1000);
+    if (rt_frame % 120 == 0)
+        rt_region_builds = rt_region_build_tris = 0;
+    return count;
+    }
+}
+
 static void rt_update(const mgl_rt_geom *g, int n);
 void mglb_rt_update(const mgl_rt_geom *g, int n)
 {
@@ -5848,7 +6054,7 @@ static void rt_update(const mgl_rt_geom *g, int n)
     uint64_t *addr = table->ptr;
     free(rt_tris_c);
     rt_tris_c = (__unsafe_unretained id<MTLResource> *)calloc(slots, sizeof(id));
-    int count = 0;
+    int count = 0, nsec = 0, regions = rt_regions_on();
     RtSection *__strong *secs = (RtSection *__strong *)calloc((size_t)(n ? n : 1), sizeof(RtSection *));
     int *sec_geom = calloc((size_t)(n ? n : 1), sizeof(int));
     /* sections to decode and build this frame: new ones (with their per-triangle data) and ones rebuilt for tracing */
@@ -5880,8 +6086,11 @@ static void rt_update(const mgl_rt_geom *g, int n)
             }
         }
         sec.last_frame = rt_frame;
-        secs[count] = sec;
-        sec_geom[count] = i;
+        secs[nsec] = sec;
+        sec_geom[nsec] = i;
+        nsec++;
+        if (regions)
+            continue;
         addr[count] = OBJ(id<MTLBuffer>, sec.tris->mtl).gpuAddress;
         rt_tris_c[count] = OBJ(id<MTLBuffer>, sec.tris->mtl);
         MTLAccelerationStructureUserIDInstanceDescriptor *d = &descs[count];
@@ -5915,7 +6124,15 @@ static void rt_update(const mgl_rt_geom *g, int n)
             for (MTLAccelerationStructureGeometryDescriptor *gd in s.desc.geometryDescriptors)
                 ((MTLAccelerationStructureTriangleGeometryDescriptor *)gd).vertexBuffer = OBJ(id<MTLBuffer>, s.pos->mtl);
             encode_build(e, s.as, s.desc);
-            mglb_buffer_release(s.pos); /* the pool keeps it until the GPU is done with it */
+            if (rt_regions_on()) { /* its region's structure is made from these positions */
+                MTLAccelerationStructureTriangleGeometryDescriptor *g0 =
+                    (MTLAccelerationStructureTriangleGeometryDescriptor *)s.desc.geometryDescriptors[0];
+                s.layout = s.desc.geometryDescriptors.count == 2 ? 2 : g0.opaque ? 1 : 0;
+                mglb_buffer_release(s.kept);
+                s.kept = s.pos;
+            } else {
+                mglb_buffer_release(s.pos); /* the pool keeps it until the GPU is done with it */
+            }
             s.pos = NULL;
             s.desc = nil;
         }
@@ -5928,8 +6145,10 @@ static void rt_update(const mgl_rt_geom *g, int n)
         for (size_t i = 0; i < rt_tab_cap; i++)
             if (rt_tab[i].sec && rt_frame - ((__bridge RtSection *)rt_tab[i].sec).last_frame > 240)
                 rt_tab_drop(i);
-    rt_build_lights(g, secs, sec_geom, count);
-    for (int i = 0; i < count; i++)
+    if (regions)
+        count = rt_region_instances(g, secs, sec_geom, nsec, descs, addr, parts);
+    rt_build_lights(g, secs, sec_geom, nsec);
+    for (int i = 0; i < nsec; i++)
         secs[i] = nil;
     free(secs);
     free(sec_geom);

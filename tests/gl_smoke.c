@@ -1054,6 +1054,47 @@ int main(int argc, char **argv)
         check(near(px[32 * 64 + 32], rgba(64, 128, 192, 255)) && near(px[64 + 1], rgba(64, 128, 192, 255)), what);
     }
 
+    /* 14. 16-bit floats (GL_EXT_shader_explicit_arithmetic_types_float16, Metal's half): compiles and draws */
+    {
+        int listed = 0;
+        GLint n = 0;
+        glGetIntegerv(GL_NUM_EXTENSIONS, &n);
+        for (GLint i = 0; i < n; i++)
+            listed |= !strcmp((const char *)glGetStringi(GL_EXTENSIONS, (GLuint)i), "GL_EXT_shader_explicit_arithmetic_types_float16");
+        check(listed, "GL_EXT_shader_explicit_arithmetic_types_float16 is listed (Iris: MC_GL_EXT_...)");
+        GLuint hp = program("#version 330 core\nlayout(location = 0) in vec2 pos;\n"
+                            "void main() { gl_Position = vec4(pos, 0.0, 1.0); }\n",
+                            "#version 330 core\n#extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable\n"
+                            "uniform vec4 color;\nout vec4 frag;\n"
+                            "void main() { f16vec4 c = f16vec4(color) * float16_t(0.5) + f16vec4(0.25hf); frag = vec4(c); }\n", NULL);
+        check(really_linked(hp), "half-precision fragment shader compiles on Metal");
+        GLuint ht, hfbo, hvao, hvbo;
+        glGenTextures(1, &ht);
+        glBindTexture(GL_TEXTURE_2D, ht);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glGenFramebuffers(1, &hfbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, hfbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ht, 0);
+        glViewport(0, 0, 64, 64);
+        float quad[] = {-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1};
+        glGenVertexArrays(1, &hvao);
+        glBindVertexArray(hvao);
+        glGenBuffers(1, &hvbo);
+        glBindBuffer(GL_ARRAY_BUFFER, hvbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof quad, quad, GL_STATIC_DRAW);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8, (void *)0);
+        glUseProgram(hp);
+        glUniform4f(glGetUniformLocation(hp, "color"), 1.0f, 0.5f, 0.0f, 1.0f);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        read_texture(rb, ht, ssbo, px);
+        char what[160];
+        snprintf(what, sizeof what, "half-precision maths draws the right colour (pixel %08x)", px[32 * 64 + 32]);
+        check(near(px[32 * 64 + 32], rgba(191, 128, 64, 191)), what);
+    }
+
     printf("%d check(s) failed\n", failed);
     return failed;
 }
