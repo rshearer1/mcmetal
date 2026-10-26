@@ -101,9 +101,29 @@ vec3 lightningLight(vec3 p) {
 #endif
 
 #ifdef METALFX_DENOISE
-/* RENDERTARGETS: 0,15 */
+/* RENDERTARGETS: 0,15,7 */
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outAlbedo;   // colortex15: diffuse albedo for MetalFX's denoiser (deferred6.fsh)
+layout(location = 2) out vec4 outMotion;   // colortex7 (free without our denoiser): motion for it, in pixels
+uniform mat4 gbufferPreviousModelView, gbufferPreviousProjection;
+uniform vec3 previousCameraPosition;
+
+// where this pixel was last frame minus where it is now, in pixels (GL's way up: +y is up the screen). Camera
+// motion only, like the TAA's reprojection (composite2.fsh); the held item moves with the camera, so it gets 0
+vec2 cameraMotion(float depth, int mat) {
+    if (mat == MAT_HAND) return vec2(0.0);
+    vec4 pc;
+    if (depth < 1.0) {
+        vec4 v = gbufferProjectionInverse * vec4(vec3(texcoord, depth) * 2.0 - 1.0, 1.0);
+        vec3 p = mat3(gbufferModelViewInverse) * (v.xyz / v.w) + gbufferModelViewInverse[3].xyz;
+        pc = gbufferPreviousProjection * (gbufferPreviousModelView * vec4(p + cameraPosition - previousCameraPosition, 1.0));
+    } else {
+        vec4 v = gbufferProjectionInverse * vec4(texcoord * 2.0 - 1.0, 0.0, 1.0);   // sky: only the turn counts
+        pc = gbufferPreviousProjection * vec4(mat3(gbufferPreviousModelView) * (mat3(gbufferModelViewInverse) * (v.xyz / v.w)), 1.0);
+    }
+    vec2 puv = pc.xy / pc.w * 0.5 + 0.5;
+    return (puv - texcoord) * vec2(viewWidth, viewHeight);
+}
 #else
 /* RENDERTARGETS: 0 */
 layout(location = 0) out vec4 outColor;
@@ -158,6 +178,9 @@ void main() {
     vec4 m = texture(colortex2, texcoord);
     int mat = int(m.r * 255.0 + 0.5);
     vec3 p = playerFromDepth(texcoord, depth);
+#ifdef METALFX_DENOISE
+    outMotion = vec4(cameraMotion(depth, mat), 0.0, 1.0);
+#endif
 
     vec3 col;
 #ifdef DISTANT_HORIZONS
