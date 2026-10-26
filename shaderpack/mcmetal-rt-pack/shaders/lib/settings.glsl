@@ -97,6 +97,8 @@
 #define AUTO_PBR // blocks without PBR maps still look their part: ores glint, metal blocks shine, gems and polished stone are glossy (also modded blocks)
 #define AUTO_PBR_STRENGTH 1.0 // [0.5 0.75 1.0]
 #define ROUGH_REFLECTIONS_STRENGTH 1.0 // [0.0 0.5 1.0 1.5 2.0] the soft sheen of rough and satin PBR blocks (stone, wood, brick): a blurred reflection of their surroundings
+//#define GLOSSY_RT // satin PBR blocks close by trace one short ray for their sheen, so it shows the torch or wall really there
+#define GLOSSY_RT_DISTANCE 24.0 // [12.0 16.0 24.0 32.0 48.0]
 #define BLOOM // soft glow around the sun, lights and other bright things
 #define BLOOM_STRENGTH 1.0 // [0.25 0.5 0.75 1.0 1.5 2.0 3.0]
 //#define LENS_FLARE // a camera's lens flare from the sun: soft coloured ghosts across the screen

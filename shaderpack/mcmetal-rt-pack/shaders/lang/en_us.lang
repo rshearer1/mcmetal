@@ -246,3 +246,6 @@ option.AURORA_SPEED=Northern Lights Speed
 option.AURORA_BRIGHTNESS=Northern Lights Brightness
 option.PIXEL_SHADOWS=Pixel Shadows
 option.PIXEL_SHADOWS.comment=Sun shadows snap to the blocks' own pixels, with stepped edges like Minecraft's textures. Suits the Storybook and Fairytale looks.
+option.GLOSSY_RT=Traced Satin Sheen
+option.GLOSSY_RT.comment=Satin PBR blocks (polished stone, wood, brick) close to you trace one short ray for their soft reflection, so it shows the torch or wall really there instead of a guess. Costs a ray per satin pixel.
+option.GLOSSY_RT_DISTANCE=Traced Sheen Distance
