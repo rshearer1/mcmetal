@@ -61,6 +61,20 @@ vec3 traceRadiance(vec3 p, vec3 dir, float tmax, vec3 L, vec3 sunCol, vec3 skyAm
         sh = t < 48.0 ? sunShadow(hp, hn, L, mat) : vec3(smoothstep(0.8, 0.95, hl.y));
   #endif
     }
+#ifdef GI_CACHE
+    // light cache (the pass's cachedGI): on screen, the hit takes the GI gathered there, which already holds the
+    // sky light, earlier bounces and (with coloured light) the block light, in place of the lightmap's guesses
+    vec3 cgi;
+    if (cachedGI(hp, cgi)) {
+  #ifdef USE_LIGHTS
+        vec2 clm = vec2(0.0, hl.y);
+  #else
+        vec2 clm = hl;
+  #endif
+        return a * (surfaceLight(hp, hn, clm, 1.0, mat, L, sunCol, hasSkylight ? vec3(0.0) : skyAmb, sh) + cgi)
+             + emission(a, mat) + pbrGlow;
+    }
+#endif
     return a * surfaceLight(hp, hn, hl, 1.0, mat, L, sunCol, skyAmb, sh) + emission(a, mat) + pbrGlow;
 }
 

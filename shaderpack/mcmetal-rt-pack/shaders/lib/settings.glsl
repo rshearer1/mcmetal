@@ -20,6 +20,7 @@
     #define SHADOW_BLEND 0.125
 #endif
 #define GI_COARSE_RAYS // bounce light rays see leaves and plants beyond 2 blocks as solid (no alpha test: faster in forests; needs mcmetal from 10-25 or newer)
+#define LIGHT_CACHE // light bounces more than once: ray hits that are on screen reuse the bounce light already gathered there (brighter, more even rooms; no extra rays)
 #define DENOISER // two extra filter rounds that clean the GI's grain but keep its light and shadow edges (a-trous, like SVGF)
 #define GI_FILTER 9 // [9 25] taps in the GI blur/upscale (9: 6% less GPU on the M3, no visible difference)
 #define GI_HALF_RES 1 // [0 1] trace GI and AO for every 2x2 pixels (about half the cost), then upscale
@@ -146,6 +147,8 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef GI_COARSE_RAYS
 #endif
 #ifdef DENOISER
+#endif
+#ifdef LIGHT_CACHE
 #endif
 #ifdef SHADOW_CHECKERBOARD
 #endif

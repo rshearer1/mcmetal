@@ -37,6 +37,24 @@ bool cachedShadow(vec3 hp, out vec3 sh) {
     return true;
 }
 
+// light cache: a GI hit that was on screen last frame takes the light gathered there (colortex4, its averaged
+// GI) instead of the lightmap's flat sky and block light, so light bounces again each frame (multi-bounce)
+#if defined LIGHT_CACHE && defined RT_GI
+    #define GI_CACHE
+bool cachedGI(vec3 hp, out vec3 gi) {
+    vec3 prev = hp + cameraPosition - previousCameraPosition;
+    vec4 pc = gbufferPreviousProjection * (gbufferPreviousModelView * vec4(prev, 1.0));
+    if (pc.w <= 0.0) return false;
+    vec2 uv = pc.xy / pc.w * 0.5 + 0.5;
+    if (any(lessThan(uv, vec2(0.002))) || any(greaterThan(uv, vec2(0.998)))) return false;
+    vec4 a = texture(colortex3, uv * GI_SCALE);
+    float d = length(prev);
+    if (a.g < 2.0 || abs(a.b - d) > 0.03 * d + 0.15) return false;   // hidden, or no average there yet
+    gi = texture(colortex4, uv * GI_SCALE).rgb;
+    return true;
+}
+#endif
+
 #if defined USE_RT && (defined RT_AO || defined RT_GI)
   #ifdef GI_COARSE_RAYS
     #define COARSE_RAYS   // bounce light and AO: leaves and plants count as solid (lib/reflect.glsl)
