@@ -40,6 +40,9 @@ import org.objectweb.asm.tree.VarInsnNode;
  * Block model names: with FerriteCore, BlockModelShaper.statePropertiesToString() built a slow entry set for every block
  * state each time a model loader named it (~40% of the M3's model loading thread before the title screen, 2026-10-25);
  * see load/StateNameHooks.
+ * Moonlight: its generated-asset cache fingerprint holds each resource pack's description as text, which for translated
+ * descriptions changes once the mods' language files load, so Every Compat rebuilt its assets on the first F3+T or
+ * resource pack change of every session (27.8 s of a 77 s cloud F3+T, 2026-10-26); see load/PackTextHooks.
  */
 final class LoadSpeedTransformer implements ITransformer<ClassNode> {
     static final String HEXEREI = "net.joefoxe.hexerei.data.recipes.WoodcutterRecipes";
@@ -54,6 +57,8 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
     static final String CLIP_HOOKS = "mcmetal/loader/load/ClipboardHooks";
     static final String SHAPER = "net.minecraft.client.renderer.block.BlockModelShaper";
     static final String STATE_HOOKS = "mcmetal/loader/load/StateNameHooks";
+    static final String MOONLIGHT_CACHE = "net.mehvahdjukaar.moonlight.api.resources.pack.GlobalCachedStrategy";
+    static final String PACK_HOOKS = "mcmetal/loader/load/PackTextHooks";
     static final String PREFIX = GpuCullTransformer.PREFIX;
     /** createRecipes() of Hexerei 0.5.0.3 (see fingerprint()); any other version keeps its own loop. */
     static final Set<String> KNOWN_CREATE_RECIPES = Set.of("1f31c51f74d9f41b");
@@ -78,6 +83,8 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
             createClipboard(c);
         else if (c.name.equals(SHAPER.replace('.', '/')))
             stateNames(c);
+        else if (c.name.equals(MOONLIGHT_CACHE.replace('.', '/')))
+            packFingerprint(c);
         return c;
     }
 
@@ -320,6 +327,32 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
         MetalBootstrap.log("load fixes: block model names are built straight from the state's properties (MCMETAL_LOAD_FIXES)");
     }
 
+    /**
+     * computeTokens(packs): "description.getString()" (exactly once) becomes "mcmetal$packText(description)", see
+     * load/PackTextHooks.
+     */
+    static void packFingerprint(ClassNode c) {
+        String component = "net/minecraft/network/chat/Component";
+        java.util.List<MethodInsnNode> calls = new java.util.ArrayList<>();
+        for (MethodNode m : c.methods)
+            if (m.name.equals("computeTokens") && m.desc.equals("(Ljava/util/Collection;)Ljava/util/List;")
+                    && (m.access & Opcodes.ACC_STATIC) != 0)
+                for (AbstractInsnNode n : m.instructions.toArray())
+                    if (n instanceof MethodInsnNode mi && mi.getOpcode() == Opcodes.INVOKEINTERFACE && mi.owner.equals(component)
+                            && mi.name.equals("getString") && mi.desc.equals("()Ljava/lang/String;"))
+                        calls.add(mi);
+        ClassNode hooks = GpuCullTransformer.readHooks(PACK_HOOKS);
+        if (hooks != null && hooks.methods.stream().anyMatch(m -> m.name.equals("<clinit>")))
+            hooks = null;
+        if (calls.size() != 1 || hooks == null) {
+            MetalBootstrap.log("load fixes: Moonlight's asset cache check is not the expected one, left as it is");
+            return;
+        }
+        GpuCullTransformer.merge(hooks, c);
+        redirect(calls.get(0), c.name, "packText", "(L" + component + ";)Ljava/lang/String;");
+        MetalBootstrap.log("load fixes: Moonlight's asset cache check reads pack descriptions the same in every language (MCMETAL_LOAD_FIXES)");
+    }
+
     /** A call on the object in front of its arguments becomes a static call of the merged hook with the same order. */
     static void redirect(MethodInsnNode mi, String owner, String hook, String desc) {
         mi.setOpcode(Opcodes.INVOKESTATIC);
@@ -374,7 +407,7 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
     @Override
     public Set<Target<ClassNode>> targets() {
         return Set.of(Target.targetClass(HEXEREI), Target.targetClass(VEGAN), Target.targetClass(CARRYON), Target.targetClass(KUBEJS),
-                Target.targetClass(CREATE_STACK), Target.targetClass(SHAPER));
+                Target.targetClass(CREATE_STACK), Target.targetClass(SHAPER), Target.targetClass(MOONLIGHT_CACHE));
     }
 
     @Override
