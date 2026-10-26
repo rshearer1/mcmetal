@@ -32,6 +32,32 @@ const vec4 colortex10ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 
 uniform sampler2D colortex0, colortex1, colortex2, colortex3, colortex4, colortex5, colortex7, colortex10, depthtex0;
 
+// the sun shadow (colortex5: rgb shadow, a distance), cleaned of the grain left by one ray per pixel and frame:
+// a 3x3 blur over pixels at the same distance facing the same way, so shadow edges between objects stay sharp
+vec3 filteredShadow(vec2 uv, vec3 n) {
+    vec4 c = texture(colortex5, uv);
+#ifdef SHADOW_FILTER
+    if (c.a <= 0.0) return c.rgb;
+    vec2 px = 1.0 / vec2(viewWidth, viewHeight);
+    vec3 sum = c.rgb;
+    float wsum = 1.0, tol = 0.02 * c.a + 0.05;
+    for (int y = -1; y <= 1; y++)
+        for (int x = -1; x <= 1; x++) {
+            if (x == 0 && y == 0) continue;
+            vec2 q = uv + vec2(x, y) * px;
+            vec4 s = texture(colortex5, q);
+            float w = (abs(x) + abs(y) == 2 ? 0.5 : 1.0)
+                    * step(abs(s.a - c.a), tol)
+                    * pow(max(dot(octDecode(texture(colortex1, q).xy), n), 0.0), 16.0);
+            sum += s.rgb * w;
+            wsum += w;
+        }
+    return sum / wsum;
+#else
+    return c.rgb;
+#endif
+}
+
 #ifdef DISTANT_HORIZONS
 uniform sampler2D dhDepthTex0;
 uniform mat4 dhProjectionInverse;
@@ -131,7 +157,7 @@ void main() {
         vec3 f0 = metal ? a : vec3(max(pbr.w, 0.02));
         vec3 sh = vec3(0.0);
 #ifdef USE_RT
-        sh = mat == MAT_HAND ? vec3(1.0) : texture(colortex5, texcoord).rgb;   // traced and averaged in deferred1.fsh
+        sh = mat == MAT_HAND ? vec3(1.0) : filteredShadow(texcoord, n);   // traced and averaged in deferred1.fsh
 #else
         if (dot(sunCol, sunCol) > 1e-6 && (dot(n, lightDir) > 0.0 || mat == MAT_FOLIAGE))
             sh = sunShadow(p, n, lightDir, mat);

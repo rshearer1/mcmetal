@@ -12,6 +12,7 @@
 
 #define RT_GI // ray-traced global illumination: bounce light, colour bleeding, sky light through openings
 #define GI_RATE 2 // [1 2 4] trace bounce light and AO for 1 in GI_RATE pixels each frame (the rest keep their average)
+#define SHADOW_FILTER // smooth the grain out of ray-traced sun shadows (a small blur that keeps edges between objects)
 #define SHADOW_CHECKERBOARD // trace the sun shadow for half the pixels each frame (the rest keep their average)
 #define SHADOW_RATE 2 // [2 4] with the above: sun shadows and light shafts traced for 1 in this many pixels each frame
 #if defined SHADOW_CHECKERBOARD && SHADOW_RATE == 4
@@ -65,6 +66,10 @@
 #define BLOOM_STRENGTH 1.0 // [0.25 0.5 0.75 1.0 1.5 2.0 3.0]
 //#define LENS_FLARE // a camera's lens flare from the sun: soft coloured ghosts across the screen
 #define LENS_FLARE_STRENGTH 1.0 // [0.5 1.0 1.5 2.0]
+//#define DEPTH_OF_FIELD // like a camera: what's nearer or further than what you look at goes soft
+#define DOF_STRENGTH 1.0 // [0.5 1.0 2.0 4.0 8.0]
+//#define MOTION_BLUR // a soft blur while turning and moving, like a camera's shutter
+#define MOTION_BLUR_STRENGTH 1.0 // [0.5 1.0 1.5 2.0]
 #define TAA // temporal anti-aliasing: smooth edges, no shimmering plants and fences
 #define CLOUDS // our own soft cloud layer (replaces Minecraft's blocky clouds)
 #define CLOUD_AMOUNT 1.0 // [0.0 0.5 1.0 1.5 2.0]
@@ -152,6 +157,8 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #endif
 #ifdef SHADOW_CHECKERBOARD
 #endif
+#ifdef SHADOW_FILTER
+#endif
 #ifdef GLASS_REFRACTION
 #endif
 #ifdef RAIN_PUDDLES
@@ -171,6 +178,10 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef VOLUMETRIC_MIST
 #endif
 #ifdef LABPBR
+#endif
+#ifdef DEPTH_OF_FIELD
+#endif
+#ifdef MOTION_BLUR
 #endif
 #ifdef RT_PBR_EMISSIVE
 #endif
