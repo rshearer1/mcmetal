@@ -7,6 +7,9 @@
 const float R_EARTH = 6360e3, R_ATMOS = 6420e3, H_RAY = 8000.0, H_MIE = 1200.0, MIE_G = 0.76;
 const vec3 BETA_RAY = vec3(5.8e-6, 13.5e-6, 33.1e-6);
 const float BETA_MIE = 21e-6;
+// ozone takes out orange and yellow (no scattering, absorption only): the blue hour's deep blue and the zenith's
+// colour at sunset come from it. Taken to follow the Rayleigh density (thinner than its real 25 km layer, close enough)
+const vec3 BETA_OZONE = vec3(0.65e-6, 1.881e-6, 0.085e-6);
 const float SUN_INTENSITY = 20.0, MOON_INTENSITY = 0.05;
 
 vec2 raySphere(vec3 ro, vec3 rd, float r) {
@@ -26,7 +29,7 @@ vec2 opticalDepthTowards(vec3 p, vec3 dir, int steps) {   // Rayleigh, Mie densi
     return od;
 }
 
-vec3 transmittance(vec2 od) { return exp(-(BETA_RAY * od.x + BETA_MIE * 1.1 * od.y)); }
+vec3 transmittance(vec2 od) { return exp(-((BETA_RAY + BETA_OZONE) * od.x + BETA_MIE * 1.1 * od.y)); }
 
 // light scattered towards the eye along dir, lit from lightDir
 vec3 atmosphere(vec3 dir, vec3 lightDir, float intensity) {
