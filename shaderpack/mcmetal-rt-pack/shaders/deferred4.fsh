@@ -66,6 +66,27 @@ uniform mat4 dhProjectionInverse;
 in vec2 texcoord;
 flat in vec3 sunCol, skyAmb, lightDir, sunDir;
 
+#if defined RAIN_PUDDLES && defined RAIN_RIPPLES
+// rings spreading from raindrops on a puddle: the normal of a few cells of rings (two layers, offset), each cell
+// one drop at a random spot and time; rings grow and fade over a second. Flat when it isn't raining.
+vec3 rippleNormal(vec2 w) {
+    vec2 g = vec2(0.0);
+    for (int l = 0; l < 2; l++) {
+        vec2 q = w * 2.2 + float(l) * vec2(0.37, 0.71);
+        vec2 cell = floor(q), f = fract(q);
+        float h = hash12(cell + float(l) * 17.0);
+        vec2 c = 0.3 + 0.4 * vec2(h, fract(h * 13.7));
+        float t = fract(frameTimeCounter * 1.1 + h * 7.0);
+        vec2 d = f - c;
+        float r = length(d), R = t * 0.45;
+        float ring = sin(clamp((r - R) * 40.0, -3.1416, 3.1416)) * (1.0 - t) * (1.0 - t) * step(abs(r - R), 0.08);
+        g += d / max(r, 1e-3) * ring;
+    }
+    g *= 0.12 * rainStrength;
+    return normalize(vec3(-g.x, 1.0, -g.y));
+}
+#endif
+
 #ifdef LIGHTNING_FLASH
 // lightning (Iris: lightningBoltPosition, w = 1 while a bolt is out, xyz player space): a flickering blue-white
 // flash on everything the sky can see, much brighter near the bolt
@@ -274,7 +295,11 @@ void main() {
         if (m.b > 0.01) {
             vec3 v = normalize(p);
             vec3 pn = vec3(0.0, 1.0, 0.0);
+  #ifdef RAIN_RIPPLES
+            pn = rippleNormal(p.xz + cameraPosition.xz);
+  #endif
             vec3 rd = reflect(v, pn);
+            rd.y = abs(rd.y);   // ripples never send a ray into the ground
             // (at least 15%: a real puddle seen from above is dark and still shows the sky; pure Fresnel's 2% vanishes)
             float f = max(0.02 + 0.98 * pow(1.0 - clamp(-v.y, 0.0, 1.0), 5.0), 0.15);
             float skyOpen = smoothstep(0.3, 0.9, nl.w);

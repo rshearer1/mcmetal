@@ -96,6 +96,8 @@
 #define CLOUD_STEPS 12 // [6 8 12 16 24] samples through the clouds per pixel (more = smoother, slower)
 #define RAIN_PUDDLES // puddles on open ground in the rain, with ray-traced reflections
 #define PUDDLE_AMOUNT 1.0 // [0.5 1.0 1.5 2.0]
+#define RAIN_RIPPLES // raindrops make rings on puddles
+#define WET_SHEEN // rain leaves a soft wet shine on every surface the sky reaches: walls, roofs, leaves
 #define GLASS_REFRACTION // glass bends and tints what is behind it, with clean see-through panes
 #define GLASS_REFRACTION_STRENGTH 1.0 // [0.0 0.5 1.0 2.0 3.0]
 #define CAUSTICS // moving light patterns on the bottom of sunlit water

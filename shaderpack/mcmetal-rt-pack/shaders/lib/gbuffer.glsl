@@ -208,6 +208,11 @@ void main() {
     // rain wets what the sky reaches (full sky light only: the lightmap fades in diamonds, which drew straight
     // diagonal puddle edges near roofs): darker, richer colours; on flat ground, water gathers in patches
     float wet = wetness * smoothstep(0.93, 0.99, lmcoord.y) * float(mat == MAT_NONE);
+  #ifdef WET_SHEEN
+    // leaves get wet too (darker, a little shine); puddles stay on blocks
+    float wetAll = wetness * smoothstep(0.93, 0.99, lmcoord.y) * float(mat == MAT_NONE || mat == MAT_FOLIAGE);
+    if (mat == MAT_FOLIAGE) c.rgb = pow(c.rgb, vec3(1.0 + 0.3 * wetAll)) * (1.0 - 0.15 * wetAll);
+  #endif
     if (wet > 0.001) {
         vec2 w = playerPos.xz + cameraPosition.xz;
         // two noise layers add up to a narrow range around 0.5: stretch it, then keep the top ~quarter as puddles
@@ -261,6 +266,11 @@ void main() {
     outAlbedo = vec4(c.rgb, 1.0);
     // puddles are flat and mirror-smooth
     spec.r = max(spec.r, puddle);
+  #if defined TERRAIN && defined RAIN_PUDDLES && defined WET_SHEEN
+    // a film of water: a soft shine, kept under the 0.45 that starts traced reflections (the whole world gets it)
+    spec.r = max(spec.r, 0.4 * wetAll);
+    spec.g = max(spec.g, 0.02 * wetAll);
+  #endif
     outMaterial = vec4(float(mat) / 255.0, ao, puddle, spec.a);
     outPBR = vec4(octEncode(nm), spec.r, spec.g);
 #else
