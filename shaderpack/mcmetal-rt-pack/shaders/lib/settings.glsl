@@ -76,6 +76,9 @@
 const float wetnessHalfLife = 100.0;   // ticks for the ground to get wet once rain starts (Iris's default is 600)
 const float drynessHalfLife = 400.0;
 
+#define WATER_DEPTH_COLOR // shallow water is clear, deep water turns blue-green and dark (light absorbed by depth)
+#define WATER_DEPTH_COLOR_STRENGTH 1.0 // [0.5 1.0 1.5 2.0]
+#define WATER_FOAM // a thin moving line of foam where water meets the shore
 #define WAVE_HEIGHT 1.0 // [0.0 0.5 1.0 1.5 2.0 3.0]
 #define WAVE_SPEED 1.0 // [0.5 1.0 1.5 2.0]
 
@@ -130,6 +133,10 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef LIGHT_SHAFTS
 #endif
 #ifdef CAUSTICS
+#endif
+#ifdef WATER_DEPTH_COLOR
+#endif
+#ifdef WATER_FOAM
 #endif
 #ifdef GI_COARSE_RAYS
 #endif

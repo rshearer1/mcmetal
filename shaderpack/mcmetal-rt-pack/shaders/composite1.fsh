@@ -70,11 +70,42 @@ void main() {
         if (texture(colortex11, ruv).a > 0.5) col = texture(colortex0, ruv).rgb;
     }
 #endif
-    col += texture(colortex13, texcoord).rgb;
     float depth = texture(depthtex0, texcoord).r;
     vec4 v = gbufferProjectionInverse * vec4(vec3(texcoord, depth) * 2.0 - 1.0, 1.0);
     vec3 p = mat3(gbufferModelViewInverse) * (v.xyz / v.w);
     float dist = length(p);
+#if defined WATER_DEPTH_COLOR || defined WATER_FOAM
+    // looking into water from above: how much water the view goes through to the bottom
+    float wDepth1 = texture(depthtex1, texcoord).r;
+    float wPath = -1.0;
+    vec3 wBottom = p;
+    if (isEyeInWater == 0 && wm.r > 0.5 && wDepth1 > depth && wDepth1 < 1.0) {
+        vec4 vb = gbufferProjectionInverse * vec4(vec3(texcoord, wDepth1) * 2.0 - 1.0, 1.0);
+        wBottom = mat3(gbufferModelViewInverse) * (vb.xyz / vb.w);
+        wPath = length(wBottom) - dist;
+    }
+#endif
+#ifdef WATER_DEPTH_COLOR
+    // clear in the shallows, blue-green then dark in deep water: red goes first, then green (Beer-Lambert), and
+    // light scattered in the water itself takes its place (before the surface's own reflection is added)
+    if (wPath > 0.0) {
+        vec3 tr = exp(-vec3(0.42, 0.11, 0.075) * WATER_DEPTH_COLOR_STRENGTH * wPath);
+        vec3 inScatter = vec3(0.02, 0.10, 0.12) * (skyAmb * 0.6 + sunCol * 0.15 * max(sunDir.y, 0.0));
+        col = col * tr + inScatter * (1.0 - tr);
+    }
+#endif
+    col += texture(colortex13, texcoord).rgb;
+#ifdef WATER_FOAM
+    // foam where open water meets the shore or anything standing in it: a thin, moving, broken white line
+    if (wPath > 0.0 && wm.r > 0.58) {
+        float thick = wPath * clamp(-normalize(p).y, 0.05, 1.0);   // the water's depth there, roughly
+        vec2 fw = p.xz + cameraPosition.xz;
+        float pat = valueNoise(fw * 3.0 + frameTimeCounter * vec2(0.3, 0.2)) * 0.6 + valueNoise(fw * 7.0 - frameTimeCounter * 0.4) * 0.4;
+        float foam = smoothstep(0.35, 0.05, thick) * smoothstep(0.35, 0.7, pat + 0.35 * smoothstep(0.2, 0.0, thick));
+        vec3 foamLight = skyAmb * (wm.r - 0.6) / 0.4 + sunCol * 0.6 * smoothstep(-0.02, 0.15, sunDir.y) * (wm.r - 0.6) / 0.4 + 0.02;
+        col = mix(col, foamLight, foam * 0.8 * (1.0 - smoothstep(24.0, 48.0, dist)));
+    }
+#endif
 #ifdef WATER_REFLECT_PASS
     if (wm.r > 0.58 && isEyeInWater == 0) col += waterReflection(texcoord, dist);
 #endif
