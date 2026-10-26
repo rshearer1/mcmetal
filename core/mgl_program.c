@@ -56,10 +56,13 @@ static void dump_msl(const mgl_link_job *j)
             if (fclose(f) == 0 && ok)
                 rename(tmp, path);
         }
-        /* and the intersector version the Metal backend compiles instead (mgl_rtmsl.c), for the same check */
-        char *native = s != MGL_VERTEX ? mgl_rt_native_msl(j->msl[s], MGL_BUF_RT_FUNCS) : NULL;
-        if (native) {
-            snprintf(path, sizeof path, "%s/%s-%u.%s-native.metal", dir, j->key[0] ? j->key : "nokey", n, ext[s]);
+        /* and the intersector versions the Metal backend compiles instead (mgl_rtmsl.c), for the same check */
+        for (int pd = 0; pd < 2 && s != MGL_VERTEX; pd++) {
+            char *native = mgl_rt_native_msl(j->msl[s], MGL_BUF_RT_FUNCS, pd);
+            if (!native)
+                break;
+            snprintf(path, sizeof path, "%s/%s-%u.%s-native%s.metal", dir, j->key[0] ? j->key : "nokey", n, ext[s],
+                     pd ? "-primdata" : "");
             snprintf(tmp, sizeof tmp, "%s.part", path);
             f = fopen(tmp, "w");
             if (f) {

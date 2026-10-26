@@ -101,31 +101,38 @@ static void param_name(const char *a, const char *b, char *out, size_t cap)
     out[n] = 0;
 }
 
-static const char hit_fn[] =
+/* the record of the candidate triangle (12 words, mac/mgl_metal.m rt_decode): from the scene itself when its
+   triangles carry per-primitive data (words 0-6, one load), else instance -> section records -> triangle */
+static const char hit_head[] =
     "\n/* mcmetal: the alpha test and colour filter of mcm_trace, as an intersection function (mgl_rtmsl.c) */\n"
     "struct McmRayPayload { float3 transmit; const device McmInstances *ins; texture2d<float> atlas; };\n"
     "[[intersection(triangle, triangle_data, instancing)]]\n"
-    "bool mcm_any_hit(uint inst [[instance_id]], uint prim [[primitive_id]], float2 w [[barycentric_coord]],\n"
+    "bool mcm_any_hit(uint inst [[instance_id]], uint prim [[primitive_id]], float2 w [[barycentric_coord]],\n";
+static const char hit_rec_chain[] =
     "                 ray_data McmRayPayload &pl [[payload]]) {\n"
-    "  const device McmTris *t = pl.ins->mcm_tris[inst];\n"
-    "  uint b = prim * 12u, flags = t->w[b + 3u], cut = flags & 0xFFu;\n"
+    "  const device uint *r = pl.ins->mcm_tris[inst]->w + prim * 12u;\n";
+static const char hit_rec_prim[] =
+    "                 const device void *pdata [[primitive_data]], ray_data McmRayPayload &pl [[payload]]) {\n"
+    "  const device uint *r = (const device uint *)pdata;\n";
+static const char hit_body[] =
+    "  uint flags = r[3], cut = flags & 0xFFu;\n"
     "  bool tinted = (flags & 0x100u) != 0u;\n"
     "  if (!tinted && cut == 0u) return true;\n"
     "  float3 wv = float3(1.0 - w.x - w.y, w.x, w.y);\n"
-    "  float2 uv = (unpack_unorm2x16_to_float(t->w[b]) * wv.x + unpack_unorm2x16_to_float(t->w[b + 1u]) * wv.y\n"
-    "             + unpack_unorm2x16_to_float(t->w[b + 2u]) * wv.z) * (65535.0 / 32768.0);\n"
+    "  float2 uv = (unpack_unorm2x16_to_float(r[0]) * wv.x + unpack_unorm2x16_to_float(r[1]) * wv.y\n"
+    "             + unpack_unorm2x16_to_float(r[2]) * wv.z) * (65535.0 / 32768.0);\n"
     "  constexpr sampler s(coord::normalized, filter::nearest, address::repeat);\n"
     "  float4 tex = pl.atlas.sample(s, uv, level(0.0));\n"
     "  if (tinted) {\n"
-    "    float3 c = unpack_unorm4x8_to_float(t->w[b + 4u]).rgb * wv.x + unpack_unorm4x8_to_float(t->w[b + 5u]).rgb * wv.y\n"
-    "             + unpack_unorm4x8_to_float(t->w[b + 6u]).rgb * wv.z;\n"
+    "    float3 c = unpack_unorm4x8_to_float(r[4]).rgb * wv.x + unpack_unorm4x8_to_float(r[5]).rgb * wv.y\n"
+    "             + unpack_unorm4x8_to_float(r[6]).rgb * wv.z;\n"
     "    pl.transmit *= mix(float3(1.0), tex.rgb * c, tex.a);\n"
     "    return false;\n"
     "  }\n"
     "  return tex.a >= (cut == 3u ? 1.0 : 0.1);\n"
     "}\n\n";
 
-char *mgl_rt_native_msl(const char *msl, int table_index)
+char *mgl_rt_native_msl(const char *msl, int table_index, int primitive_data)
 {
     if (!msl || !strstr(msl, "float mcm_rq(") || !strstr(msl, "intersection_query<") || strstr(msl, "mcm_any_hit"))
         return NULL;
@@ -231,7 +238,9 @@ char *mgl_rt_native_msl(const char *msl, int table_index)
         line = prev;
     sbuf o = {0};
     put(&o, t, (size_t)(line - t));
-    puts_(&o, hit_fn);
+    puts_(&o, hit_head);
+    puts_(&o, primitive_data ? hit_rec_prim : hit_rec_chain);
+    puts_(&o, hit_body);
     put(&o, line, (size_t)(body - line));
     puts_(&o, nb);
     puts_(&o, bend);

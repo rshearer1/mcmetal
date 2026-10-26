@@ -111,6 +111,9 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
 
 /* mgl_rtmsl.c: the MSL of a fragment or compute stage that traces rays (mcm_rq), moved from Metal's
    intersection_query to its intersector with the intersection function "mcm_any_hit" (in the same source), which
-   must be linked into the pipeline and put at index 0 of a table bound at [[buffer(table_index)]]. NULL when the
-   MSL doesn't trace or isn't in the expected shape (keep the original then). Free the result. */
-char *mgl_rt_native_msl(const char *msl, int table_index);
+   must be linked into the pipeline and put at index 0 of a table bound at [[buffer(table_index)]]. primitive_data:
+   mcm_any_hit reads each triangle's record from the scene's per-primitive data (MGL_RT_PRIM_DATA, words 0-6 of the
+   record) instead of through the instance list. NULL when the MSL doesn't trace or isn't in the expected shape
+   (keep the original then). Free the result. */
+char *mgl_rt_native_msl(const char *msl, int table_index, int primitive_data);
+#define MGL_RT_PRIM_DATA_BYTES 28 /* record words 0-6: texture coordinates, flags, colours */

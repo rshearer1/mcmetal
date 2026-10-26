@@ -1999,11 +1999,26 @@ static int rt_native_on(int fragment)
     return 0;
 }
 
+/* MGL_RT_PRIM_DATA=0: mcm_any_hit reads the triangle record through the instance list, not from the scene's
+   per-primitive data (Apple measured 10-16% from per-primitive data in its own ray tracing app) */
+static int rt_prim_data_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("MGL_RT_PRIM_DATA");
+        on = !e || atoi(e) != 0;
+        if (@available(macOS 14.0, *)) {
+        } else
+            on = 0;
+    }
+    return on;
+}
+
 /* a stage that traces rays, on Metal's intersector (core/mgl_rtmsl.c); on any failure the query version stays */
 static id<MTLFunction> compile_tracing(const char *msl, NSString *what, char **err, id<MTLLibrary> *lib_out,
                                        id<MTLFunction> *hit_out, int fragment)
 {
-    char *native = rt_native_on(fragment) ? mgl_rt_native_msl(msl, MGL_BUF_RT_FUNCS) : NULL;
+    char *native = rt_native_on(fragment) ? mgl_rt_native_msl(msl, MGL_BUF_RT_FUNCS, rt_prim_data_on()) : NULL;
     if (native) {
         char *nerr = NULL;
         id<MTLFunction> hit = nil;
@@ -2012,8 +2027,8 @@ static id<MTLFunction> compile_tracing(const char *msl, NSString *what, char **e
         if (f && hit) {
             static int noted;
             if (!noted++)
-                mgl_log("ray tracing: shaders trace on Metal's intersector with an intersection function "
-                        "(MGL_RT_NATIVE=0: intersection queries)");
+                mgl_log("ray tracing: shaders trace on Metal's intersector with an intersection function%s "
+                        "(MGL_RT_NATIVE=0: intersection queries)", rt_prim_data_on() ? ", per-primitive data" : "");
             *hit_out = hit;
             return f;
         }
@@ -5277,7 +5292,10 @@ static void encode_decode(id<MTLComputeCommandEncoder> c, const mgl_rt_geom *g, 
     use_buffer(s.pos);
 }
 
-static MTLAccelerationStructureTriangleGeometryDescriptor *tri_geometry(mglb_buffer *pos, size_t first, int tris, BOOL opaque)
+/* rec: the section's triangle records, kept in the structure as per-primitive data for mcm_any_hit (cutout
+   triangles only: solid ones never call it) */
+static MTLAccelerationStructureTriangleGeometryDescriptor *tri_geometry(mglb_buffer *pos, size_t first, int tris, BOOL opaque,
+                                                                        mglb_buffer *rec)
 {
     MTLAccelerationStructureTriangleGeometryDescriptor *tg = [MTLAccelerationStructureTriangleGeometryDescriptor descriptor];
     tg.vertexBuffer = OBJ(id<MTLBuffer>, pos->mtl);
@@ -5286,6 +5304,13 @@ static MTLAccelerationStructureTriangleGeometryDescriptor *tri_geometry(mglb_buf
     tg.vertexFormat = MTLAttributeFormatFloat3;
     tg.triangleCount = (NSUInteger)tris;
     tg.opaque = opaque; /* NO: mcm_trace runs the alpha test on the hit */
+    if (!opaque && rec && rt_prim_data_on() && rt_native_on(0))
+        if (@available(macOS 14.0, *)) {
+            tg.primitiveDataBuffer = OBJ(id<MTLBuffer>, rec->mtl);
+            tg.primitiveDataBufferOffset = 0;
+            tg.primitiveDataStride = 48;
+            tg.primitiveDataElementSize = MGL_RT_PRIM_DATA_BYTES;
+        }
     return tg;
 }
 
@@ -5326,7 +5351,7 @@ static RtSection *section_new(const mgl_rt_geom *g, const rt_key *k, uint64_t h)
         return nil;
     MTLPrimitiveAccelerationStructureDescriptor *pd = [MTLPrimitiveAccelerationStructureDescriptor descriptor];
     /* placeholder buffer for the size query; the real one is set once decoded */
-    pd.geometryDescriptors = @[ tri_geometry(s.tris, 0, tris, NO) ];
+    pd.geometryDescriptors = @[ tri_geometry(s.tris, 0, tris, NO, s.tris) ];
     pd.usage = rt_upgrade_on() ? MTLAccelerationStructureUsagePreferFastBuild : MTLAccelerationStructureUsageNone;
     s.as = new_as(pd);
     if (!s.as)
@@ -5349,10 +5374,10 @@ static void section_upgrade(RtSection *s)
     MTLPrimitiveAccelerationStructureDescriptor *pd = [MTLPrimitiveAccelerationStructureDescriptor descriptor];
     int split = solid && cut;
     if (split) {
-        pd.geometryDescriptors = @[ tri_geometry(s.tris, 0, tris, YES), tri_geometry(s.tris, (size_t)tris, tris, NO) ];
+        pd.geometryDescriptors = @[ tri_geometry(s.tris, 0, tris, YES, s.tris), tri_geometry(s.tris, (size_t)tris, tris, NO, s.tris) ];
         rt_split++;
     } else {
-        pd.geometryDescriptors = @[ tri_geometry(s.tris, 0, tris, solid ? YES : NO) ];
+        pd.geometryDescriptors = @[ tri_geometry(s.tris, 0, tris, solid ? YES : NO, s.tris) ];
         rt_solid += solid ? 1 : 0;
     }
 #if defined(__MAC_26_0) && __MAC_OS_X_VERSION_MAX_ALLOWED >= __MAC_26_0
