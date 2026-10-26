@@ -32,6 +32,40 @@ vec3 bloom(vec2 uv) {
 }
 #endif
 
+#ifdef LENS_FLARE
+// a camera's lens flare, as SEUS has (off by default): soft coloured ghosts on the line from the sun through the
+// middle of the screen and a faint ring round it, only while the sun itself is in view and not hidden by anything
+vec3 lensFlare(vec2 uv) {
+    vec4 sc = gbufferProjection * vec4(sunPosition, 1.0);
+    if (sc.w <= 0.0 || dot(normalize(sunPosition), normalize(upPosition)) < 0.0) return vec3(0.0);
+    vec2 sp = sc.xy / sc.w * 0.5 + 0.5;
+    if (any(lessThan(sp, vec2(-0.2))) || any(greaterThan(sp, vec2(1.2)))) return vec3(0.0);
+    float vis = 0.0;   // how much of the sun is open sky (5 taps round its centre)
+    vec2 px = 6.0 / vec2(viewWidth, viewHeight);
+    for (int i = 0; i < 5; i++) {
+        vec2 o = i == 0 ? vec2(0.0) : vec2(i == 1 ? 1.0 : i == 2 ? -1.0 : 0.0, i == 3 ? 1.0 : i == 4 ? -1.0 : 0.0);
+        vec2 q = sp + o * px;
+        vis += (all(greaterThan(q, vec2(0.0))) && all(lessThan(q, vec2(1.0))) && texture(depthtex0, q).r >= 1.0) ? 0.2 : 0.0;
+    }
+    if (vis <= 0.0) return vec3(0.0);
+    float aspect = viewWidth / viewHeight;
+    vec2 axis = vec2(0.5) - sp;
+    vec3 f = vec3(0.0);
+    const vec4 ghosts[4] = vec4[4](vec4(0.35, 0.05, 0.9, 0.7), vec4(0.7, 0.03, 0.5, 1.0), vec4(1.15, 0.07, 1.0, 0.6), vec4(1.6, 0.12, 0.6, 0.9));
+    const vec3 tints[4] = vec3[4](vec3(1.0, 0.75, 0.45), vec3(0.5, 0.9, 1.0), vec3(1.0, 0.55, 0.8), vec3(0.6, 1.0, 0.6));
+    for (int i = 0; i < 4; i++) {
+        vec2 g = sp + axis * ghosts[i].x;
+        vec2 d = (uv - g) * vec2(aspect, 1.0);
+        float r = length(d) / ghosts[i].y;
+        f += tints[i] * smoothstep(1.0, 0.6, r) * (0.4 + 0.6 * r) * ghosts[i].z * 0.05;   // brighter towards the rim
+    }
+    float ring = length((uv - sp) * vec2(aspect, 1.0));
+    f += vec3(0.9, 0.8, 1.0) * exp(-pow((ring - 0.25) / 0.012, 2.0)) * 0.03;
+    float edge = 1.0 - smoothstep(0.35, 0.75, length(sp - 0.5));   // fades as the sun nears the edge of view
+    return f * vis * edge * (1.0 - rainStrength) * LENS_FLARE_STRENGTH;
+}
+#endif
+
 void main() {
     float exposure = texelFetch(colortex6, ivec2(0), 0).r * EXPOSURE;   // from composite3
     vec3 col = texture(colortex0, texcoord).rgb * exposure;
@@ -73,6 +107,9 @@ void main() {
 #ifdef BLOOM
     // a small share of the blurred picture: bright things spill light around them, dark ones barely change
     col = mix(col, bloom(texcoord) * exposure, 0.04 * BLOOM_STRENGTH);
+#endif
+#ifdef LENS_FLARE
+    col += lensFlare(texcoord);
 #endif
     col = acesFitted(col);
     col = styleGrade(col, texcoord);
