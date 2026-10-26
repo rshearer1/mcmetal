@@ -29,6 +29,33 @@ layout(location = 0) out vec4 outScatter;
 #if defined USE_RT && defined LIGHT_SHAFTS
 float mcm_trace(vec3 origin, vec3 dir, float tmax);
 #endif
+#if defined USE_RT && defined LIGHT_SHAFTS && defined FOG_GRID
+// fog grid: whether the sun reaches a bit of air is kept per half-block cell of the world round the camera (Iris
+// shader storage buffer 3, a grid that wraps round as the camera moves). Each cell is traced again only every
+// FOG_GRID_FRAMES frames, from a random point inside it, and keeps an average: soft beam edges, and the many view
+// rays that pass through the same air share one sun ray instead of tracing their own.
+#extension GL_ARB_shader_storage_buffer_object : enable
+layout(std430, binding = 3) buffer FogGrid { uint fgCells[]; };   // bits 0-15 which wrap of the grid (bit 15 set),
+const ivec3 FG_SIZE = ivec3(192, 96, 192);                          // 16-23 frame traced, 24-31 sun visibility
+float airSunVis(vec3 q, vec3 L) {
+    ivec3 c = ivec3(floor((q + cameraPosition) * 2.0));
+    ivec3 m = ((c % FG_SIZE) + FG_SIZE) % FG_SIZE;
+    ivec3 wrap = (c - m) / FG_SIZE;
+    uint key = uint(wrap.x & 31) | (uint(wrap.y & 31) << 5) | (uint(wrap.z & 31) << 10) | 0x8000u;
+    int idx = (m.y * FG_SIZE.z + m.z) * FG_SIZE.x + m.x;
+    uint e = fgCells[idx];
+    bool same = (e & 0xFFFFu) == key;
+    float vis = float(e >> 24) / 255.0;
+    if (same && ((uint(frameCounter) - (e >> 16)) & 255u) < uint(FOG_GRID_FRAMES)) return vis;
+    vec3 jit = vec3(hash12b(vec2(idx & 4095, frameCounter & 1023)), hash12b(vec2(frameCounter & 1023, idx >> 12)),
+                    hash12b(vec2(idx % 977, (frameCounter + 7) & 1023)));
+    vec3 o = (vec3(c) + jit) * 0.5 - cameraPosition;
+    float v = mcm_trace(o, L, 128.0) < 0.0 ? 1.0 : 0.0;
+    vis = same ? mix(vis, v, 0.3) : v;
+    fgCells[idx] = key | ((uint(frameCounter) & 255u) << 16) | (uint(vis * 255.0 + 0.5) << 24);
+    return vis;
+}
+#endif
 #if defined USE_RT && defined LIGHT_SHAFTS && defined USE_LIGHTS && defined LAMP_FOG
     #include "/lib/lights.glsl"
     #define LAMP_FOG_PASS
@@ -108,7 +135,12 @@ void main() {
             // under water the light comes down in the waves' focused lines: shafts even with nothing in the way
             if (underWater) through *= 3.5 * caustics(dir * t + cameraPosition, lightDir, frameTimeCounter);
   #endif
+  #ifdef FOG_GRID
+            float sv = airSunVis(dir * t, lightDir);
+            lit += through * sv; litMist += through * md * sv;
+  #else
             if (mcm_trace(dir * t, lightDir, 128.0) < 0.0) { lit += through; litMist += through * md; }   // (what's further off barely shades the air you see)
+  #endif
         }
         // a beam in shade (sun through a roof hole or a gap in the trees) stands out the way it does in real dusty
         // air: the less of the view ray is lit, the more each lit step counts. Open air (all lit) stays clear
