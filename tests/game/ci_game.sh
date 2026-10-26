@@ -428,7 +428,7 @@ dh_phase() { # dh / dh-shaders / dh-PACK: Distant Horizons at noon, without a pa
     IFS='|' read -r url sha <<< "$DH"
     python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import bare_mc; bare_mc.fetch(*sys.argv[2:])' \
         "$SRC/tools" "$url" "$G/mods/distanthorizons.jar" "$sha" || { echo "could not download Distant Horizons"; return; }
-    scene noon clear dh
+    scene "${DH_TIME:-noon}" clear dh   # DH_TIME=12500: a low evening sun (long shadows)
     # LODs for the test world, built ahead (tests/game/dh-lods.tgz: DH 3.3.3 at radius 128 on real OpenGL, ~12 min),
     # so the phase shows distant terrain to the horizon from its first frame; DH would take far longer than a CI
     # phase to build them. GAME_DH_COLD=1 starts without them (LOD build hitches, upload paths).

@@ -69,6 +69,32 @@ vec3 filteredShadow(vec2 uv, vec3 n) {
 #ifdef DISTANT_HORIZONS
 uniform sampler2D dhDepthTex0;
 uniform mat4 dhProjectionInverse;
+  #ifdef DH_SHADOWS
+uniform mat4 dhProjection;
+// shadows on far LOD terrain (it isn't in the ray-traced scene): a short march towards the sun across DH's own
+// depth on screen, with steps growing with distance. Something of DH's in front of the march point, and not much
+// thicker than a hill, means the sun is blocked there: mountains and far forests cast long evening shadows
+float dhSunVisibility(vec3 p, vec3 L) {
+    float dist = length(p);
+    float t = 1.0 + 0.01 * dist;
+    float jit = ign(gl_FragCoord.xy, frameCounter);
+    for (int i = 0; i < DH_SHADOW_STEPS; i++) {
+        t *= 1.3 + 0.1 * jit;
+        vec3 q = p + L * t;
+        vec4 vq = gbufferModelView * vec4(q, 1.0);
+        vec4 c = dhProjection * vq;
+        if (c.w <= 0.0) break;
+        vec2 uv = c.xy / c.w * 0.5 + 0.5;
+        if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) break;
+        float d = texture(dhDepthTex0, uv).r;
+        if (d >= 1.0) continue;
+        vec4 vs = dhProjectionInverse * vec4(vec3(uv, d) * 2.0 - 1.0, 1.0);
+        float sceneZ = -vs.z / vs.w, rayZ = -vq.z;
+        if (rayZ > sceneZ + 0.5 + 0.002 * rayZ && rayZ < sceneZ + max(16.0, 0.08 * rayZ)) return 0.0;
+    }
+    return 1.0;
+}
+  #endif
 #endif
 
 in vec2 texcoord;
@@ -200,8 +226,12 @@ void main() {
         vec4 nl = texture(colortex1, texcoord);
         vec3 a = toLinear(albedo.rgb);
         // (sky light x1.3: stands in for the bounce light the real chunks get from the GI, so the seam doesn't show)
+        float dsh = smoothstep(0.85, 0.97, nl.w);
+  #ifdef DH_SHADOWS
+        if (dsh > 0.0 && dot(octDecode(nl.xy), lightDir) > 0.0 && hasSkylight) dsh *= dhSunVisibility(p, lightDir);
+  #endif
         col = a * surfaceLight(p, octDecode(nl.xy), nl.zw, 1.0, MAT_NONE, lightDir, sunCol, skyAmb * 1.3,
-                               vec3(smoothstep(0.85, 0.97, nl.w))) + a * m.a * (4.0 * EMISSIVE_STRENGTH);
+                               vec3(dsh)) + a * m.a * (4.0 * EMISSIVE_STRENGTH);
     } else
 #endif
     if (depth >= 1.0) {

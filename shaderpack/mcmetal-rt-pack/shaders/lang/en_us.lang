@@ -258,3 +258,6 @@ option.REFLECTION_DENOISE.comment=Glossy traced reflections are averaged over fr
 option.FOG_GRID=Fog Grid
 option.FOG_GRID.comment=Light shafts trace whether the sun reaches each half-block of air once and share it, instead of every pixel tracing its own. Faster shafts with soft edges. Uses 14 MB.
 option.FOG_GRID_FRAMES=Fog Grid Refresh
+option.DH_SHADOWS=Distant Horizons Shadows
+option.DH_SHADOWS.comment=Far Distant Horizons terrain gets sun shadows, so hills and forests in the distance cast long evening shadows. Worked out from what is on screen, so a shadow from something off screen is missed.
+option.DH_SHADOW_STEPS=DH Shadow Steps
