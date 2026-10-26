@@ -236,7 +236,11 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #endif
 #ifdef REFLECTION_DENOISE
 #endif
-#if defined WORLD_CACHE && !(defined USE_RT && defined LIGHT_CACHE && defined RT_GI)
+#ifndef IRIS_FEATURE_SSBO   // these keep their history in Iris shader storage buffers
+    #undef LIGHT_RESTIR
+    #undef REFLECTION_DENOISE
+#endif
+#if defined WORLD_CACHE && !(defined USE_RT && defined LIGHT_CACHE && defined RT_GI && defined IRIS_FEATURE_SSBO)
     #undef WORLD_CACHE   // it extends the light cache
 #endif
 #ifdef SHADOW_CHECKERBOARD
