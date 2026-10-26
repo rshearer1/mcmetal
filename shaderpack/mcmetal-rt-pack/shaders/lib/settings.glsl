@@ -40,6 +40,8 @@
     #define USE_LIGHTS
 #endif
 #define RT_GI_DISTANCE 32.0 // [8.0 16.0 32.0 64.0]
+//#define GI_SHORT_RAYS // faster: bounce-light rays stop after a few blocks and fall back to the sky light Minecraft gives
+#define GI_SHORT_DISTANCE 10.0 // [6.0 8.0 10.0 12.0 16.0]
 #define RT_AO // ray-traced ambient occlusion (replaces Minecraft's corner shading)
 #define RT_AO_RADIUS 1.5 // [0.75 1.0 1.5 2.0 3.0]
 #define RT_AO_FRAMES 24.0 // [4.0 8.0 16.0 24.0 32.0 48.0]

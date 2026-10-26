@@ -129,7 +129,18 @@ void main() {
     vec3 o = mat == MAT_FOLIAGE ? p + d * 0.05 : p + n * 0.02;
     float hit;
   #ifdef RT_GI
+  #ifdef GI_SHORT_RAYS
+    // short rays (most bounce light comes from within a few blocks; long rays cost the most): a ray that leaves
+    // the short range without a hit takes the sky, but only as much as Minecraft's sky light says reaches here,
+    // so a big hall doesn't fill with sky light through walls the ray never got to
+    gi = traceRadiance(o, d, GI_SHORT_DISTANCE, lightDir, sunCol, skyAmb, sunDir, 1.0, hit);
+    if (hit < 0.0) {
+        float skyLM = texture(colortex1, texcoord).w;
+        gi *= skyLM * skyLM;
+    }
+  #else
     gi = traceRadiance(o, d, RT_GI_DISTANCE, lightDir, sunCol, skyAmb, sunDir, 1.0, hit);
+  #endif
     // skylight through openings: less saturated than the raw sky, so rooms aren't tinted slate-blue (the eye
     // white-balances indoors); Sky Light scales it like it scales the sky ambient
     if (hit < 0.0) gi = mix(vec3(luma(gi)), gi, SKY_GI_SATURATION) * SKY_LIGHT_STRENGTH;
