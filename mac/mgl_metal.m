@@ -1524,6 +1524,7 @@ struct mglb_program {
     void *cspec;     /* NSMutableDictionary: vertex format -> compute pipeline made for it (NSNull while compiling) */
     uint32_t id;
     int discards;    /* the fragment stage can discard (so a full-screen draw may not cover every pixel) */
+    int vertex_writes; /* the vertex stage writes memory (storage buffers or images): never run it twice */
     void *ihit;      /* mcm_trace's intersection function (MTLFunction) when the fragment or compute stage traces on
                         Metal's intersector (core/mgl_rtmsl.c), else NULL */
     char label[112]; /* "GL program N [app name]", for error reports and MGL_*_PROGRAMS */
@@ -2138,6 +2139,15 @@ mglb_program *mglb_program_new(const char *msl_vertex, const char *msl_fragment,
         p->ffn = f ? retain_obj(f) : NULL;
         p->ihit = hit ? retain_obj(hit) : NULL;
         p->discards = msl_fragment && strstr(msl_fragment, "discard_fragment");
+        {
+            const char *m = strstr(msl_vertex, " main0(");
+            const char *end = m ? strchr(m, '\n') : NULL;
+            for (const char *q = m; q && q < end && !p->vertex_writes; q++)
+                p->vertex_writes = (!strncmp(q, "device ", 7) && (q - m < 6 || strncmp(q - 6, "const ", 6))) ||
+                                   !strncmp(q, "access::write", 13) || !strncmp(q, "access::read_write", 18);
+            if (!m)
+                p->vertex_writes = 1;
+        }
         if (vlib) {
             p->vlib = retain_obj(vlib);
             p->vscaled = retain_obj([NSMutableDictionary dictionary]);
@@ -3334,12 +3344,18 @@ static id<MTLRenderCommandEncoder> pass_for(const mgl_target *t)
     return begin_pass(t, 0, NULL, 0, 0);
 }
 
-/* MGL_SMART_LOAD=1 (off by default: a draw of six vertices need not cover the target, gl_smoke test 1 draws
-   half the screen after a clear and loses the clear): a new pass whose first draw is a full-screen triangle or quad that overwrites a colour
-   attachment (no blending, all channels written, no discard, no scissor) doesn't load that attachment's old
-   contents from memory first. Shader packs' composite passes are made of these; on Apple GPUs each load reads
-   the whole image into tile memory. */
+/* MGL_SMART_LOAD (on; =0 off): a new pass whose first draw is a full-screen triangle or quad that overwrites a
+   colour attachment (no blending, all channels written, no discard, no scissor) doesn't load that attachment's old
+   contents from memory first. Shader packs' composite passes are made of these; on Apple GPUs each load reads the
+   whole image into tile memory (Apple: load and store actions are most of a renderer's bandwidth).
+   Six vertices need not cover the target (gl_smoke test 1 draws half the screen; a pack can shrink its quad in the
+   vertex shader for a bloom tile), so we check, on the GPU: smart_load_covers runs the draw's own vertex stage into
+   a depth-only scratch target with the depth test on (Less, depth writes on, so a pixel drawn again at the same or
+   a greater depth isn't counted twice) and counts the pixels it reaches. Only a
+   draw seen to reach every pixel skips the load; it is checked again every 120 frames, and a program seen once
+   not to is never trusted again. */
 static unsigned opt_smart_load = ~0u;
+static int smart_load_covers(const mgl_draw *d);
 static id<MTLRenderCommandEncoder> pass_for_draw(const mgl_draw *d)
 {
     gs_flush();
@@ -3347,8 +3363,10 @@ static id<MTLRenderCommandEncoder> pass_for_draw(const mgl_draw *d)
     target_dirty(t);
     if (renc && same_target(t, &renc_target))
         return renc;
-    if (opt_smart_load == ~0u)
-        opt_smart_load = opt("MGL_SMART_LOAD");
+    if (opt_smart_load == ~0u) {
+        const char *e = getenv("MGL_SMART_LOAD");
+        opt_smart_load = !e || !*e || *e != '0';
+    }
     unsigned overwrite = 0;
     if (opt_smart_load && d->instances <= 1 && d->count <= 6 && !d->multi_n && !d->program->discards &&
         (!d->depth_test || !t->depth) &&
@@ -3359,6 +3377,8 @@ static id<MTLRenderCommandEncoder> pass_for_draw(const mgl_draw *d)
         for (int i = 0; i < MGL_MAX_ATTACHMENTS; i++)
             if (t->tex[i] && !d->blend[i].enabled && (d->blend[i].color_mask & 15) == 15)
                 overwrite |= 1u << i;
+    if (overwrite && !smart_load_covers(d))
+        overwrite = 0;
     pass_dontcare = overwrite;
     id<MTLRenderCommandEncoder> e = begin_pass(t, 0, NULL, 0, 0);
     pass_dontcare = 0;
@@ -4123,6 +4143,224 @@ static int apply_base_vertex(id<MTLRenderCommandEncoder> e, const mgl_draw *d, l
         if (rs_valid)
             rs_voff[at] = off;
     }
+    return 0;
+}
+
+/* ---- MGL_SMART_LOAD's coverage check (see pass_for_draw) ---- */
+#define SL_SLOTS 256 /* draws checked at once (each an 8-byte visibility counter) */
+typedef struct sl_entry { uint64_t key; int state; unsigned long frame; uint32_t program; } sl_entry; /* 1 checking, 2 covers */
+static sl_entry sl_tab[1024];
+static pthread_mutex_t sl_lock = PTHREAD_MUTEX_INITIALIZER;
+static uint32_t sl_banned[64]; /* programs seen not to cover their target (ids; a small set) */
+static int sl_nbanned;
+static id<MTLBuffer> sl_vis;
+static unsigned sl_next_slot;
+static unsigned long sl_frame; /* advanced at each present */
+static unsigned long sl_checks, sl_partial;
+static NSMutableDictionary *sl_pipes; /* program id + vertex layout -> depth-only pipeline */
+static NSMutableDictionary *sl_depths; /* "WxH" -> memoryless Depth32Float texture */
+
+static uint64_t sl_hash(uint64_t h, uint64_t v)
+{
+    h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2);
+    return h * 0xFF51AFD7ED558CCDull;
+}
+
+static int sl_is_banned(uint32_t id)
+{
+    for (int i = 0; i < sl_nbanned; i++)
+        if (sl_banned[i] == id)
+            return 1;
+    return 0;
+}
+
+static id<MTLRenderPipelineState> sl_pipeline(const mgl_draw *d, NSData *layout)
+{
+    if (!sl_pipes)
+        sl_pipes = [NSMutableDictionary dictionary];
+    NSMutableData *key = [NSMutableData dataWithBytes:&d->program->id length:sizeof d->program->id];
+    [key appendData:layout];
+    id ps = sl_pipes[key];
+    if (ps)
+        return ps == [NSNull null] ? nil : ps;
+    MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
+    pd.vertexFunction = OBJ(id<MTLFunction>, d->program->vfn);
+    pd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+    MTLVertexDescriptor *vd = [MTLVertexDescriptor vertexDescriptor];
+    for (int i = 0; i < MGL_MAX_VERTEX_ATTRIBS; i++)
+        if (d->attrs[i].enabled) {
+            vd.attributes[i].format = vertex_format(&d->attrs[i]);
+            vd.attributes[i].offset = (NSUInteger)d->attrs[i].offset;
+            vd.attributes[i].bufferIndex = (NSUInteger)(MGL_BUF_VERTEX_BASE + d->attrs[i].buffer);
+        }
+    for (int i = 0; i < d->num_vbufs; i++) {
+        MTLVertexBufferLayoutDescriptor *l = vd.layouts[MGL_BUF_VERTEX_BASE + i];
+        if (d->vbufs[i].stride == 0) {
+            l.stepFunction = MTLVertexStepFunctionPerInstance;
+            l.stepRate = 0x7FFFFFFF;
+            l.stride = 16;
+        } else if (d->vbufs[i].divisor) {
+            l.stepFunction = MTLVertexStepFunctionPerInstance;
+            l.stepRate = (NSUInteger)d->vbufs[i].divisor;
+            l.stride = (NSUInteger)d->vbufs[i].stride;
+        } else {
+            l.stepFunction = MTLVertexStepFunctionPerVertex;
+            l.stride = (NSUInteger)d->vbufs[i].stride;
+        }
+    }
+    pd.vertexDescriptor = vd;
+    NSError *e = nil;
+    ps = [dev newRenderPipelineStateWithDescriptor:pd error:&e];
+    if (!ps)
+        mgl_log("smart load: no coverage check for %s (%s); its passes keep loading", d->program->label,
+                e.localizedDescription.UTF8String);
+    sl_pipes[key] = ps ?: [NSNull null];
+    return ps;
+}
+
+/* 1: this draw reached every pixel of its target when last checked (within 120 frames); else 0, after encoding a
+   check when none is pending */
+static int smart_load_covers(const mgl_draw *d)
+{
+    const mgl_target *t = &d->target;
+    mglb_program *p = d->program;
+    if (p->vertex_writes || p->vlib || !p->vfn || t->width <= 0 || t->height <= 0)
+        return 0;
+    /* what decides where the vertices land, uniforms aside (the recheck covers those) */
+    uint64_t k = sl_hash(0x243F6A8885A308D3ull, p->id);
+    k = sl_hash(k, (uint64_t)d->primitive << 32 | (uint32_t)d->count);
+    k = sl_hash(k, (uint64_t)(uint32_t)d->first << 32 | (uint32_t)d->base_vertex);
+    k = sl_hash(k, (uint64_t)(uint32_t)t->width << 32 | (uint32_t)t->height);
+    for (int i = 0; i < 4; i++)
+        k = sl_hash(k, (uint64_t)(uint32_t)d->viewport[i]);
+    k = sl_hash(k, (uint64_t)d->cull << 8 | (uint64_t)(d->cull_face & 0xFFFF) << 16 | (uint64_t)(d->front_face & 0xFFFF) << 32);
+    for (int i = 0; i < d->num_vbufs; i++) {
+        const mglb_buffer *b = d->vbufs[i].buf;
+        k = sl_hash(k, (uintptr_t)b);
+        k = sl_hash(k, b ? b->written : 0);
+        k = sl_hash(k, d->vbufs[i].offset);
+    }
+    if (d->index_buf) {
+        k = sl_hash(k, (uintptr_t)d->index_buf);
+        k = sl_hash(k, d->index_buf->written);
+        k = sl_hash(k, d->index_offset);
+    }
+    pthread_mutex_lock(&sl_lock);
+    int banned = sl_is_banned(p->id);
+    sl_entry *en = &sl_tab[k % (sizeof sl_tab / sizeof sl_tab[0])];
+    int known = !banned && en->key == k;
+    int covers = known && en->state == 2 && sl_frame - en->frame < 120;
+    int checking = known && en->state == 1;
+    pthread_mutex_unlock(&sl_lock);
+    if (banned || covers || checking)
+        return covers;
+
+    /* the check: the draw's vertex stage into a memoryless depth target, depth test on, counting samples */
+    NSMutableData *layout = [NSMutableData data];
+    for (int i = 0; i < MGL_MAX_VERTEX_ATTRIBS; i++)
+        if (d->attrs[i].enabled) {
+            int32_t a[4] = {i, (int32_t)vertex_format(&d->attrs[i]), (int32_t)d->attrs[i].offset, d->attrs[i].buffer};
+            [layout appendBytes:a length:sizeof a];
+        }
+    for (int i = 0; i < d->num_vbufs; i++) {
+        int32_t l[2] = {(int32_t)d->vbufs[i].stride, (int32_t)d->vbufs[i].divisor};
+        [layout appendBytes:l length:sizeof l];
+    }
+    id<MTLRenderPipelineState> ps = sl_pipeline(d, layout);
+    if (!ps)
+        return 0;
+    if (!sl_vis)
+        sl_vis = [dev newBufferWithLength:8 * SL_SLOTS options:MTLResourceStorageModeShared];
+    if (!sl_depths)
+        sl_depths = [NSMutableDictionary dictionary];
+    NSString *dk = [NSString stringWithFormat:@"%dx%d", t->width, t->height];
+    id<MTLTexture> depth = sl_depths[dk];
+    if (!depth) {
+        MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+                                                                                      width:(NSUInteger)t->width
+                                                                                     height:(NSUInteger)t->height
+                                                                                  mipmapped:NO];
+        td.storageMode = MTLStorageModeMemoryless;
+        td.usage = MTLTextureUsageRenderTarget;
+        depth = [dev newTextureWithDescriptor:td];
+        if (!depth)
+            return 0;
+        sl_depths[dk] = depth;
+    }
+    static id<MTLDepthStencilState> ds;
+    if (!ds) {
+        MTLDepthStencilDescriptor *dd = [[MTLDepthStencilDescriptor alloc] init];
+        dd.depthCompareFunction = MTLCompareFunctionLess;
+        dd.depthWriteEnabled = YES;
+        ds = [dev newDepthStencilStateWithDescriptor:dd];
+    }
+    unsigned slot = sl_next_slot++ % SL_SLOTS;
+    ((uint64_t *)sl_vis.contents)[slot] = 0;
+    end_encoders();
+    MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
+    rp.depthAttachment.texture = depth;
+    rp.depthAttachment.loadAction = MTLLoadActionClear;
+    rp.depthAttachment.clearDepth = 1.0;
+    rp.depthAttachment.storeAction = MTLStoreActionDontCare;
+    rp.visibilityResultBuffer = sl_vis;
+    rp.renderTargetWidth = (NSUInteger)t->width;
+    rp.renderTargetHeight = (NSUInteger)t->height;
+    id<MTLCommandBuffer> cb = current_cb();
+    id<MTLRenderCommandEncoder> e = [cb renderCommandEncoderWithDescriptor:rp];
+    [e setLabel:@"smart load coverage check"];
+    [e setRenderPipelineState:ps];
+    [e setDepthStencilState:ds];
+    [e setViewport:(MTLViewport){d->viewport[0], d->viewport[1], d->viewport[2], d->viewport[3], 0, 1}];
+    [e setCullMode:!d->cull ? MTLCullModeNone : d->cull_face == GL_FRONT ? MTLCullModeFront : MTLCullModeBack];
+    [e setFrontFacingWinding:d->front_face == GL_CW ? MTLWindingCounterClockwise : MTLWindingClockwise];
+    [e setVisibilityResultMode:MTLVisibilityResultModeCounting offset:slot * 8];
+    for (int i = 0; i < d->num_vbufs; i++) {
+        [e setVertexBuffer:draw_buf(d->vbufs[i].buf) offset:d->vbufs[i].offset atIndex:(NSUInteger)(MGL_BUF_VERTEX_BASE + i)];
+        use_buffer(d->vbufs[i].buf);
+    }
+    bind_stage_resources(e, nil, d, 0);
+    if (d->uses_scene)
+        bind_scene(e, nil, nil);
+    int ok;
+    MTLPrimitiveType pt = prim(d->primitive, &ok);
+    if (d->index_buf) {
+        int bv = apply_base_vertex(e, d, d->base_vertex);
+        [e drawIndexedPrimitives:pt indexCount:(NSUInteger)d->count
+                       indexType:d->index_type == GL_UNSIGNED_SHORT ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32
+                     indexBuffer:draw_buf(d->index_buf) indexBufferOffset:d->index_offset
+                   instanceCount:1 baseVertex:bv baseInstance:0];
+        use_buffer(d->index_buf);
+    } else
+        [e drawPrimitives:pt vertexStart:(NSUInteger)d->first vertexCount:(NSUInteger)d->count instanceCount:1];
+    [e endEncoding];
+    rs_reset();
+    pthread_mutex_lock(&sl_lock);
+    *en = (sl_entry){k, 1, sl_frame, p->id};
+    sl_checks++;
+    pthread_mutex_unlock(&sl_lock);
+    uint64_t need = (uint64_t)t->width * (uint64_t)t->height;
+    id<MTLBuffer> vis = sl_vis;
+    uint32_t pid = p->id;
+    NSString *label = @(p->label);
+    [cb addCompletedHandler:^(id<MTLCommandBuffer> done) {
+      uint64_t got = ((const uint64_t *)vis.contents)[slot];
+      int full = done.status == MTLCommandBufferStatusCompleted && got >= need;
+      pthread_mutex_lock(&sl_lock);
+      if (en->key == k && en->state == 1) {
+          en->state = full ? 2 : 0;
+          en->frame = sl_frame;
+      }
+      if (!full && done.status == MTLCommandBufferStatusCompleted && !sl_is_banned(pid)) {
+          if (sl_nbanned < (int)(sizeof sl_banned / sizeof sl_banned[0]))
+              sl_banned[sl_nbanned++] = pid;
+          sl_partial++;
+          pthread_mutex_unlock(&sl_lock);
+          mgl_log("smart load: %s's full-screen draw reaches %llu of %llu pixels; its passes keep loading",
+                  label.UTF8String, (unsigned long long)got, (unsigned long long)need);
+          return;
+      }
+      pthread_mutex_unlock(&sl_lock);
+    }];
     return 0;
 }
 
@@ -6937,6 +7175,9 @@ static void profile_frame(unsigned long draws)
             f * 1000.0 / ((double)(t - prof.start_ns) * 1e-6), ms, (double)prof.wait_ns * 1e-6 / f,
             (double)atomic_load(&prof_gpu_ns) * 1e-6 / f, prof.draws / f, prof.passes / f, prof.reopened / f, prof.dontcare / f,
             prof.blits / f, prof.computes / f, prof.cbs / f, prof.finishes / f, 100.0 * prof.skipped_presents / f);
+    if (sl_checks)
+        mgl_log("profile: smart load: %lu coverage checks, %lu draws found not to cover their target",
+                sl_checks, sl_partial);
     if (prof.sh_draws)
         mgl_log("profile: shadow-sized viewports (without geometry shaders) %.0f draws, %.0fk triangles per frame",
                 prof.sh_draws / f, prof.sh_tris / f * 1e-3);
@@ -7407,6 +7648,9 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
         present_stats_report();
     fg_timing_report();
     frame_draws = frame_sections = frame_dispatches = frame_probes = 0;
+    pthread_mutex_lock(&sl_lock); /* MGL_SMART_LOAD: coverage checks are good for 120 frames */
+    sl_frame++;
+    pthread_mutex_unlock(&sl_lock);
     pipe_frame_end();
     /* keep at most ~2 frames in flight: wait for the frame before last (by frame, not command buffer, since an
        interpolated frame commits several) */
