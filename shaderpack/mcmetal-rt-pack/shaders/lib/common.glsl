@@ -41,6 +41,14 @@ bool rayRest(vec2 fragCoord, int rate, int frame) {
     return rate == 4 ? ((q.x & 1) + 2 * (q.y & 1)) != (frame & 3) : ((q.x + q.y + frame) & 1) == 1;
 }
 
+// where ign() should look for a pass that traces 1 in `rate` pixels (rayRest): on just the pixels that trace, the
+// plain noise lines up into smooth stripes (neighbours there differ by ~0.1), which showed as wave-like bands in
+// soft shadows and light shafts. Counting along that lattice keeps the noise as even as on the full screen; the
+// pixels sharing a lattice spot trace on different frames, so they still get different values.
+vec2 rayPixel(vec2 fragCoord, int rate) {
+    return rate == 4 ? floor(fragCoord * 0.5) : vec2(floor(fragCoord.x * 0.5), floor(fragCoord.y));
+}
+
 // per-pixel noise that moves every frame (Jimenez 2014, interleaved gradient noise)
 float ign(vec2 pixel, int frame) {
     pixel += 5.588238 * float(frame & 63);
