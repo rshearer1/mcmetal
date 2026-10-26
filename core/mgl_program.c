@@ -56,6 +56,19 @@ static void dump_msl(const mgl_link_job *j)
             if (fclose(f) == 0 && ok)
                 rename(tmp, path);
         }
+        /* and the intersector version the Metal backend compiles instead (mgl_rtmsl.c), for the same check */
+        char *native = s != MGL_VERTEX ? mgl_rt_native_msl(j->msl[s], MGL_BUF_RT_FUNCS) : NULL;
+        if (native) {
+            snprintf(path, sizeof path, "%s/%s-%u.%s-native.metal", dir, j->key[0] ? j->key : "nokey", n, ext[s]);
+            snprintf(tmp, sizeof tmp, "%s.part", path);
+            f = fopen(tmp, "w");
+            if (f) {
+                int ok = fputs(native, f) >= 0;
+                if (fclose(f) == 0 && ok)
+                    rename(tmp, path);
+            }
+            free(native);
+        }
     }
 }
 
@@ -339,28 +352,43 @@ static void add_ray_tracing(mgl_shader *s)
         "  uint cut = t.w[b + 3u] & 0xFFu;\n"
         "  return cut == 0u || textureLod(mcm_atlas, mcm_uv(t, b, w), 0.0).a >= (cut == 3u ? 1.0 : 0.1);\n"
         "}\n"
-        "#define MCM_QUERY(q, flags, o, d, tmax) \\\n"
-        "  rayQueryInitializeEXT(q, mcm_scene, flags, 0x01, o, 0.001, d, tmax); \\\n"
-        "  while (rayQueryProceedEXT(q)) { \\\n"
-        "    McmTris t_ = mcm_tris[rayQueryGetIntersectionInstanceIdEXT(q, false)]; \\\n"
-        "    uint b_ = uint(rayQueryGetIntersectionPrimitiveIndexEXT(q, false)) * 12u; \\\n"
-        "    if (mcm_opaque_at(t_, b_, rayQueryGetIntersectionBarycentricsEXT(q, false))) \\\n"
-        "      rayQueryConfirmIntersectionEXT(q); \\\n"
-        "  }\n"
-        "#define MCM_MISSED(q) (rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionNoneEXT)\n"
-        "float mcm_trace(vec3 origin, vec3 dir, float tmax) {\n"
+        /* Every trace goes through mcm_rq, so a shader holds one ray query (Apple: create as few as possible and
+           reuse them). kind 0: any hit, 1: closest hit, 2 and 3: the same with every triangle solid (coarse),
+           4: any hit through solid, cutout and translucent terrain, translucent faces filtering transmit and never
+           ending the walk. On Metal, mgl_rt_native_msl swaps this body for Metal's intersector, which runs the
+           same tests in mcm_any_hit (an intersection function) instead of in this loop. */
+        "float mcm_rq(vec3 o, vec3 d, float tmax, uint kind, out uint inst, out uint prim, out vec2 w,\n"
+        "             inout vec3 transmit) {\n"
         "  rayQueryEXT mcm_q;\n"
-        "  MCM_QUERY(mcm_q, gl_RayFlagsTerminateOnFirstHitEXT, origin, dir, tmax)\n"
-        "  return MCM_MISSED(mcm_q) ? -1.0 : rayQueryGetIntersectionTEXT(mcm_q, true);\n"
+        "  uint flags = (kind == 1u || kind == 3u ? gl_RayFlagsNoneEXT : gl_RayFlagsTerminateOnFirstHitEXT)\n"
+        "             | (kind == 2u || kind == 3u ? gl_RayFlagsOpaqueEXT : gl_RayFlagsNoneEXT);\n"
+        "  rayQueryInitializeEXT(mcm_q, mcm_scene, flags, kind == 4u ? 0x03u : 0x01u, o, 0.001, d, tmax);\n"
+        "  while (rayQueryProceedEXT(mcm_q)) {\n"
+        "    McmTris t = mcm_tris[rayQueryGetIntersectionInstanceIdEXT(mcm_q, false)];\n"
+        "    uint b = uint(rayQueryGetIntersectionPrimitiveIndexEXT(mcm_q, false)) * 12u;\n"
+        "    vec2 cw = rayQueryGetIntersectionBarycentricsEXT(mcm_q, false);\n"
+        "    if ((t.w[b + 3u] & 0x100u) != 0u) {\n"
+        "      vec4 tex = textureLod(mcm_atlas, mcm_uv(t, b, cw), 0.0);\n"
+        "      transmit *= mix(vec3(1.0), tex.rgb * mcm_colour(t, b, cw).rgb, tex.a);\n"
+        "    } else if (mcm_opaque_at(t, b, cw))\n"
+        "      rayQueryConfirmIntersectionEXT(mcm_q);\n"
+        "  }\n"
+        "  inst = 0u; prim = 0u; w = vec2(0.0);\n"
+        "  if (rayQueryGetIntersectionTypeEXT(mcm_q, true) == gl_RayQueryCommittedIntersectionNoneEXT) return -1.0;\n"
+        "  inst = uint(rayQueryGetIntersectionInstanceIdEXT(mcm_q, true));\n"
+        "  prim = uint(rayQueryGetIntersectionPrimitiveIndexEXT(mcm_q, true));\n"
+        "  w = rayQueryGetIntersectionBarycentricsEXT(mcm_q, true);\n"
+        "  return rayQueryGetIntersectionTEXT(mcm_q, true);\n"
+        "}\n"
+        "float mcm_trace(vec3 origin, vec3 dir, float tmax) {\n"
+        "  uint i, p; vec2 w; vec3 tr = vec3(1.0);\n"
+        "  return mcm_rq(origin, dir, tmax, 0u, i, p, w, tr);\n"
         "}\n"
         "float mcm_trace_cut(vec3 origin, vec3 dir, float tmax, out uint cut) {\n"
-        "  rayQueryEXT mcm_q;\n"
-        "  MCM_QUERY(mcm_q, gl_RayFlagsTerminateOnFirstHitEXT, origin, dir, tmax)\n"
-        "  cut = 0u;\n"
-        "  if (MCM_MISSED(mcm_q)) return -1.0;\n"
-        "  McmTris t = mcm_tris[rayQueryGetIntersectionInstanceIdEXT(mcm_q, true)];\n"
-        "  cut = t.w[uint(rayQueryGetIntersectionPrimitiveIndexEXT(mcm_q, true)) * 12u + 3u] & 0xFFu;\n"
-        "  return rayQueryGetIntersectionTEXT(mcm_q, true);\n"
+        "  uint i, p; vec2 w; vec3 tr = vec3(1.0);\n"
+        "  float h = mcm_rq(origin, dir, tmax, 0u, i, p, w, tr);\n"
+        "  cut = h < 0.0 ? 0u : mcm_tris[i].w[p * 12u + 3u] & 0xFFu;\n"
+        "  return h;\n"
         "}\n"
         /* what a hit is: face normal (towards the ray), atlas texel x vertex colour, light, Iris block id; and
            where in the atlas, for mcm_hit_emission */
@@ -385,14 +413,12 @@ static void add_ray_tracing(mgl_shader *s)
         "}\n"
         "float mcm_trace_hit(vec3 origin, vec3 dir, float tmax, out vec3 normal, out vec4 albedo, out vec2 lightmap,\n"
         "                    out int blockId) {\n"
-        "  rayQueryEXT mcm_q;\n"
-        "  MCM_QUERY(mcm_q, gl_RayFlagsNoneEXT, origin, dir, tmax)\n"
+        "  uint i, p; vec2 w; vec3 tr = vec3(1.0);\n"
+        "  float h = mcm_rq(origin, dir, tmax, 1u, i, p, w, tr);\n"
         "  normal = vec3(0.0); albedo = vec4(0.0); lightmap = vec2(0.0); blockId = -1;\n"
-        "  if (MCM_MISSED(mcm_q)) return -1.0;\n"
-        "  mcm_hit_attrs(uint(rayQueryGetIntersectionInstanceIdEXT(mcm_q, true)),\n"
-        "                uint(rayQueryGetIntersectionPrimitiveIndexEXT(mcm_q, true)),\n"
-        "                rayQueryGetIntersectionBarycentricsEXT(mcm_q, true), dir, normal, albedo, lightmap, blockId);\n"
-        "  return rayQueryGetIntersectionTEXT(mcm_q, true);\n"
+        "  if (h < 0.0) return -1.0;\n"
+        "  mcm_hit_attrs(i, p, w, dir, normal, albedo, lightmap, blockId);\n"
+        "  return h;\n"
         "}\n"
         /* MCMETAL_RT_PBR: the LabPBR emission (0..1, specular alpha; 255 = none) of the last mcm_trace_hit's hit */
         "float mcm_hit_emission() {\n"
@@ -404,47 +430,29 @@ static void add_ray_tracing(mgl_shader *s)
            the alpha test of leaves, grass and flowers. For blurry light (bounce light, AO), where a leaf's holes
            don't show. A hit on a see-through texel takes the vertex colour (the biome tint) at half brightness. */
         "float mcm_trace_coarse(vec3 origin, vec3 dir, float tmax) {\n"
-        "  rayQueryEXT mcm_q;\n"
-        "  rayQueryInitializeEXT(mcm_q, mcm_scene, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0x01,\n"
-        "                        origin, 0.001, dir, tmax);\n"
-        "  rayQueryProceedEXT(mcm_q);\n"
-        "  return MCM_MISSED(mcm_q) ? -1.0 : rayQueryGetIntersectionTEXT(mcm_q, true);\n"
+        "  uint i, p; vec2 w; vec3 tr = vec3(1.0);\n"
+        "  return mcm_rq(origin, dir, tmax, 2u, i, p, w, tr);\n"
         "}\n"
         "float mcm_trace_hit_coarse(vec3 origin, vec3 dir, float tmax, out vec3 normal, out vec4 albedo,\n"
         "                           out vec2 lightmap, out int blockId) {\n"
-        "  rayQueryEXT mcm_q;\n"
-        "  rayQueryInitializeEXT(mcm_q, mcm_scene, gl_RayFlagsOpaqueEXT, 0x01, origin, 0.001, dir, tmax);\n"
-        "  rayQueryProceedEXT(mcm_q);\n"
+        "  uint inst, prim; vec2 w; vec3 tr = vec3(1.0);\n"
+        "  float h = mcm_rq(origin, dir, tmax, 3u, inst, prim, w, tr);\n"
         "  normal = vec3(0.0); albedo = vec4(0.0); lightmap = vec2(0.0); blockId = -1;\n"
-        "  if (MCM_MISSED(mcm_q)) return -1.0;\n"
-        "  uint inst = uint(rayQueryGetIntersectionInstanceIdEXT(mcm_q, true));\n"
-        "  uint prim = uint(rayQueryGetIntersectionPrimitiveIndexEXT(mcm_q, true));\n"
-        "  vec2 w = rayQueryGetIntersectionBarycentricsEXT(mcm_q, true);\n"
+        "  if (h < 0.0) return -1.0;\n"
         "  mcm_hit_attrs(inst, prim, w, dir, normal, albedo, lightmap, blockId);\n"
         "  McmTris t = mcm_tris[inst];\n"
         "  if (albedo.a < 0.5) albedo = vec4(mcm_colour(t, prim * 12u, w).rgb * 0.5, 1.0);\n"
-        "  return rayQueryGetIntersectionTEXT(mcm_q, true);\n"
+        "  return h;\n"
         "}\n"
         /* one walk through solid, cutout and translucent terrain together (it was two: a solid test, then the
            translucent faces): translucent candidates filter the light and are never committed, a solid or
            passing cutout hit ends the walk (the colour gathered on the way no longer matters then) */
         "float mcm_trace_tinted(vec3 origin, vec3 dir, float tmax, out vec3 transmit) {\n"
-        "  rayQueryEXT mcm_q;\n"
+        "  uint i, p; vec2 w;\n"
         "  transmit = vec3(1.0);\n"
-        "  rayQueryInitializeEXT(mcm_q, mcm_scene, gl_RayFlagsTerminateOnFirstHitEXT, 0x03, origin, 0.001, dir, tmax);\n"
-        "  while (rayQueryProceedEXT(mcm_q)) {\n"
-        "    McmTris t = mcm_tris[rayQueryGetIntersectionInstanceIdEXT(mcm_q, false)];\n"
-        "    uint b = uint(rayQueryGetIntersectionPrimitiveIndexEXT(mcm_q, false)) * 12u;\n"
-        "    vec2 w = rayQueryGetIntersectionBarycentricsEXT(mcm_q, false);\n"
-        "    if ((t.w[b + 3u] & 0x100u) != 0u) {\n"
-        "      vec4 tex = textureLod(mcm_atlas, mcm_uv(t, b, w), 0.0);\n"
-        "      transmit *= mix(vec3(1.0), tex.rgb * mcm_colour(t, b, w).rgb, tex.a);\n"
-        "    } else if (mcm_opaque_at(t, b, w))\n"
-        "      rayQueryConfirmIntersectionEXT(mcm_q);\n"
-        "  }\n"
-        "  if (MCM_MISSED(mcm_q)) return -1.0;\n"
-        "  transmit = vec3(0.0);\n"
-        "  return rayQueryGetIntersectionTEXT(mcm_q, true);\n"
+        "  float h = mcm_rq(origin, dir, tmax, 4u, i, p, w, transmit);\n"
+        "  if (h >= 0.0) transmit = vec3(0.0);\n"
+        "  return h;\n"
         "}\n"
         /* the slot-th nearest light block (id in the pack's MCMETAL_LIGHT_IDS range) within 16 blocks of p:
            returns its index and sets pos (block centre, player space) and blockId, or -1 */

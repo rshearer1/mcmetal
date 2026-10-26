@@ -7,6 +7,7 @@
 #import <QuartzCore/CAMetalLayer.h>
 #import <MetalFX/MetalFX.h>
 #import <AppKit/AppKit.h>
+#import <objc/runtime.h>
 #include <ctype.h>
 #include <math.h>
 #include <stdatomic.h>
@@ -1523,6 +1524,8 @@ struct mglb_program {
     void *cspec;     /* NSMutableDictionary: vertex format -> compute pipeline made for it (NSNull while compiling) */
     uint32_t id;
     int discards;    /* the fragment stage can discard (so a full-screen draw may not cover every pixel) */
+    void *ihit;      /* mcm_trace's intersection function (MTLFunction) when the fragment or compute stage traces on
+                        Metal's intersector (core/mgl_rtmsl.c), else NULL */
     char label[112]; /* "GL program N [app name]", for error reports and MGL_*_PROGRAMS */
 };
 
@@ -1777,10 +1780,11 @@ static char *scale_vertex_inputs(const char *msl)
     return out;
 }
 
-static id<MTLFunction> compile_fn_lib(const char *msl, NSString *what, char **err, id<MTLLibrary> *lib_out);
+static id<MTLFunction> compile_fn_lib(const char *msl, NSString *what, char **err, id<MTLLibrary> *lib_out,
+                                      id<MTLFunction> *hit_out);
 static id<MTLFunction> compile_fn(const char *msl, NSString *what, char **err)
 {
-    return compile_fn_lib(msl, what, err, NULL);
+    return compile_fn_lib(msl, what, err, NULL, NULL);
 }
 
 /* sin(, cos( and pow( calls in generated MSL -> precise:: versions (NULL if there is none); not asin, sinh
@@ -1835,7 +1839,8 @@ static char *precise_sin(const char *msl)
     return out;
 }
 
-static id<MTLFunction> compile_fn_lib(const char *msl, NSString *what, char **err, id<MTLLibrary> *lib_out)
+static id<MTLFunction> compile_fn_lib(const char *msl, NSString *what, char **err, id<MTLLibrary> *lib_out,
+                                      id<MTLFunction> *hit_out)
 {
     NSError *e = nil;
     MTLCompileOptions *o = [[MTLCompileOptions alloc] init];
@@ -1868,6 +1873,8 @@ static id<MTLFunction> compile_fn_lib(const char *msl, NSString *what, char **er
             *err = strdup([NSString stringWithFormat:@"%@: %@", what, e.localizedDescription].UTF8String);
         return nil;
     }
+    if (hit_out && strstr(msl, "mcm_any_hit"))
+        *hit_out = [lib newFunctionWithName:@"mcm_any_hit"];
     if (strstr(msl, "[[function_constant(")) {
         if (lib_out)
             *lib_out = lib;
@@ -1977,6 +1984,80 @@ static void archive_maybe_save(void)
 }
 
 /* Runs on the link worker threads (core/mgl_program.c), several at once: MTLDevice compiles are thread-safe. */
+/* MGL_RT_NATIVE=0: trace with intersection queries, as SPIRV-Cross writes them (the way before 10-26) */
+static int rt_native_on(int fragment)
+{
+    static int env = -1;
+    if (env < 0) {
+        const char *e = getenv("MGL_RT_NATIVE");
+        env = !e || atoi(e) != 0;
+    }
+    if (!env || !dev.supportsRaytracing || !dev.supportsFunctionPointers)
+        return 0;
+    if (@available(macOS 12.0, *))
+        return !fragment || (dev.supportsRaytracingFromRender && dev.supportsFunctionPointersFromRender);
+    return 0;
+}
+
+/* a stage that traces rays, on Metal's intersector (core/mgl_rtmsl.c); on any failure the query version stays */
+static id<MTLFunction> compile_tracing(const char *msl, NSString *what, char **err, id<MTLLibrary> *lib_out,
+                                       id<MTLFunction> *hit_out, int fragment)
+{
+    char *native = rt_native_on(fragment) ? mgl_rt_native_msl(msl, MGL_BUF_RT_FUNCS) : NULL;
+    if (native) {
+        char *nerr = NULL;
+        id<MTLFunction> hit = nil;
+        id<MTLFunction> f = compile_fn_lib(native, what, &nerr, lib_out, &hit);
+        free(native);
+        if (f && hit) {
+            static int noted;
+            if (!noted++)
+                mgl_log("ray tracing: shaders trace on Metal's intersector with an intersection function "
+                        "(MGL_RT_NATIVE=0: intersection queries)");
+            *hit_out = hit;
+            return f;
+        }
+        static int warned;
+        if (warned++ < 3)
+            mgl_log("ray tracing: %s on the intersector failed, keeping intersection queries: %s", what.UTF8String,
+                    nerr ? nerr : "no mcm_any_hit");
+        free(nerr);
+        if (lib_out)
+            *lib_out = nil;
+    }
+    return compile_fn_lib(msl, what, err, lib_out, NULL);
+}
+
+/* the intersection function table of a pipeline that traces natively: made once, never changed (the payload
+   carries what mcm_any_hit reads), kept on the pipeline object */
+static char ift_key;
+static void attach_ift(id ps, id<MTLFunction> hit, int compute)
+{
+    if (!ps || !hit)
+        return;
+    MTLIntersectionFunctionTableDescriptor *td = [[MTLIntersectionFunctionTableDescriptor alloc] init];
+    td.functionCount = 1;
+    id<MTLIntersectionFunctionTable> table = nil;
+    id<MTLFunctionHandle> h = nil;
+    if (compute) {
+        id<MTLComputePipelineState> c = ps;
+        table = [c newIntersectionFunctionTableWithDescriptor:td];
+        h = [c functionHandleWithFunction:hit];
+    } else if (@available(macOS 13.0, *)) {
+        id<MTLRenderPipelineState> r = ps;
+        table = [r newIntersectionFunctionTableWithDescriptor:td stage:MTLRenderStageFragment];
+        h = [r functionHandleWithFunction:hit stage:MTLRenderStageFragment];
+    }
+    if (!table || !h) {
+        mgl_log("ray tracing: no intersection function table for a pipeline; its rays find nothing");
+        return;
+    }
+    [table setFunction:h atIndex:0];
+    objc_setAssociatedObject(ps, &ift_key, table, OBJC_ASSOCIATION_RETAIN);
+}
+
+static id<MTLIntersectionFunctionTable> ift_of(id ps) { return ps ? objc_getAssociatedObject(ps, &ift_key) : nil; }
+
 mglb_program *mglb_program_new(const char *msl_vertex, const char *msl_fragment, const char *msl_compute, char **err)
 {
     static uint32_t next_id;
@@ -1986,10 +2067,20 @@ mglb_program *mglb_program_new(const char *msl_vertex, const char *msl_fragment,
     @autoreleasepool {
         if (msl_compute) {
             id<MTLLibrary> clib = nil;
-            id<MTLFunction> f = compile_fn_lib(msl_compute, @"compute", err, &clib);
+            id<MTLFunction> hit = nil;
+            id<MTLFunction> f = msl_vertex ? compile_fn_lib(msl_compute, @"compute", err, &clib, NULL)
+                                           : compile_tracing(msl_compute, @"compute", err, &clib, &hit, 0);
             NSError *e = nil;
             id<MTLComputePipelineState> ps = nil;
-            if (f && get_archive()) {
+            if (f && hit) { /* linked intersection function: no binary archive (it would also need the function) */
+                MTLComputePipelineDescriptor *cpd = [[MTLComputePipelineDescriptor alloc] init];
+                cpd.computeFunction = f;
+                MTLLinkedFunctions *lf = [MTLLinkedFunctions linkedFunctions];
+                lf.functions = @[ hit ];
+                cpd.linkedFunctions = lf;
+                ps = [dev newComputePipelineStateWithDescriptor:cpd options:MTLPipelineOptionNone reflection:nil error:&e];
+                attach_ift(ps, hit, 1);
+            } else if (f && get_archive()) {
                 MTLComputePipelineDescriptor *cpd = [[MTLComputePipelineDescriptor alloc] init];
                 cpd.computeFunction = f;
                 cpd.binaryArchives = @[ archive ];
@@ -2019,9 +2110,10 @@ mglb_program *mglb_program_new(const char *msl_vertex, const char *msl_fragment,
         }
         char *scaled = msl_vertex ? scale_vertex_inputs(msl_vertex) : NULL;
         id<MTLLibrary> vlib = nil;
-        id<MTLFunction> v = msl_vertex ? compile_fn_lib(scaled ? scaled : msl_vertex, @"vertex", err, &vlib) : nil;
+        id<MTLFunction> v = msl_vertex ? compile_fn_lib(scaled ? scaled : msl_vertex, @"vertex", err, &vlib, NULL) : nil;
         free(scaled);
-        id<MTLFunction> f = v && msl_fragment ? compile_fn(msl_fragment, @"fragment", err) : nil;
+        id<MTLFunction> hit = nil;
+        id<MTLFunction> f = v && msl_fragment ? compile_tracing(msl_fragment, @"fragment", err, NULL, &hit, 1) : nil;
         if (!v || (msl_fragment && !f)) {
             release_obj(p->compute);
             free(p);
@@ -2029,6 +2121,7 @@ mglb_program *mglb_program_new(const char *msl_vertex, const char *msl_fragment,
         }
         p->vfn = retain_obj(v);
         p->ffn = f ? retain_obj(f) : NULL;
+        p->ihit = hit ? retain_obj(hit) : NULL;
         p->discards = msl_fragment && strstr(msl_fragment, "discard_fragment");
         if (vlib) {
             p->vlib = retain_obj(vlib);
@@ -2044,6 +2137,7 @@ void mglb_program_release(mglb_program *p)
         return;
     release_obj(p->vfn);
     release_obj(p->ffn);
+    release_obj(p->ihit);
     release_obj(p->vlib);
     release_obj(p->vscaled);
     release_obj(p->compute);
@@ -2863,6 +2957,12 @@ static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_targ
         }
     }
     pd.fragmentFunction = d->program->ffn ? OBJ(id<MTLFunction>, d->program->ffn) : nil;
+    id<MTLFunction> hit = d->program->ihit && !k.probe ? OBJ(id<MTLFunction>, d->program->ihit) : nil;
+    if (hit) { /* mcm_trace on the intersector (core/mgl_rtmsl.c) */
+        MTLLinkedFunctions *lf = [MTLLinkedFunctions linkedFunctions];
+        lf.functions = @[ hit ];
+        pd.fragmentLinkedFunctions = lf;
+    }
     if (k.probe)
         pd.fragmentFunction = probe_fragment();
     for (int i = 0; i < MGL_MAX_ATTACHMENTS; i++) {
@@ -2912,7 +3012,7 @@ static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_targ
         }
     }
     pd.vertexDescriptor = vd;
-    if (get_archive())
+    if (get_archive() && !hit)
         pd.binaryArchives = @[ archive ];
     if (opt_async_pipes > 0) {
         MGLPendingPipe *pp = [[MGLPendingPipe alloc] init];
@@ -2929,7 +3029,9 @@ static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_targ
           [dev newRenderPipelineStateWithDescriptor:pd
                                   completionHandler:^(id<MTLRenderPipelineState> made, NSError *err) {
                                     if (made) {
-                                        archive_add_render(pd);
+                                        attach_ift(made, hit, 0);
+                                        if (!hit)
+                                            archive_add_render(pd);
                                         @synchronized(pipelines) {
                                             pipelines[key] = made;
                                         }
@@ -2970,7 +3072,9 @@ static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_targ
         mgl_log("pipeline creation failed: %s", e.localizedDescription.UTF8String);
         return nil;
     }
-    archive_add_render(pd);
+    attach_ift(ps, hit, 0);
+    if (!hit)
+        archive_add_render(pd);
     @synchronized(pipelines) {
         pipelines[key] = ps;
     }
@@ -3834,7 +3938,7 @@ static id<MTLTexture> swizzled_view(id<MTLTexture> t, const int sw[4])
                                      levels:NSMakeRange(0, t.mipmapLevelCount) slices:NSMakeRange(0, slices) swizzle:ch];
 }
 
-static void bind_scene(id<MTLRenderCommandEncoder> e, id<MTLComputeCommandEncoder> c);
+static void bind_scene(id<MTLRenderCommandEncoder> e, id<MTLComputeCommandEncoder> c, id ps);
 
 static void bind_stage_resources_f(id<MTLRenderCommandEncoder> e, id<MTLComputeCommandEncoder> c, const mgl_draw *d,
                                    int s, int filter)
@@ -4084,7 +4188,7 @@ void mglb_draw(const mgl_draw *d)
     bind_stage_resources_f(e, nil, d, 0, f);
     bind_stage_resources_f(e, nil, d, 1, f);
     if (d->uses_scene)
-        bind_scene(e, nil);
+        bind_scene(e, nil, ps);
     if (debug_draws()) {
         if (d->multi_n > 0)
             for (int i = 0; i < d->multi_n; i++)
@@ -4151,7 +4255,7 @@ void mglb_dispatch(const mgl_draw *d, int gx, int gy, int gz)
     [c setComputePipelineState:OBJ(id<MTLComputePipelineState>, d->program->compute)];
     bind_stage_resources(nil, c, d, 2);
     if (d->uses_scene)
-        bind_scene(nil, c);
+        bind_scene(nil, c, OBJ(id<MTLComputePipelineState>, d->program->compute));
     MTLSize tg = MTLSizeMake((NSUInteger)(d->local_size[0] > 0 ? d->local_size[0] : 1),
                              (NSUInteger)(d->local_size[1] > 0 ? d->local_size[1] : 1),
                              (NSUInteger)(d->local_size[2] > 0 ? d->local_size[2] : 1));
@@ -4676,7 +4780,7 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
         [c setComputePipelineState:gps ?: OBJ(id<MTLComputePipelineState>, d->program->compute)];
         bind_stage_resources(nil, c, d, 2);
         if (d->uses_scene)
-            bind_scene(nil, c);
+            bind_scene(nil, c, nil); /* a geometry shader's compute stage traces with queries */
         [c setBytes:desc length:sizeof desc atIndex:MGL_BUF_INTERNAL_BASE];
         for (int i = 0; i < 4; i++) { /* unused slots get any valid buffer */
             mglb_buffer *b = i < d->num_vbufs ? d->vbufs[i].buf : d->num_vbufs ? d->vbufs[0].buf : NULL;
@@ -4766,7 +4870,7 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
             bind_stage_resources(e, nil, p, 0);
             bind_stage_resources(e, nil, p, 1);
             if (p->uses_scene)
-                bind_scene(e, nil);
+                bind_scene(e, nil, ps);
             [e setVertexBuffer:ovb offset:ovo atIndex:MGL_BUF_INTERNAL_BASE + 6];
             [e setVertexBuffer:ocb offset:oco atIndex:MGL_BUF_INTERNAL_BASE + 7];
             [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:vertices];
@@ -5632,17 +5736,22 @@ static void rt_update(const mgl_rt_geom *g, int n)
     }
 }
 
-static void bind_scene(id<MTLRenderCommandEncoder> e, id<MTLComputeCommandEncoder> c)
+static void bind_scene(id<MTLRenderCommandEncoder> e, id<MTLComputeCommandEncoder> c, id ps)
 {
     if (!rt_scene)
         return;
+    id<MTLIntersectionFunctionTable> ift = ift_of(ps);
     if (c) {
+        if (ift)
+            [c setIntersectionFunctionTable:ift atBufferIndex:MGL_BUF_RT_FUNCS];
         [c setAccelerationStructure:rt_scene atBufferIndex:MGL_BUF_SCENE];
         [c useResources:rt_parts_c count:rt_parts_n usage:MTLResourceUsageRead];
         [c useResources:rt_tris_c count:rt_tris_n usage:MTLResourceUsageRead];
     } else {
         [e setVertexAccelerationStructure:rt_scene atBufferIndex:MGL_BUF_SCENE];
         [e setFragmentAccelerationStructure:rt_scene atBufferIndex:MGL_BUF_SCENE];
+        if (ift)
+            [e setFragmentIntersectionFunctionTable:ift atBufferIndex:MGL_BUF_RT_FUNCS];
         [e useResources:rt_parts_c count:rt_parts_n usage:MTLResourceUsageRead
                  stages:MTLRenderStageVertex | MTLRenderStageFragment];
         [e useResources:rt_tris_c count:rt_tris_n usage:MTLResourceUsageRead

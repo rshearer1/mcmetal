@@ -962,6 +962,27 @@ int main(int argc, char **argv)
                         "layout(std430, binding = 0) buffer B { float r[]; };\n"
                         "void main() { r[0] = mcm_trace(vec3(0.0), vec3(0.0, 1.0, 0.0), 100.0); }\n");
     check(really_linked(rt), "ray-query (mcm_trace) program compiles on Metal");
+    /* every trace call in a fragment shader (the offline MSL check also compiles its intersector version) */
+    GLuint rtf = program("#version 330 core\nlayout(location = 0) in vec2 pos;\n"
+                         "void main() { gl_Position = vec4(pos, 0.0, 1.0); }\n",
+                         "#version 430\nout vec4 frag;\nuniform vec3 dir;\n"
+                         "float mcm_trace(vec3 origin, vec3 dir, float tmax);\n"
+                         "float mcm_trace_cut(vec3 origin, vec3 dir, float tmax, out uint cut);\n"
+                         "float mcm_trace_coarse(vec3 origin, vec3 dir, float tmax);\n"
+                         "float mcm_trace_tinted(vec3 origin, vec3 dir, float tmax, out vec3 transmit);\n"
+                         "float mcm_trace_hit(vec3 origin, vec3 dir, float tmax, out vec3 normal, out vec4 albedo,\n"
+                         "                    out vec2 lightmap, out int blockId);\n"
+                         "float mcm_trace_hit_coarse(vec3 origin, vec3 dir, float tmax, out vec3 normal,\n"
+                         "                           out vec4 albedo, out vec2 lightmap, out int blockId);\n"
+                         "void main() {\n"
+                         "  uint c; vec3 t, n; vec4 a; vec2 l; int b; float s = 0.0;\n"
+                         "  for (int i = 0; i < 6; i++) s += mcm_trace(vec3(0.0), dir + float(i), 10.0);\n"
+                         "  s += mcm_trace_cut(vec3(0.0), dir, 9.0, c) + mcm_trace_coarse(vec3(0.0), dir, 8.0);\n"
+                         "  s += mcm_trace_tinted(vec3(0.0), dir, 7.0, t) + mcm_trace_hit(vec3(0.0), dir, 6.0, n, a, l, b);\n"
+                         "  s += mcm_trace_hit_coarse(vec3(0.0), dir, 5.0, n, a, l, b);\n"
+                         "  frag = vec4(s, t.x + n.x + a.x, l.x + float(b), float(c));\n"
+                         "}\n", NULL);
+    check(really_linked(rtf), "fragment shader with every mcm_trace call compiles on Metal");
 
     printf("%d check(s) failed\n", failed);
     return failed;
