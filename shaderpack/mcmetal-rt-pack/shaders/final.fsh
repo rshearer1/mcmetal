@@ -128,6 +128,17 @@ vec3 lensFlare(vec2 uv) {
 void main() {
     float exposure = texelFetch(colortex6, ivec2(0), 0).r * EXPOSURE;   // from composite3
     vec3 col = texture(colortex0, texcoord).rgb;
+#ifdef SHARPEN
+    {   // a light sharpen after TAA's blending: the pixel pushed away from its 4 neighbours, less where they
+        // already differ a lot (edges stay clean, no halos)
+        vec2 px = 1.0 / vec2(viewWidth, viewHeight);
+        vec3 a = texture(colortex0, texcoord + vec2(px.x, 0.0)).rgb, b = texture(colortex0, texcoord - vec2(px.x, 0.0)).rgb;
+        vec3 c2 = texture(colortex0, texcoord + vec2(0.0, px.y)).rgb, d = texture(colortex0, texcoord - vec2(0.0, px.y)).rgb;
+        vec3 mn = min(min(a, b), min(c2, min(d, col))), mx = max(max(a, b), max(c2, max(d, col)));
+        vec3 amount = clamp(1.0 - (mx - mn) / max(mx, vec3(1e-3)), 0.0, 1.0) * SHARPEN_STRENGTH * 0.5;
+        col = max(col + (col - (a + b + c2 + d) * 0.25) * amount, 0.0);
+    }
+#endif
 #ifdef DEPTH_OF_FIELD
     col = depthOfField(texcoord, col);
 #endif
@@ -177,7 +188,11 @@ void main() {
 #ifdef LENS_FLARE
     col += lensFlare(texcoord);
 #endif
+#if TONEMAP == 1
+    col = softFilmic(col);
+#else
     col = acesFitted(col);
+#endif
     col = styleGrade(col, texcoord);
 #ifdef STYLE_POSTER
     if (texture(depthtex0, texcoord).r < 1.0) {   // flat poster colour on the world (the sky stays smooth)

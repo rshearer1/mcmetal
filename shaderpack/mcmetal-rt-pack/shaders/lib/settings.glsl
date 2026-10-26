@@ -81,6 +81,9 @@
 #define DOF_STRENGTH 1.0 // [0.5 1.0 2.0 4.0 8.0]
 //#define MOTION_BLUR // a soft blur while turning and moving, like a camera's shutter
 #define MOTION_BLUR_STRENGTH 1.0 // [0.5 1.0 1.5 2.0]
+#define SHARPEN // a light sharpen after anti-aliasing, so textures stay crisp
+#define SHARPEN_STRENGTH 0.5 // [0.25 0.5 0.75 1.0 1.5]
+#define TONEMAP 0 // [0 1] 0 ACES filmic (punchy), 1 soft filmic (gentler highlights, truer bright colours)
 #define TAA // temporal anti-aliasing: smooth edges, no shimmering plants and fences
 #define CLOUDS // our own soft cloud layer (replaces Minecraft's blocky clouds)
 #define CLOUD_AMOUNT 1.0 // [0.0 0.5 1.0 1.5 2.0]
@@ -207,6 +210,8 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef AUTO_PBR
 #endif
 #ifdef LAMP_FOG
+#endif
+#ifdef SHARPEN
 #endif
 #ifdef LIGHTNING_FLASH
 #endif
