@@ -3,6 +3,7 @@ package net.minecraft.client;
 public class Minecraft {
     public net.minecraft.client.gui.screens.Screen screen;
     public Options options;
+    public net.minecraft.client.renderer.LevelRenderer levelRenderer;
     public static Minecraft getInstance() { return null; }
     public com.mojang.blaze3d.pipeline.RenderTarget getMainRenderTarget() { return null; }
 }
