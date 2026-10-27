@@ -9,6 +9,7 @@ layout(r32f) uniform image2D halfDepth;
 layout(rgba16f) uniform image2D halfNormal;
 layout(rgba16f) uniform image2D halfAlbedo;
 layout(r16f) uniform image2D halfRough;
+layout(rgba16f) uniform image2D colorimg5; // Iris's colortex5, written directly (full size)
 layout(std430, binding = 0) buffer Counter { uint ground; uint shadowed; };
 
 uniform sampler2D colortex0;
@@ -48,4 +49,6 @@ void main() {
     imageStore(halfNormal, hp, vec4(0.0, 0.0, 0.0, 1.0)); // octahedral (0, 0) = straight up: a stand-in guide
     imageStore(halfAlbedo, hp, vec4(albedo, 1.0));
     imageStore(halfRough, hp, vec4(1.0));
+    // colorimgN: write one of Iris's own colour buffers from compute; composite1.fsh checks it (blue square)
+    imageStore(colorimg5, full, vec4(0.0, 0.25, 1.0, 1.0));
 }

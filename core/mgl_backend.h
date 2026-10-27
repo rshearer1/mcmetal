@@ -208,6 +208,7 @@ mglb_buffer *mglb_rt_instances(void); /* this frame's per-instance triangle-data
 /* The block atlas the terrain was last drawn with, for mcm_trace's alpha test (mcm_atlas); set by mgl_rt.c. */
 extern mglb_texture *mgl_rt_atlas;
 extern mglb_texture *mgl_rt_specular; /* its LabPBR specular twin (Iris), for mcm_hit_emission (mcm_specular) */
+extern mglb_texture *mgl_rt_normals;  /* its LabPBR normal twin (Iris), for mcm_hit_mapped_normal (mcm_normals) */
 /* Block ids the light list collects (MCMETAL_LIGHT_IDS in a pack), {-1, -1} = none; set by mgl_program.c. */
 extern int mgl_rt_light_ids[2];
 extern float mgl_rt_radius; /* MCMETAL_RT_RADIUS: the scene keeps only sections this close to the camera (0 = all) */
