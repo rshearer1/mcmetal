@@ -73,6 +73,7 @@ static struct {
     unsigned long sh_draws, sh_tris; /* draws and triangles into square targets of 1024+ (shadow maps), as tools/glcount.c counts */
     unsigned long tex_views, pipe_lookups, big_uniforms; /* per-draw texture views made, pipeline dictionary lookups, >4 KB uniform copies */
     unsigned long rs_sets, rs_skips; /* render-encoder state calls made, and left out as repeats (MCMETAL_STATE_FILTER) */
+    unsigned long uploads, hoisted; /* texture uploads, and those moved ahead of the frame's open pass (MGL_HOIST_UPLOADS) */
     uint64_t wait_ns, start_ns, frames;
 } prof;
 static _Atomic uint64_t prof_gpu_ns;
@@ -472,11 +473,13 @@ static void end_encoders_at(int line)
 }
 #define end_encoders() end_encoders_at(__LINE__)
 
+static void commit_hoisted(void);
 static void commit(void)
 {
     gs_flush();
     end_encoders();
     pt_cur = NULL;
+    commit_hoisted(); /* before cb: their uploads must land before anything cb draws */
     if (cb) {
         [cb commit];
         last_cb = cb;
@@ -541,6 +544,10 @@ static id<MTLBlitCommandEncoder> blit_encoder_for_at(int line, mglb_texture *a, 
     keep_clears = 0;
     tex_dirty(a); /* the copy source too: cheaper than telling the caller's direction apart */
     tex_dirty(b);
+    if (a)
+        a->used_cb = cb_serial;
+    if (b)
+        b->used_cb = cb_serial;
     return e;
 }
 #define blit_encoder_for(a, b) blit_encoder_for_at(__LINE__, a, b)
@@ -1069,6 +1076,7 @@ struct mglb_texture {
     int swz[4];
     void *level_view[4]; /* image views of levels 1-4 */
     size_t bytes;        /* allocatedSize, for the memory report */
+    uint64_t used_cb;    /* cb_serial of the last command buffer that drew with it, drew into it or copied it */
 };
 static size_t tex_bytes;
 static long tex_count;
@@ -1309,6 +1317,48 @@ void mglb_texture_release(mglb_texture *t)
     free(t);
 }
 
+/* Texture uploads in the middle of a render pass. A blit can't run inside a pass, so an upload there ends the pass and
+   the next draw reopens it, loading every attachment back from memory: with a shader pack that is 6-8 screen-sized
+   images per upload. Wakes uploads one ripple texture per patch of water inside Iris's translucent pass, and maps,
+   photos and paintings upload mid-frame too. If nothing in the current command buffer has used the texture yet,
+   nothing in it can see the difference between the upload happening now or before the frame: such uploads go into a
+   command buffer of their own that commit() submits just ahead of the frame's, and the pass stays open.
+   MGL_HOIST_UPLOADS=0: every upload ends the pass, as before. */
+static int opt_hoist = -1;
+static int gs_has_pending(void);
+static id<MTLCommandBuffer> hoist_cb;
+static id<MTLBlitCommandEncoder> hoist_enc;
+
+static id<MTLBlitCommandEncoder> hoisted_blit_for(mglb_texture *t)
+{
+    if (opt_hoist < 0)
+        opt_hoist = !getenv("MGL_HOIST_UPLOADS") || atoi(getenv("MGL_HOIST_UPLOADS")) != 0;
+    /* only when a pass is open (otherwise there is nothing to save), the texture is untouched in this command buffer
+       and no deferred clear of it is waiting to run in it (the clear would land after the upload); pending
+       geometry-shader draws bind their textures only when they're flushed, so they may still read it */
+    if (!opt_hoist || !cb || !renc || t->used_cb == cb_serial || pending_clear_uses(t) || gs_has_pending())
+        return nil;
+    if (!hoist_enc) {
+        @autoreleasepool {
+            hoist_cb = [queue commandBuffer];
+            hoist_enc = [hoist_cb blitCommandEncoder];
+        }
+    }
+    tex_dirty(t);
+    prof.hoisted++;
+    return hoist_enc;
+}
+
+static void commit_hoisted(void)
+{
+    if (!hoist_cb)
+        return;
+    [hoist_enc endEncoding];
+    [hoist_cb commit];
+    hoist_enc = nil;
+    hoist_cb = nil;
+}
+
 void mglb_texture_upload(mglb_texture *t, int level, int x, int y, int z, int w, int h, int d, const void *data,
                          size_t bytes_per_row, size_t bytes_per_image)
 {
@@ -1332,7 +1382,10 @@ void mglb_texture_upload(mglb_texture *t, int level, int x, int y, int z, int w,
         for (int yy = 0; yy < h; yy++)
             memcpy((char *)stage.ptr + (size_t)zz * img + (size_t)yy * row,
                    (const char *)data + (size_t)zz * bytes_per_image + (size_t)yy * bytes_per_row, row);
-    id<MTLBlitCommandEncoder> e = blit_encoder_for(t, NULL);
+    prof.uploads++;
+    id<MTLBlitCommandEncoder> e = hoisted_blit_for(t);
+    if (!e)
+        e = blit_encoder_for(t, NULL);
     id<MTLTexture> tex = OBJ(id<MTLTexture>, t->mtl);
     if (t->d.type == MGLT_3D) {
         [e copyFromBuffer:stage.buf sourceOffset:stage.off sourceBytesPerRow:row sourceBytesPerImage:img
@@ -3221,6 +3274,8 @@ static int same_target(const mgl_target *a, const mgl_target *b)
 
 static void set_attachment(MTLRenderPassAttachmentDescriptor *ad, mglb_texture *t, int level, int layer)
 {
+    current_cb(); /* the pass goes into this command buffer: cb_serial is its */
+    t->used_cb = cb_serial;
     ad.texture = OBJ(id<MTLTexture>, t->mtl);
     ad.level = (NSUInteger)level;
     if (t->d.type == MGLT_3D)
@@ -4055,6 +4110,8 @@ static void bind_stage_resources_f(id<MTLRenderCommandEncoder> e, id<MTLComputeC
         if (!bt->dim)
             continue; /* slot unused by this stage */
         id<MTLTexture> tex = bt->tex ? OBJ(id<MTLTexture>, bt->tex->mtl) : dummy_texture(bt->dim, bt->sample_kind, bt->is_shadow);
+        if (bt->tex)
+            bt->tex->used_cb = cb_serial;
         if (bt->is_image)
             tex_dirty(bt->tex);
         if (bt->is_image && bt->tex && bt->image_level > 0) {
@@ -5142,6 +5199,8 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
 /* Draw the pending geometry-shader draws in one render pass on their target. Called before anything else uses
    the GPU (any encoder, a commit, a barrier, a texture release), so GL's order is kept for everything that
    could see their results. */
+static int gs_has_pending(void) { return gs_pending.count != 0; }
+
 static void gs_flush_at(int line)
 {
     static int flushing;
@@ -7661,6 +7720,9 @@ static void profile_frame(unsigned long draws)
     if (sl_checks)
         mgl_log("profile: smart load: %lu coverage checks, %lu draws found not to cover their target",
                 sl_checks, sl_partial);
+    if (prof.uploads)
+        mgl_log("profile: %.1f texture uploads per frame, %.1f of them moved ahead of an open pass", prof.uploads / f,
+                prof.hoisted / f);
     if (prof.sh_draws)
         mgl_log("profile: shadow-sized viewports (without geometry shaders) %.0f draws, %.0fk triangles per frame",
                 prof.sh_draws / f, prof.sh_tris / f * 1e-3);
