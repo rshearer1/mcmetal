@@ -162,7 +162,7 @@ const float drynessHalfLife = 400.0;
 #define WAVE_HEIGHT 1.0 // [0.0 0.5 1.0 1.5 2.0 3.0]
 #define WAVE_SPEED 1.0 // [0.5 1.0 1.5 2.0]
 
-#define DEBUG_VIEW 0 // [0 1 2 3 4 5 6 7 8 9 10 11] 0 off, 1 sun shadow, 2 ambient occlusion, 3 global illumination (with coloured block light), 4 normals, 5 light shafts, 6 puddle mask, 7 caustics (r pattern, g seen through water, b sunlit), 8 material tags, 9 program and stage codes, 10 which program drew each pixel, 11 forward entities' alpha and own-body test
+#define DEBUG_VIEW 0 // [0 1 2 3 4 5 6 7 8 9 10 11 12 13] 0 off, 1 sun shadow, 2 ambient occlusion, 3 global illumination (with coloured block light), 4 normals, 5 light shafts, 6 puddle mask, 7 caustics (r pattern, g seen through water, b sunlit), 8 material tags, 9 program and stage codes, 10 which program drew each pixel, 11 forward entities' alpha and own-body test, 12 forward entities' lightmap and hurt flash, 13 forward entities' unlit colour
 
 #define STYLE 0 // [0 1 2 3 4] the look (sky, light, mist, glow): 0 Natural, 1 Cottage, 2 Witchy, 3 Storybook, 4 Fairytale
 #define SEASONS // light, sky, clouds, mist and winter frost follow the year (Serene Seasons' calendar, lib/season.glsl)

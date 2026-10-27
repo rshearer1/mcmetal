@@ -294,6 +294,9 @@ void main() {
 #if defined TERRAIN && defined SEASONS
     if (mat != MAT_WATER) c.rgb = seasonPlants(c.rgb, seasonWeights(), clamp((tint.g - max(tint.r, tint.b)) * 6.0, 0.0, 1.0));
 #endif
+#if DEBUG_VIEW == 13
+    vec3 rawCol = c.rgb;
+#endif
     c.rgb = mix(c.rgb, entityColor.rgb, entityColor.a);   // red hurt flash on mobs
 
     vec3 n = normalize(normalW);
@@ -481,6 +484,14 @@ void main() {
     #if DEBUG_VIEW == 11 && !defined UNLIT
     // forward-drawn entities: r the texture's alpha, g the vertex colour's alpha, b 1 if taken for your own body
     if (mat == MAT_HAND || mat == MAT_ENTITY) outColor = vec4(c.a, tint.a, float(ownBody()), 1.0);
+    #endif
+    #if DEBUG_VIEW == 12 && !defined UNLIT
+    // forward-drawn entities' inputs: r block light, g sky light (the lightmap), b the hurt-flash overlay's strength
+    if (mat == MAT_HAND || mat == MAT_ENTITY) outColor = vec4(lmcoord, entityColor.a, 1.0);
+    #endif
+    #if DEBUG_VIEW == 13 && !defined UNLIT
+    // forward-drawn entities' colour as drawn (texture times vertex colour), unlit and before the hurt flash
+    if (mat == MAT_HAND || mat == MAT_ENTITY) outColor = vec4(rawCol, 1.0);
     #endif
   #endif
   #ifdef KEEP_MATERIAL
