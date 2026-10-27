@@ -6303,7 +6303,8 @@ static id<MTLAccelerationStructure> entity_as(mglb_buffer **tris_out)
     return as;
 }
 
-/* MGL_RT_REGIONS=1 (off by default; an A/B test of Apple's "fewer instances" advice): one scene instance per
+/* MGL_RT_REGIONS=0 turns it off (ON BY DEFAULT since RG1 on the M3; RT-NATIVE1: +8 fps at noon, +13 panning;
+   it began as an A/B test of Apple's "fewer instances" advice): one scene instance per
    Sodium region (one vertex buffer, 8x4x8 sections) instead of one per section, so a long ray enters far fewer
    instances. A region's structure is built from copies of its sections' positions and triangle records (two
    geometries, opaque and not, like a split section), so it stands on its own: primitive ids index the region's
@@ -6330,9 +6331,8 @@ static int rt_regions_on(void)
 {
     static int on = -1;
     if (on < 0) {
-        on = opt("MGL_RT_REGIONS");
-        if (on)
-            mgl_log("ray tracing: one scene instance per region (MGL_RT_REGIONS)");
+        on = getenv("MGL_RT_REGIONS") ? opt("MGL_RT_REGIONS") : 1; /* on unless MGL_RT_REGIONS=0 */
+        mgl_log("ray tracing: %s (MGL_RT_REGIONS=%d)", on ? "one scene instance per region" : "one scene instance per section", on);
     }
     return on;
 }
