@@ -499,7 +499,7 @@ gui_phase() { # kind (menu, menu-noif, menu-shaders, creative, creative-shaders,
 #   effects          the effects stage (lake, five waterfalls, four boats crossing, salmon and squid) in rain, with
 #                    Wakes, Particular, Particle Rain, Visuality, Make Bubbles Pop and ImmediatelyFast, no shaders
 #   effects-shaders  the same with Complementary
-#   effects-off      the same scene with none of the effect mods (ImmediatelyFast stays): their cost is the difference
+#   effects-off[-...] the same scene with none of the effect mods (ImmediatelyFast stays): their cost is the difference
 #   effects-PACK     the same with a pack from PACKS ("ours": our RT pack)
 #   ab-effects...    new, old (GAME_AB_OFF's env), new in one job
 # MGL_PROFILE=1 in the env counts draws and render passes per frame, and the passes reopened after an upload
@@ -508,16 +508,17 @@ PARTICULAR="https://cdn.modrinth.com/data/pYFUU6cq/versions/WyRBAcBf/particular-
 VISUALITY="https://cdn.modrinth.com/data/z13R7Et1/versions/kOdevgPm/visuality-forge-3.0.0.jar|9786f023733a302b582b7349336e1ab47e93823e"
 BUBBLES="https://cdn.modrinth.com/data/gPCdW0Wr/versions/OkGl4Kh9/make_bubbles_pop-0.4.0-beta.2-neoforge-mc1.21-1.21.1.jar|905fb3f92c4608b021a2d6bc9c2fdcf552ab9829"
 EFFECT_MODS="mcm-immediatelyfast.jar mcm-particlerain.jar mcm-wakes.jar mcm-particular.jar mcm-visuality.jar mcm-bubbles.jar"
-effects_phase() { # effects[-off|-shaders|-PACK] out-name [VAR=value ...]
-    local kind=$1 out=$2 shaders=false file= url=- sha; shift 2
+effects_phase() { # effects[-off][-shaders|-PACK] out-name [VAR=value ...]
+    local kind=$1 out=$2 shaders=false file= url=- sha off=; shift 2
+    case $kind in effects-off*) off=1 kind=effects${kind#effects-off} ;; esac # effects-off-shaders: effects-shaders, no mods
     (cd "$G/mods" && rm -f $EFFECT_MODS)
     fetch_mod "$IMMEDIATELYFAST" mcm-immediatelyfast.jar || return
-    if [ "$kind" != effects-off ]; then
+    if [ -z "$off" ]; then
         fetch_mod "$PARTICLE_RAIN" mcm-particlerain.jar && fetch_mod "$WAKES" mcm-wakes.jar && fetch_mod "$PARTICULAR" mcm-particular.jar \
             && fetch_mod "$VISUALITY" mcm-visuality.jar && fetch_mod "$BUBBLES" mcm-bubbles.jar || return
     fi
     case $kind in
-    effects|effects-off) ;;
+    effects) ;;
     effects-shaders) shaders=true ;;
     effects-ours) shaders=true file=mcmetal-rt-pack ;;
     effects-*)
