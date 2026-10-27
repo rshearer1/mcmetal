@@ -468,10 +468,19 @@ void main() {
     outWater = vec4(wr, clamp(refr * 8.0 + 0.5, 0.0, 1.0), float(mat == MAT_GLASS));
   #else
     outColor = vec4(col, c.a);
+    #ifndef UNLIT
+    // your own body is solid: on a full modpack it can arrive here with a faint alpha (blended away to a ghost of
+    // whatever is lit behind it)
+    if (mat == MAT_ENTITY && ownBody()) outColor.a = 1.0;
+    #endif
     #if DEBUG_VIEW == 8 && !defined UNLIT
     // material tags (deferred4.fsh): drawn here, so your own body shows magenta, the held item cyan, mobs yellow
     if (mat == MAT_HAND || mat == MAT_ENTITY)
-        outColor.rgb = mat == MAT_HAND ? vec3(0.0, 1.0, 1.0) : ownBody() ? vec3(1.0, 0.0, 1.0) : vec3(1.0, 1.0, 0.0);
+        outColor = vec4(mat == MAT_HAND ? vec3(0.0, 1.0, 1.0) : ownBody() ? vec3(1.0, 0.0, 1.0) : vec3(1.0, 1.0, 0.0), 1.0);
+    #endif
+    #if DEBUG_VIEW == 11 && !defined UNLIT
+    // forward-drawn entities: r the texture's alpha, g the vertex colour's alpha, b 1 if taken for your own body
+    if (mat == MAT_HAND || mat == MAT_ENTITY) outColor = vec4(c.a, tint.a, float(ownBody()), 1.0);
     #endif
   #endif
   #ifdef KEEP_MATERIAL
