@@ -276,7 +276,8 @@ void mglb_memory_barrier(void);
 
 /* ---- frame and sync ---- */
 void mglb_window_size(int *w, int *h);
-int mglb_upscaled_read(unsigned char **px, int *w, int *h); /* MetalFX output (RGBA8, GL row order) or 0 */    /* current drawable size in pixels */
+int mglb_upscaled_read(unsigned char **px, int *w, int *h); /* MetalFX output (RGBA8, GL row order) or 0 */
+int mglb_madeup_read(unsigned char **px, int *w, int *h);   /* last made-up frame (MCMETAL_FRAMEGEN) or 0 */    /* current drawable size in pixels */
 uint64_t mglb_fence(void);                /* id that completes when all work recorded so far is done */
 int mglb_fence_wait(uint64_t id, uint64_t timeout_ns); /* 1 done, 0 timeout */
 void mglb_flush(void);                    /* commit recorded work */
