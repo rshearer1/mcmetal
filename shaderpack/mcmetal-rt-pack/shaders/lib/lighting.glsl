@@ -67,6 +67,6 @@ vec3 emission(vec3 albedo, int mat) {
     if (mat == MAT_GLOW) return albedo * (2.5 * EMISSIVE_STRENGTH);
     if (mat == MAT_EMISSIVE) return albedo * (4.0 * EMISSIVE_STRENGTH) * smoothstep(0.35, 0.75, max(albedo.r, max(albedo.g, albedo.b)));
     // a faint light (whole trees of glowing leaves and logs): a soft glow, or a canopy blows out to flat white at night
-    if (mat == MAT_EMISSIVE_DIM) return albedo * (0.3 * EMISSIVE_STRENGTH) * smoothstep(0.35, 0.75, max(albedo.r, max(albedo.g, albedo.b)));
+    if (mat == MAT_EMISSIVE_DIM) return albedo * (0.2 * EMISSIVE_STRENGTH) * smoothstep(0.35, 0.75, max(albedo.r, max(albedo.g, albedo.b)));
     return vec3(0.0);
 }

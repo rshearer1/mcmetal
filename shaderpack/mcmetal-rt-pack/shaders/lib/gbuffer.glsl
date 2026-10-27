@@ -369,6 +369,10 @@ void main() {
     #ifdef FORWARD_SHADOW
     vec3 sh = vec3(0.0);
     if (dot(n, L) > 0.0 || mat == MAT_FOLIAGE) sh = sunShadow(playerPos, n, L, mat);
+    // your own body in first person: players draw here (their skin is a translucent render type), and a shadow ray
+    // from it hits the body itself in the ray scene: black bands. Lit where the sky is open instead, like the held item
+    if (mat == MAT_ENTITY && dot(playerPos.xz, playerPos.xz) < 0.64 && playerPos.y > -2.0 && playerPos.y < 0.4)
+        sh = vec3(smoothstep(0.85, 0.97, lmcoord.y));
     #else
     vec3 sh = vec3(smoothstep(0.85, 0.97, lmcoord.y));   // particles, rain, clouds: lit where the sky is open
     #endif
