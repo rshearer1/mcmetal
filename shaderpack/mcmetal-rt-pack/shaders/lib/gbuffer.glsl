@@ -239,6 +239,18 @@ layout(location = 2) out vec4 outAdd;
 layout(location = 0) out vec4 outColor;
 #endif
 
+// your own body in first person (First-person Model) and what it holds: entity pixels in the column round the eye.
+// Tested from the vertex's own position and again from the pixel's depth (the player's batch can arrive already
+// transformed, so the first can miss)
+bool ownBody() {
+    if (mat == MAT_HAND) return true;
+    if (mat != MAT_ENTITY) return false;
+    if (dot(playerPos.xz, playerPos.xz) < 0.64 && playerPos.y > -2.0 && playerPos.y < 0.4) return true;
+    vec4 v = gbufferProjectionInverse * vec4(vec3(gl_FragCoord.xy / vec2(viewWidth, viewHeight), gl_FragCoord.z) * 2.0 - 1.0, 1.0);
+    vec3 p = mat3(gbufferModelViewInverse) * (v.xyz / v.w);
+    return dot(p.xz, p.xz) < 0.81 && p.y > -2.1 && p.y < 0.5;
+}
+
 void main() {
 #ifdef KEEP_WATER_TARGETS
     outWater = vec4(0.0);   // (written, never kept: blending with ZERO would still turn garbage into NaN)
@@ -357,7 +369,7 @@ void main() {
   #endif
     // your own body in first person: entity pixels in the column round the eye (from the vertex's own position: the
     // depth buffer can't be trusted there)
-    int outMat = mat == MAT_ENTITY && dot(playerPos.xz, playerPos.xz) < 0.64 && playerPos.y > -2.0 && playerPos.y < 0.4 ? MAT_BODY : mat;
+    int outMat = mat == MAT_ENTITY && ownBody() ? MAT_BODY : mat;
     outMaterial = vec4(float(outMat) / 255.0, ao, puddle, spec.a);
     outPBR = vec4(octEncode(nm), 1.0 - spec.r, spec.g);   // roughness = 1 - smoothness
 #else
@@ -371,12 +383,17 @@ void main() {
     if (dot(n, L) > 0.0 || mat == MAT_FOLIAGE) sh = sunShadow(playerPos, n, L, mat);
     // your own body in first person: players draw here (their skin is a translucent render type), and a shadow ray
     // from it hits the body itself in the ray scene: black bands. Lit where the sky is open instead, like the held item
-    if (mat == MAT_ENTITY && dot(playerPos.xz, playerPos.xz) < 0.64 && playerPos.y > -2.0 && playerPos.y < 0.4)
-        sh = vec3(smoothstep(0.85, 0.97, lmcoord.y));
+    // (the held item too: in first person it draws here as part of the body)
+    bool body = ownBody();
+    if (body) sh = vec3(smoothstep(0.85, 0.97, lmcoord.y));
     #else
     vec3 sh = vec3(smoothstep(0.85, 0.97, lmcoord.y));   // particles, rain, clouds: lit where the sky is open
     #endif
-    vec3 col = albedo * surfaceLight(playerPos, n, lmcoord, ao, mat, L, sunCol, skyAmb, sh) + emission(albedo, mat);
+    vec2 lm = lmcoord;
+    #ifdef FORWARD_SHADOW
+    if (body) lm.x *= 0.6;   // right beside a light, skin would glow red-hot in the lightmap's full block light
+    #endif
+    vec3 col = albedo * surfaceLight(playerPos, n, lm, ao, mat, L, sunCol, skyAmb, sh) + emission(albedo, mat);
     #ifdef WATER
     bool top = false;   // open water's flat top: its rays are traced in composite.fsh instead (WATER_REFLECT_PASS)
     if (mat == MAT_WATER && n.y > 0.9) {
@@ -440,6 +457,11 @@ void main() {
     outWater = vec4(wr, clamp(refr * 8.0 + 0.5, 0.0, 1.0), float(mat == MAT_GLASS));
   #else
     outColor = vec4(col, c.a);
+    #if DEBUG_VIEW == 8 && !defined UNLIT
+    // material tags (deferred4.fsh): drawn here, so your own body shows magenta, the held item cyan, mobs yellow
+    if (mat == MAT_HAND || mat == MAT_ENTITY)
+        outColor.rgb = mat == MAT_HAND ? vec3(0.0, 1.0, 1.0) : ownBody() ? vec3(1.0, 0.0, 1.0) : vec3(1.0, 1.0, 0.0);
+    #endif
   #endif
   #ifdef KEEP_MATERIAL
     outMaterial = vec4(float(MAT_LIT) / 255.0, 1.0, 0.0, 0.0);
