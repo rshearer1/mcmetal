@@ -10,6 +10,7 @@ vec3 sunShadow(vec3 p, vec3 n, vec3 L, int mat) {
     // start just off the surface: the depth buffer only knows the position to a few mm, which would let a surface
     // shadow itself in stripes (acne). Plants have no real side, so push them towards the light instead.
     vec3 o = mat == MAT_FOLIAGE ? p + L * 0.06 : p + n * 0.02 + L * 0.01;
+    o += L * ownBodySkip(p, mat);
 #ifdef COLORED_SHADOWS
     vec3 transmit;
     return mcm_trace_tinted(o, L, 256.0, transmit) > 0.0 ? vec3(0.0) : transmit;
