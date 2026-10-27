@@ -1,0 +1,326 @@
+frame dump: clear target 0:0x9b689bca0/70 (window) depth 0x9b689be80, colour mask 0x1 (write 0xf) to 0 0 0 0, depth 1 (1), scissor 0
+frame dump: clear target 0:0x9b9af01e0/70 depth 0x9b9af0320, colour mask 0x1 (write 0xf) to 0.711644 0.818954 1 0, depth 1 (1), scissor 0
+frame dump: clear target 0:0x9beb8e260/70 depth 0x0, colour mask 0x1 (write 0xf) to 0 0 0 0, depth 0 (1), scissor 0
+frame dump: clear target 0:0x9beb8e940/70 depth 0x0, colour mask 0x1 (write 0xf) to 0 0 0 0, depth 0 (1), scissor 0
+frame dump: clear target 0:0x9beb8eb20/115 depth 0x0, colour mask 0x1 (write 0xf) to 0 0 0 0, depth 0 (1), scissor 0
+frame dump: clear target 0:0x9beb8ee40/115 depth 0x0, colour mask 0x1 (write 0xf) to 0 0 0 0, depth 0 (1), scissor 0
+frame dump: clear target 0:0x9beb8cf00/115 depth 0x0, colour mask 0x1 (write 0xf) to 0 0 0 0, depth 0 (1), scissor 0
+frame dump: clear target 0:0x9beb8d0e0/115 depth 0x0, colour mask 0x1 (write 0xf) to 0 0 0 0, depth 0 (1), scissor 0
+frame dump: clear target 0:0x9bec30d20/115 depth 0x0, colour mask 0x1 (write 0xf) to 0.711644 0.818954 1 1, depth 0 (1), scissor 0
+frame dump: clear target 0:0x9bec30fa0/115 depth 0x0, colour mask 0x1 (write 0xf) to 0.711644 0.818954 1 1, depth 0 (1), scissor 0
+frame dump: clear target 0:0x9c14e1cc0/115 depth 0x0, colour mask 0x1 (write 0xf) to 0 0 0 0, depth 0 (1), scissor 0
+frame dump: clear target 0:0x9c14e28a0/115 depth 0x0, colour mask 0x1 (write 0xf) to 0 0 0 0, depth 0 (1), scissor 0
+frame dump: clear target 0:0x9c14e24e0/70 depth 0x0, colour mask 0x1 (write 0xf) to 0 0.5 0.5 0, depth 0 (1), scissor 0
+frame dump: clear target 0:0x9c14e23a0/70 depth 0x0, colour mask 0x1 (write 0xf) to 0 0.5 0.5 0, depth 0 (1), scissor 0
+frame dump: clear target 0:0x9c1460780/115 depth 0x0, colour mask 0x1 (write 0xf) to 0 0 1 0, depth 0 (1), scissor 0
+frame dump: clear target 0:0x9c14608c0/115 depth 0x0, colour mask 0x1 (write 0xf) to 0 0 1 0, depth 0 (1), scissor 0
+frame dump: draw 1: GL program 385, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9b9af0320, depth test 1 write 0 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 2076 multi 0
+frame dump:   samples
+frame dump: draw 2: GL program 350, target 0:0x9beb8f020/115 128x64 depth 0x0, depth test 0 write 0 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples
+frame dump: draw 3: GL program 385, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9b9af0320, depth test 1 write 0 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 24 multi 0
+frame dump:   samples
+frame dump: draw 4: GL program 391, target 0:0x9bec30fa0/115b 1:0x9beb8ee40/115b 2:0x9beb8e940/70b 3:0x9c14608c0/115b 1280x720 depth 0x9b9af0320, depth test 1 write 0 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9c14e0f00 1:0x9b6a8e620 2:0x9b6a8e9e0
+frame dump: clear target 0:0x9b9af0640/70 depth 0x9b9af0500, colour mask 0x1 (write 0xf) to 0 0 1 0, depth 1 (1), scissor 0
+frame dump: draw 5: GL program 39, target 0:0x9b9af0640/70 1280x720 depth 0x9b9af0500, depth test 1 write 0 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 24 multi 0
+frame dump:   samples
+frame dump: draw 6: GL program 391, target 0:0x9bec30fa0/115b 1:0x9beb8ee40/115b 2:0x9beb8e940/70b 3:0x9c14608c0/115b 1280x720 depth 0x9b9af0320, depth test 1 write 0 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9c14e0f00 1:0x9b6a8e620 2:0x9b6a8e9e0
+frame dump: clear target 0:0x9bec305a0/70 depth 0x9bec30460, colour mask 0x1 (write 0xf) to 0 0 0 0, depth 1 (1), scissor 0
+frame dump: clear target 0:0x9bec319a0/70 depth 0x9bec30be0, colour mask 0x1 (write 0xf) to 0 0 0 0, depth 1 (1), scissor 0
+frame dump: clear target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 depth 0x9c14e01e0, colour mask 0x0 (write 0xf) to 0 0 0 0, depth 1 (1), scissor 0
+frame dump: clear target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 depth 0x9c14e01e0, colour mask 0x0 (write 0xf) to 0.674765 0.793856 1 0, depth 1 (1), scissor 0
+frame dump: draw 7: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 39600 multi 0
+frame dump:   samples
+frame dump: draw 8: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 25386 multi 0
+frame dump:   samples
+frame dump: draw 9: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 27732 multi 0
+frame dump:   samples
+frame dump: draw 10: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 31302 multi 0
+frame dump:   samples
+frame dump: draw 11: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 27648 multi 0
+frame dump:   samples
+frame dump: draw 12: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 22002 multi 0
+frame dump:   samples
+frame dump: draw 13: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 42192 multi 0
+frame dump:   samples
+frame dump: draw 14: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 33132 multi 0
+frame dump:   samples
+frame dump: draw 15: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 46464 multi 0
+frame dump:   samples
+frame dump: draw 16: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 40134 multi 0
+frame dump:   samples
+frame dump: draw 17: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 89256 multi 0
+frame dump:   samples
+frame dump: draw 18: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 48270 multi 0
+frame dump:   samples
+frame dump: draw 19: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 50940 multi 0
+frame dump:   samples
+frame dump: draw 20: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 36906 multi 0
+frame dump:   samples
+frame dump: draw 21: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 65346 multi 0
+frame dump:   samples
+frame dump: draw 22: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 35250 multi 0
+frame dump:   samples
+frame dump: draw 23: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 24750 multi 0
+frame dump:   samples
+frame dump: draw 24: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 29952 multi 0
+frame dump:   samples
+frame dump: draw 25: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 37488 multi 0
+frame dump:   samples
+frame dump: draw 26: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 34752 multi 0
+frame dump:   samples
+frame dump: draw 27: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 34908 multi 0
+frame dump:   samples
+frame dump: draw 28: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 39870 multi 0
+frame dump:   samples
+frame dump: draw 29: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 34224 multi 0
+frame dump:   samples
+frame dump: draw 30: GL program 361, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 0 mask 0xf, prim 0x4, count 27906 multi 0
+frame dump:   samples
+frame dump: draw 31: GL program 535, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 1968 multi 3
+frame dump:   samples 0:0x9c14e2da0 1:0x9be47e760 2:0x9c14e2ee0
+frame dump: draw 32: GL program 535, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 1680 multi 42
+frame dump:   samples 0:0x9c14e2da0 1:0x9be47e760 2:0x9c14e2ee0
+frame dump: draw 33: GL program 535, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 1344 multi 15
+frame dump:   samples 0:0x9c14e2da0 1:0x9be47e760 2:0x9c14e2ee0
+frame dump: draw 34: GL program 535, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 120 multi 5
+frame dump:   samples 0:0x9c14e2da0 1:0x9be47e760 2:0x9c14e2ee0
+frame dump: draw 35: GL program 538, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 2424 multi 3
+frame dump:   samples 0:0x9c14e2da0 1:0x9be47e760 2:0x9c14e2ee0
+frame dump: draw 36: GL program 538, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 240 multi 21
+frame dump:   samples 0:0x9c14e2da0 1:0x9be47e760 2:0x9c14e2ee0
+frame dump: draw 37: GL program 538, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 6 multi 3
+frame dump:   samples 0:0x9c14e2da0 1:0x9be47e760 2:0x9c14e2ee0
+frame dump: draw 38: GL program 538, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 6 multi 3
+frame dump:   samples 0:0x9c14e2da0 1:0x9be47e760 2:0x9c14e2ee0
+frame dump: clear target 0:0x9beb8f520/70 depth 0x9beb8eee0, colour mask 0x1 (write 0xf) to 0 0 0 0, depth 1 (1), scissor 0
+frame dump: draw 39: GL program 433, target 0:0x9bec30fa0/115b 1:0x9c14e23a0/70b 2:0x9c14e28a0/115b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 264 multi 0
+frame dump:   samples 0:0x9be47e760 1:0x9be47e760
+frame dump: draw 40: GL program 433, target 0:0x9bec30fa0/115b 1:0x9c14e23a0/70b 2:0x9c14e28a0/115b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 1014 multi 0
+frame dump:   samples 0:0x9c14e3340 1:0x9be47e760
+frame dump: draw 41: GL program 475, target 0:0x9bec30fa0/115 1:0x9beb8ee40/115 2:0x9beb8e940/70 3:0x9c14608c0/115 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 96 multi 0
+frame dump:   samples 0:0x9beb47980 1:0x9b6a8e620 2:0x9b6a8e9e0
+frame dump: draw 42: GL program 517, target 0:0x9bec30fa0/115b 1:0x9beb8ee40/115b 2:0x9beb8e940/70b 3:0x9c14608c0/115b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 72 multi 0
+frame dump:   samples 0:0x9b6a8e620 1:0x9b6a8e9e0
+frame dump: draw 43: GL program 351, target 0:0x9beb8de00/115 1:0x9beb8da40/115 1280x720 depth 0x0, depth test 0 write 0 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9beb8d860 2:0x9beb8e080 3:0x9beb8dc20 4:0x9b9af0320 5:0x9beb8e940 6:0x9beb8ee40 7:0x9be47e760 8:0x9c14e2ee0
+frame dump: draw 44: GL program 352, target 0:0x9beb8d2c0/115 1280x720 depth 0x0, depth test 0 write 0 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9b9af0320 1:0x9beb8e940 2:0x9beb8d860 3:0x9beb8ee40 4:0x9be47e760
+frame dump: draw 45: GL program 353, target 0:0x9beb8cf00/115 1280x720 depth 0x0, depth test 0 write 0 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9beb8ee40 1:0x9beb8de00 2:0x9b9af0320 3:0x9beb8da40
+frame dump: draw 46: GL program 354, target 0:0x9bec30d20/115 1280x720 depth 0x0, depth test 0 write 0 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9beb8d2c0 2:0x9beb8ee40 3:0x9c14e01e0 4:0x9beb8de00 5:0x9beb8cf00 6:0x9b9af0320 7:0x9bec30fa0 8:0x9beb8e940 9:0x9c14608c0 10:0x9be47e760 11:0x9c14e2ee0 12:0x9c14601e0
+frame dump: draw 47: GL program 355, target 0:0x9c14e2b20/115 1280x720 depth 0x0, depth test 0 write 0 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9b9af0320 1:0x9c14e29e0 2:0x9be47e760
+frame dump: draw 48: GL program 365, target 0:0x9bec30d20/115b 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 1 mask 0xf, prim 0x4, count 354 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9bec30b40
+frame dump: draw 49: GL program 365, target 0:0x9bec30d20/115b 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 1 mask 0xf, prim 0x4, count 444 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9bec30b40
+frame dump: draw 50: GL program 365, target 0:0x9bec30d20/115b 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 1 mask 0xf, prim 0x4, count 126 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9bec30b40
+frame dump: draw 51: GL program 365, target 0:0x9bec30d20/115b 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 1 mask 0xf, prim 0x4, count 216 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9bec30b40
+frame dump: draw 52: GL program 365, target 0:0x9bec30d20/115b 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 1 mask 0xf, prim 0x4, count 948 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9bec30b40
+frame dump: draw 53: GL program 365, target 0:0x9bec30d20/115b 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 1 mask 0xf, prim 0x4, count 2850 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9bec30b40
+frame dump: draw 54: GL program 365, target 0:0x9bec30d20/115b 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 1 mask 0xf, prim 0x4, count 342 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9bec30b40
+frame dump: draw 55: GL program 365, target 0:0x9bec30d20/115b 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 1 mask 0xf, prim 0x4, count 1002 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9bec30b40
+frame dump: draw 56: GL program 365, target 0:0x9bec30d20/115b 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 1 mask 0xf, prim 0x4, count 1224 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9bec30b40
+frame dump: draw 57: GL program 365, target 0:0x9bec30d20/115b 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 1 mask 0xf, prim 0x4, count 948 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9bec30b40
+frame dump: draw 58: GL program 365, target 0:0x9bec30d20/115b 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 1 mask 0xf, prim 0x4, count 852 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9bec30b40
+frame dump: draw 59: GL program 365, target 0:0x9bec30d20/115b 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 1 mask 0xf, prim 0x4, count 1206 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9bec30b40
+frame dump: draw 60: GL program 365, target 0:0x9bec30d20/115b 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 1 mask 0xf, prim 0x4, count 390 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9bec30b40
+frame dump: draw 61: GL program 365, target 0:0x9bec30d20/115b 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 1 mask 0xf, prim 0x4, count 2262 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9bec30b40
+frame dump: draw 62: GL program 365, target 0:0x9bec30d20/115b 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 1 mask 0xf, prim 0x4, count 204 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9bec30b40
+frame dump: draw 63: GL program 365, target 0:0x9bec30d20/115b 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 1 mask 0xf, prim 0x4, count 1452 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9bec30b40
+frame dump: draw 64: GL program 365, target 0:0x9bec30d20/115b 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 1 mask 0xf, prim 0x4, count 1092 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9bec30b40
+frame dump: draw 65: GL program 365, target 0:0x9bec30d20/115b 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 1 mask 0xf, prim 0x4, count 300 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9bec30b40
+frame dump: draw 66: GL program 365, target 0:0x9bec30d20/115b 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 1 mask 0xf, prim 0x4, count 498 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9bec30b40
+frame dump: draw 67: GL program 365, target 0:0x9bec30d20/115b 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 1 mask 0xf, prim 0x4, count 60 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9bec30b40
+frame dump: draw 68: GL program 365, target 0:0x9bec30d20/115b 1280x720 depth 0x9c14e01e0, depth test 1 write 1 func 0x201, cull 1, blend 1 mask 0xf, prim 0x4, count 174 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9bec30b40
+frame dump: draw 69: GL program 541, target 0:0x9bec30d20/115b 1:0x9c14e23a0/70 2:0x9c14e28a0/115b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 216 multi 2
+frame dump:   samples 0:0x9beb8f020 1:0x9be47e760 2:0x9be47e760 3:0x9c14e2ee0
+frame dump: draw 70: GL program 541, target 0:0x9bec30d20/115b 1:0x9c14e23a0/70 2:0x9c14e28a0/115b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 18 multi 2
+frame dump:   samples 0:0x9beb8f020 1:0x9be47e760 2:0x9be47e760 3:0x9c14e2ee0
+frame dump: draw 71: GL program 541, target 0:0x9bec30d20/115b 1:0x9c14e23a0/70 2:0x9c14e28a0/115b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 1188 multi 8
+frame dump:   samples 0:0x9beb8f020 1:0x9be47e760 2:0x9be47e760 3:0x9c14e2ee0
+frame dump: draw 72: GL program 475, target 0:0x9bec30d20/115b 1:0x9beb8ee40/115b 2:0x9beb8e940/70b 3:0x9c14608c0/115b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 318 multi 0
+frame dump:   samples 0:0x9beb47980 1:0x9b6a8e620 2:0x9b6a8e9e0
+frame dump: clear target 0:0x9beb8e620/70 depth 0x9beb8dcc0, colour mask 0x1 (write 0xf) to 0 0 0 0, depth 0 (1), scissor 0
+frame dump: clear target 0:0x9beb8e760/70 depth 0x9beb8e120, colour mask 0x1 (write 0xf) to 0 0 0 0, depth 0 (1), scissor 0
+frame dump: blit 0x9b9af01e0 -> 0x9beb8e620 colour 0 depth 1, 0,0-1280,720 -> 0,0-1280,720
+frame dump: draw 73: GL program 356, target 0:0x9c14e2760/115 1280x720 depth 0x0, depth test 0 write 0 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9beb8d2c0 2:0x9beb8de00 3:0x9beb8da40 4:0x9be47e760 5:0x9c14e2ee0 6:0x9c14e23a0 7:0x9b9af0320 8:0x9c14e2620
+frame dump: draw 74: GL program 357, target 0:0x9bec30fa0/115 1280x720 depth 0x0, depth test 0 write 0 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9beb8f020 1:0x9c14e23a0 2:0x9bec30d20 3:0x9b9af0320 4:0x9bec30b40 5:0x9c14e28a0 6:0x9c14e01e0 7:0x9beb8d2c0 8:0x9beb8ee40 9:0x9c14e2b20 10:0x9be47e760 11:0x9c14e2760
+frame dump: draw 75: GL program 358, target 0:0x9bec30d20/115 1:0x9c14e1f40/115 1280x720 depth 0x0, depth test 0 write 0 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9bec30fa0 1:0x9b9af0320 2:0x9beb8e940 3:0x9c14e1e00
+frame dump: draw 76: GL program 359, target 0:0x9c1460500/55 1x1 depth 0x0, depth test 0 write 0 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9bec30d20 1:0x9b9af0320 2:0x9c14601e0
+frame dump: draw 77: GL program 360, target 0:0x9b9af01e0/70 1280x720 depth 0x0, depth test 0 write 0 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9bec30d20 1:0x9c1460500
+frame dump: clear target 0:0x9bec30aa0/70 depth 0x9bec300a0, colour mask 0x1 (write 0xf) to 0 0 0 0, depth 1 (1), scissor 0
+frame dump: blit 0x9b9af01e0 -> 0x9bec30aa0 colour 0 depth 1, 0,0-1280,720 -> 0,0-1280,720
+frame dump: clear target 0:0x9bec31d60/70 depth 0x9bec31540, colour mask 0x1 (write 0xf) to 0 0 0 0, depth 1 (1), scissor 0
+frame dump: clear target 0:0x9b9af01e0/70 depth 0x9b9af0320, colour mask 0x0 (write 0xf) to 0 0 0 0, depth 1 (1), scissor 0
+frame dump: draw 78: GL program 4, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 0 write 0 func 0x203, cull 1, blend 1 mask 0x7, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9beb8f520
+frame dump: clear target 0:0x9b9af01e0/70 depth 0x9b9af0320, colour mask 0x0 (write 0xf) to 0 0 0 0, depth 1 (1), scissor 0
+frame dump: clear target 0:0x9b9af01e0/70 depth 0x9b9af0320, colour mask 0x0 (write 0x0) to 0 0 0 0, depth 1 (1), scissor 0
+frame dump: draw 79: GL program 41, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples
+frame dump: clear target 0:0x9c1463de0/70 depth 0x0, colour mask 0x1 (write 0xf) to 0 0 0 0, depth 0 (1), scissor 0
+frame dump: clear target 0:0x9c1463de0/70 depth 0x0, colour mask 0x1 (write 0xf) to 0 0 0 0.5, depth 0 (1), scissor 0
+frame dump: draw 80: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9c14d8f00
+frame dump: draw 81: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9c14d9400
+frame dump: draw 82: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9c14d9540
+frame dump: draw 83: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9c14d9b80
+frame dump: draw 84: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9c14d9cc0
+frame dump: draw 85: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9c14d8b40
+frame dump: draw 86: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9c14d8c80
+frame dump: draw 87: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9c14d8dc0
+frame dump: draw 88: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9c14d9040
+frame dump: draw 89: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9c14d92c0
+frame dump: draw 90: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9c14d9680
+frame dump: draw 91: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9c14d97c0
+frame dump: draw 92: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9c14d9a40
+frame dump: draw 93: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9c26d8dc0
+frame dump: draw 94: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9c26d8f00
+frame dump: draw 95: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9b6898dc0
+frame dump: draw 96: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9b6899720
+frame dump: draw 97: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9b6899cc0
+frame dump: draw 98: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9b68597c0
+frame dump: draw 99: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9b68599a0
+frame dump: draw 100: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9b685a440
+frame dump: draw 101: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9b685aee0
+frame dump: draw 102: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9b685b5c0
+frame dump: draw 103: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9b685b840
+frame dump: draw 104: GL program 344, target 0:0x9c1463de0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9b6859b80
+frame dump: clear target 0:0x9c14633e0/70 depth 0x0, colour mask 0x1 (write 0xf) to 0 0 0 0, depth 0 (1), scissor 0
+frame dump: draw 105: GL program 339, target 0:0x9c14633e0/70b 512x512 depth 0x0, depth test 0 write 0 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9c1463de0
+frame dump: draw 106: GL program 23, target 0:0x9c14633e0/70b 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 510 multi 0
+frame dump:   samples 0:0x9b3006da0
+frame dump: draw 107: GL program 41, target 0:0x9c14633e0/70 512x512 depth 0x0, depth test 1 write 1 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples
+frame dump: draw 108: GL program 339, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9c14633e0
+frame dump: draw 109: GL program 50, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 48 multi 0
+frame dump:   samples 0:0x9b3006e40
+frame dump: draw 110: GL program 146, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 48 multi 0
+frame dump:   samples 0:0x9be47cb40
+frame dump: draw 111: GL program 326, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 24 multi 0
+frame dump:   samples
+frame dump: draw 112: GL program 329, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x204, cull 1, blend 1 mask 0x0, prim 0x4, count 6 multi 0
+frame dump:   samples
+frame dump: draw 113: GL program 39, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 0 write 0 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples
+frame dump: draw 114: GL program 39, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 0 write 0 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples
+frame dump: draw 115: GL program 39, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 0 write 0 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples
+frame dump: draw 116: GL program 39, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 0 write 0 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples
+frame dump: draw 117: GL program 39, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 0 write 0 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples
+frame dump: draw 118: GL program 39, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 0 write 0 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples
+frame dump: draw 119: GL program 39, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 0 write 0 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples
+frame dump: draw 120: GL program 146, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 120 multi 0
+frame dump:   samples 0:0x9be47cb40
+frame dump: draw 121: GL program 50, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9beb7e800
+frame dump: draw 122: GL program 50, target 0:0x9b9af01e0/70 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 12 multi 0
+frame dump:   samples 0:0x9c14638e0
+frame dump: draw 123: GL program 50, target 0:0x9b9af01e0/70 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples 0:0x9c1462bc0
+frame dump: draw 124: GL program 50, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 12 multi 0
+frame dump:   samples 0:0x9beb7e800
+frame dump: draw 125: GL program 89, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 264 multi 0
+frame dump:   samples 0:0x9be47e760
+frame dump: draw 126: GL program 92, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 0, blend 1 mask 0xf, prim 0x4, count 180 multi 0
+frame dump:   samples 0:0x9c1462d00
+frame dump: draw 127: GL program 77, target 0:0x9b9af01e0/70 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 582 multi 0
+frame dump:   samples 0:0x9be47e760
+frame dump: draw 128: GL program 146, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 72 multi 0
+frame dump:   samples 0:0x9be47cb40
+frame dump: draw 129: GL program 89, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 642 multi 0
+frame dump:   samples 0:0x9be47e760
+frame dump: draw 130: GL program 50, target 0:0x9b9af01e0/70 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 12 multi 0
+frame dump:   samples 0:0x9c1463160
+frame dump: draw 131: GL program 146, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 72 multi 0
+frame dump:   samples 0:0x9be47cb40
+frame dump: draw 132: GL program 183, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 60 multi 0
+frame dump:   samples
+frame dump: draw 133: GL program 53, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 0 write 0 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 72 multi 0
+frame dump:   samples 0:0x9c14e3340
+frame dump: draw 134: GL program 146, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 4788 multi 0
+frame dump:   samples 0:0x9be47cb40
+frame dump: draw 135: GL program 183, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples
+frame dump: draw 136: GL program 183, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples
+frame dump: draw 137: GL program 183, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples
+frame dump: draw 138: GL program 183, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples
+frame dump: draw 139: GL program 183, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples
+frame dump: draw 140: GL program 183, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples
+frame dump: draw 141: GL program 183, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples
+frame dump: draw 142: GL program 183, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples
+frame dump: draw 143: GL program 183, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 6 multi 0
+frame dump:   samples
+frame dump: draw 144: GL program 77, target 0:0x9b9af01e0/70 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 0 mask 0xf, prim 0x4, count 60 multi 0
+frame dump:   samples 0:0x9be47e760
+frame dump: draw 145: GL program 146, target 0:0x9b9af01e0/70b 1280x720 depth 0x9b9af0320, depth test 1 write 1 func 0x203, cull 1, blend 1 mask 0xf, prim 0x4, count 228 multi 0
+frame dump:   samples 0:0x9be47cb40
+frame dump: clear target 0:0x9b9af01e0/70 depth 0x9b9af0320, colour mask 0x0 (write 0xf) to 0 0 0 0, depth 1 (1), scissor 0
+frame dump: blit 0x9b9af01e0 -> 0x9b689bca0 (window) colour 1 depth 0, 0,0-1280,720 -> 0,0-1280,720
