@@ -311,6 +311,9 @@ void main() {
         float ao = m.g;
 #if defined USE_RT && defined RT_AO
         ao = texture(colortex3, texcoord * GI_SCALE).r * (0.6 + 0.4 * m.g);   // keep a little of the corner shading
+        // the held item and your own body have no traced AO (deferred.fsh skips them), and the half-res AO next to
+        // them is the ground in the body's shadow: black bands along every edge. Vanilla's corner shading instead
+        if (handLike(mat)) ao = m.g;
 #endif
 #if defined USE_RT && defined RT_GI
         // GI brings the sky light and the bounced light, so the lightmap's sky guess is left out
@@ -339,7 +342,7 @@ void main() {
   #endif
   #ifdef USE_LIGHTS
         // coloured block light (in the GI, deferred.fsh) replaces the lightmap's block light; the held light stays
-        col = a * (surfaceLight(p, nm, vec2(handLike(mat) ? nl.z : 0.0, nl.w), ao, mat, lightDir, sunCol, hasSkylight ? vec3(0.0) : skyAmb, sh) + gi)
+        col = a * (surfaceLight(p, nm, vec2(handLike(mat) ? nl.z * (mat == MAT_BODY ? 0.6 : 1.0) : 0.0, nl.w), ao, mat, lightDir, sunCol, hasSkylight ? vec3(0.0) : skyAmb, sh) + gi)
             + emission(a, mat);
   #else
         col = a * (surfaceLight(p, nm, nl.zw, ao, mat, lightDir, sunCol, hasSkylight ? vec3(0.0) : skyAmb, sh) + gi) + emission(a, mat);
