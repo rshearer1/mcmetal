@@ -3,6 +3,7 @@ package net.minecraft.client;
 public class Minecraft {
     public net.minecraft.client.gui.screens.Screen screen;
     public Options options;
+    public net.minecraft.client.renderer.LevelRenderer levelRenderer;
     public net.minecraft.client.multiplayer.ClientLevel level;
     public static Minecraft getInstance() { return null; }
     public void execute(Runnable task) { }

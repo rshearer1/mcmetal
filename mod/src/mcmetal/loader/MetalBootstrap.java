@@ -120,6 +120,10 @@ public final class MetalBootstrap implements GraphicsBootstrapper {
                     # lights in mcmetal/lights.tsv (block, states, light level, colour). 0 = packs see only their own list.
                     #MCMETAL_LIGHT_LIST=0
                     #
+                    # Without a shader pack, LambDynamicLights' moving lights (a held torch, a burning mob) are drawn by
+                    # the terrain shader instead of rebuilding the chunks around them every tick. 0 = the mod's own way.
+                    #MCMETAL_DYN_LIGHTS=0
+                    #
                     # Experimental: after joining a world, JEI builds its recipe list on a background thread instead
                     # of holding the game still while it does (about 12 s with a big pack).
                     #MCMETAL_ASYNC_JEI=1
