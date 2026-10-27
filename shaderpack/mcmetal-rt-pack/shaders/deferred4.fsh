@@ -146,7 +146,7 @@ uniform vec3 previousCameraPosition;
 // where this pixel was last frame minus where it is now, in pixels (GL's way up: +y is up the screen). Camera
 // motion only, like the TAA's reprojection (composite2.fsh); the held item moves with the camera, so it gets 0
 vec2 cameraMotion(float depth, int mat) {
-    if (mat == MAT_HAND) return vec2(0.0);
+    if (handLike(mat)) return vec2(0.0);
     vec4 pc;
     if (depth < 1.0) {
         vec4 v = gbufferProjectionInverse * vec4(vec3(texcoord, depth) * 2.0 - 1.0, 1.0);
@@ -299,6 +299,8 @@ void main() {
         vec3 sh = vec3(0.0);
 #ifdef USE_RT
         sh = mat == MAT_HAND ? vec3(1.0) : filteredShadow(texcoord, n);   // traced and averaged in deferred1.fsh
+        // your own body: sunlit where the sky is open (it would shade itself in the rays, and its depth can't be trusted)
+        if (mat == MAT_BODY) sh = vec3(smoothstep(0.85, 0.97, nl.w));
 #else
         if (dot(sunCol, sunCol) > 1e-6 && (dot(n, lightDir) > 0.0 || mat == MAT_FOLIAGE))
             sh = sunShadow(p, n, lightDir, mat);
@@ -313,7 +315,7 @@ void main() {
 #if defined USE_RT && defined RT_GI
         // GI brings the sky light and the bounced light, so the lightmap's sky guess is left out
         // the held item isn't in the ray scene's history: it gets the plain sky light instead
-        vec3 gi = mat == MAT_HAND ? skyAmb * (nl.w * nl.w) * (0.7 + 0.3 * n.y) : filteredGI(n, length(p));
+        vec3 gi = handLike(mat) ? skyAmb * (nl.w * nl.w) * (0.7 + 0.3 * n.y) : filteredGI(n, length(p));
         vec3 envLight = gi;   // what a rough surface sees all round (for its blurred reflection below)
   #ifdef LABPBR
         // the GI is traced for the block's face: let the normal map shade it too (light comes mostly from above
@@ -326,7 +328,7 @@ void main() {
         // right of the view, so the shadows show beside what casts them instead of hiding right behind it)
         {
             float held = float(max(heldBlockLightValue, heldBlockLightValue2));
-            if (held > 0.0 && mat != MAT_HAND && held > length(p)) {
+            if (held > 0.0 && !handLike(mat) && held > length(p)) {
                 vec3 hand = mat3(gbufferModelViewInverse) * vec3(0.3, -0.25, -0.35);
                 vec3 o = p + n * 0.05;
                 vec3 to = hand - o;
@@ -337,7 +339,7 @@ void main() {
   #endif
   #ifdef USE_LIGHTS
         // coloured block light (in the GI, deferred.fsh) replaces the lightmap's block light; the held light stays
-        col = a * (surfaceLight(p, nm, vec2(mat == MAT_HAND ? nl.z : 0.0, nl.w), ao, mat, lightDir, sunCol, hasSkylight ? vec3(0.0) : skyAmb, sh) + gi)
+        col = a * (surfaceLight(p, nm, vec2(handLike(mat) ? nl.z : 0.0, nl.w), ao, mat, lightDir, sunCol, hasSkylight ? vec3(0.0) : skyAmb, sh) + gi)
             + emission(a, mat);
   #else
         col = a * (surfaceLight(p, nm, nl.zw, ao, mat, lightDir, sunCol, hasSkylight ? vec3(0.0) : skyAmb, sh) + gi) + emission(a, mat);
@@ -366,7 +368,7 @@ void main() {
         col += a * m.a * (4.0 * EMISSIVE_STRENGTH);
 #ifdef LABPBR
         // shiny surfaces: the sun's highlight (GGX), and ray-traced reflections where smooth enough
-        if ((smoothness > 0.01 || metal) && m.b < 0.01 && mat != MAT_HAND) {
+        if ((smoothness > 0.01 || metal) && m.b < 0.01 && !handLike(mat)) {
             vec3 v = normalize(p);
             float alpha = max((1.0 - smoothness) * (1.0 - smoothness), 0.003);
             float nv = clamp(dot(nm, -v), 1e-3, 1.0);

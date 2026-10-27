@@ -46,7 +46,7 @@ void main() {
     float depth = texture(depthtex0, texcoord).r;
     int mat = int(texture(colortex2, texcoord).r * 255.0 + 0.5);
     vec2 puv = texcoord;
-    if (mat != MAT_HAND && depth < 1.0) {
+    if (!handLike(mat) && depth < 1.0) {
         vec4 v = gbufferProjectionInverse * vec4(vec3(texcoord, depth) * 2.0 - 1.0, 1.0);
         vec3 p = mat3(gbufferModelViewInverse) * (v.xyz / v.w) + gbufferModelViewInverse[3].xyz;
         vec4 pc = gbufferPreviousProjection * (gbufferPreviousModelView * vec4(p + cameraPosition - previousCameraPosition, 1.0));

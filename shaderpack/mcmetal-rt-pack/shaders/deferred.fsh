@@ -75,7 +75,7 @@ layout(location = 1) out vec4 outGI;
 void main() {
     float depth = texture(depthtex0, texcoord).r;
     int mat = int(texture(colortex2, texcoord).r * 255.0 + 0.5);
-    if (depth >= 1.0 || mat == MAT_HAND || mat == MAT_LIT) {
+    if (depth >= 1.0 || handLike(mat) || mat == MAT_LIT) {
         outAO = vec4(1.0, 0.0, 0.0, 1.0);
         outGI = vec4(0.0);
         return;
@@ -127,7 +127,6 @@ void main() {
     vec3 t = normalize(abs(n.y) < 0.99 ? cross(n, vec3(0.0, 1.0, 0.0)) : cross(n, vec3(1.0, 0.0, 0.0)));
     vec3 d = normalize(t * (r * cos(phi)) + cross(n, t) * (r * sin(phi)) + n * sqrt(1.0 - u1));
     vec3 o = mat == MAT_FOLIAGE ? p + d * 0.05 : p + n * 0.02;
-    o += d * ownBodySkip(p, mat);
     float hit;
   #ifdef RT_GI
   #ifdef GI_SHORT_RAYS
