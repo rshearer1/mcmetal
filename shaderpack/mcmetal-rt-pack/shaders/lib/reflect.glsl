@@ -1,5 +1,6 @@
 // Ray-traced reflections (fragment shaders, with USE_RT). Needs settings, common, uniforms, sky, lighting, shadow.
 // mcmetal: closest solid/cutout hit with its face normal, texture colour x vertex tint (sRGB), lightmap and block id
+#include "/lib/lightcolor.glsl"
 float mcm_trace_hit(vec3 origin, vec3 dir, float tmax, out vec3 normal, out vec4 albedo, out vec2 lightmap, out int blockId);
 #ifdef COARSE_RAYS
 // the same, but every block counts as solid: no alpha test for leaves, grass and flowers, so the ray hardware never
@@ -31,7 +32,7 @@ float mcm_hit_emission();
 
 int materialOf(int blockId) {
     if (blockId == 10001 || blockId == 10004) return MAT_FOLIAGE;
-    if (blockId >= 10100 && blockId < 10200) return MAT_EMISSIVE;
+    if (blockId >= 10100 && blockId < 10200) { float level; lightColorOf(blockId, level); return level <= 6.0 ? MAT_EMISSIVE_DIM : MAT_EMISSIVE; }
     if (blockId >= 10200 && blockId < 10300) return MAT_GLOW;
     return MAT_NONE;
 }
