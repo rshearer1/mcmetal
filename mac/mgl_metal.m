@@ -1995,14 +1995,17 @@ static int rt_native_on(int fragment)
     return 0;
 }
 
-/* MGL_RT_PRIM_DATA=0: mcm_any_hit reads the triangle record through the instance list, not from the scene's
-   per-primitive data (Apple measured 10-16% from per-primitive data in its own ray tracing app) */
+/* MGL_RT_PRIM_DATA=1: mcm_any_hit reads the triangle record from the scene's per-primitive data instead of through
+   the instance list (Apple measured 10-16% from it in its own ray tracing app). Off by default: on the M3
+   (RT-NATIVE1, RT-GLASS1, 2026-10-27) it was no faster than the chain, and with it the glass test scene showed a
+   large water-like sheet over the grass behind the panes (only with reflections and caustics on). Cause not found
+   yet. */
 static int rt_prim_data_on(void)
 {
     static int on = -1;
     if (on < 0) {
         const char *e = getenv("MGL_RT_PRIM_DATA");
-        on = !e || atoi(e) != 0;
+        on = e && atoi(e) != 0;
         if (@available(macOS 14.0, *)) {
         } else
             on = 0;
