@@ -57,6 +57,9 @@ float lightStop(int id) { return wholeLight(id) ? 0.45 : 0.9; }
 // one sample of all nearby lights: pick a light in proportion to its unshadowed light, trace its shadow, divide by
 // the pick chance. u1, u2, u3 are random numbers in [0,1).
 vec3 coloredBlockLight(vec3 p, vec3 n, int mat, float u1, float u2, float u3) {
+    // glowing blocks (lava, glowstone) shine by themselves: lit by their own light, or a pool by its neighbours,
+    // since lava's light comes from just over its surface they washed out pale
+    if (mat == MAT_GLOW) return vec3(0.0);
     vec3 lp[LIGHT_SLOTS]; int ids[LIGHT_SLOTS]; float w[LIGHT_SLOTS];
     float total = 0.0;
     int count = 0;
@@ -125,6 +128,11 @@ vec3 lrUnpackPos(uint v) {   // the light block's centre in player space (the co
 
 // u1-u4 random numbers in [0,1); prevPx: this point's GI pixel last frame (prevOk: it was this surface); px: now
 vec3 coloredBlockLightReSTIR(vec3 p, vec3 n, int mat, float u1, float u2, float u3, float u4, vec2 prevPx, bool prevOk, vec2 px) {
+    if (mat == MAT_GLOW) {   // (as coloredBlockLight)
+        int gi = lrIndex(px, frameCounter);
+        if (gi >= 0) lrCells[gi] = uvec2(0u);
+        return vec3(0.0);
+    }
     // a fresh pick among the nearest lights, in proportion to their unshadowed light (as coloredBlockLight)
     vec3 lp[LIGHT_SLOTS]; int ids[LIGHT_SLOTS]; float w[LIGHT_SLOTS];
     float total = 0.0;
