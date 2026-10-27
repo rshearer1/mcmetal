@@ -472,6 +472,9 @@ void main() {
         col = n * 0.5 + 0.5;
 #endif
     }
+#if DEBUG_VIEW == 9
+    col = texture(colortex0, texcoord).rgb;   // the program, stage and tag code lib/gbuffer.glsl wrote in place of the albedo
+#endif
 #if DEBUG_VIEW == 8
     // the material tag each pixel carries: magenta your own body, cyan the held item, yellow mobs and players, green
     // faint glowing blocks, orange other light blocks, white glowing blocks, blue foliage, grey the rest

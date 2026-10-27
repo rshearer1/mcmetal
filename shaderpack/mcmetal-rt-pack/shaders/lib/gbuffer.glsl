@@ -377,6 +377,11 @@ void main() {
     // depth buffer can't be trusted there)
     int outMat = mat == MAT_ENTITY && ownBody() ? MAT_BODY : mat;
     outMaterial = vec4(float(outMat) / 255.0, ao, puddle, spec.a);
+  #if DEBUG_VIEW == 9
+    // which program and render stage drew this pixel (deferred4.fsh shows it as is): r the program's material / 16,
+    // g Iris's render stage / 32, b the tag the pixel ends up with / 16
+    outAlbedo = vec4(float(MATERIAL) / 16.0, float(renderStage) / 32.0, float(outMat) / 16.0, 1.0);
+  #endif
     outPBR = vec4(octEncode(nm), 1.0 - spec.r, spec.g);   // roughness = 1 - smoothness
 #else
     vec3 albedo = toLinear(c.rgb);
