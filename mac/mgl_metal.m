@@ -8,6 +8,7 @@
 #import <MetalFX/MetalFX.h>
 #import <AppKit/AppKit.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 #include <ctype.h>
 #include <math.h>
 #include <stdatomic.h>
@@ -7090,7 +7091,7 @@ static id<MTLTexture> fg_interpolate(double frame_s)
         fi.aspectRatio = p[5] / p[0];
         fi.nearPlane = p[14] / (p[10] - 1.0f);
         fi.farPlane = p[14] / (p[10] + 1.0f);
-        /* The camera matrices (never set before 10-27, so MetalFX had zeros): world to view = gbufferModelView
+        /* The camera matrices (never set before 10-27): world to view = gbufferModelView
            after moving the world by -cameraPosition (Iris's view is camera-relative, so without that the "world"
            would move with the player and the two frames' cameras would differ only by turning); view to clip in
            Metal's clip space for GL-row textures (y negated, z from [-w, w] to [0, w]), as the denoiser gets it.
@@ -7113,8 +7114,18 @@ static id<MTLTexture> fg_interpolate(double frame_s)
             simd_float4x4 v, cm;
             memcpy(&v, view, sizeof v);
             memcpy(&cm, clip, sizeof cm);
-            fi.worldToViewMatrix = v;
-            fi.viewToClipMatrix = cm;
+            /* newer than the macOS 26.3 SDK (Apple's docs list them; CI's Xcode 26.3 headers don't), so set them
+               by selector where this macOS has them */
+            typedef void (*set_mat)(id, SEL, simd_float4x4);
+            SEL sv = NSSelectorFromString(@"setWorldToViewMatrix:"), sc = NSSelectorFromString(@"setViewToClipMatrix:");
+            int have = [fi respondsToSelector:sv] && [fi respondsToSelector:sc];
+            if (have) {
+                ((set_mat)objc_msgSend)(fi, sv, v);
+                ((set_mat)objc_msgSend)(fi, sc, cm);
+            }
+            static int logged;
+            if (!logged++)
+                mgl_log("frame interpolation: camera matrices %s", have ? "given to MetalFX" : "not taken by this macOS's MetalFX");
         }
         fi.shouldResetHistory = fg.reset;
         fg.reset = 0;
