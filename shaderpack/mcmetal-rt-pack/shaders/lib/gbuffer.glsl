@@ -355,7 +355,10 @@ void main() {
     spec.r = max(spec.r, 0.4 * wetAll);
     spec.g = max(spec.g, 0.02 * wetAll);
   #endif
-    outMaterial = vec4(float(mat) / 255.0, ao, puddle, spec.a);
+    // your own body in first person: entity pixels in the column round the eye (from the vertex's own position: the
+    // depth buffer can't be trusted there)
+    int outMat = mat == MAT_ENTITY && dot(playerPos.xz, playerPos.xz) < 0.64 && playerPos.y > -2.0 && playerPos.y < 0.4 ? MAT_BODY : mat;
+    outMaterial = vec4(float(outMat) / 255.0, ao, puddle, spec.a);
     outPBR = vec4(octEncode(nm), 1.0 - spec.r, spec.g);   // roughness = 1 - smoothness
 #else
     vec3 albedo = toLinear(c.rgb);

@@ -24,7 +24,9 @@ vec3 lightFrom(vec3 p, vec3 n, int mat, vec3 lp, int id, out vec3 dir, out float
     // mobs and your own body can stand closer to a light than any block face: lit as if 1.5 blocks away at most, so
     // skin beside lava or a lamp is warm, not blown out
     float dd = mat == MAT_ENTITY ? max(dist, 1.5) : dist;
-    return c * (level / 15.0) * ndl * fade * fade * 4.0 / (0.25 * dd * dd + 1.0);
+    // faint lights (glowing leaves and logs: a whole tree of them) at half strength, or a grove lights itself up
+    float strength = level / 15.0 * (level <= 6.0 ? 0.5 : 1.0);
+    return c * strength * ndl * fade * fade * 4.0 / (0.25 * dd * dd + 1.0);
 }
 
 // one sample of all nearby lights: pick a light in proportion to its unshadowed light, trace its shadow, divide by
@@ -59,18 +61,16 @@ vec3 coloredBlockLight(vec3 p, vec3 n, int mat, float u1, float u2, float u3) {
     vec3 dir; float dist;
     vec3 l = lightFrom(p, n, mat, target, ids[pick], dir, dist);
     vec3 o = mat == MAT_FOLIAGE ? p + dir * 0.06 : p + n * 0.02 + dir * 0.01;
-    float sk = ownBodySkip(p, mat);
-    o += dir * sk;
     // stop short of the light block itself (a full block's faces are 0.5 from its centre, corners up to 0.87)
 #ifdef COLORED_LIGHT_GLASS
     // torch light through stained glass (and water) takes its colour too
     vec3 transmit = vec3(1.0);
-    if (dist > 0.9 + sk && mcm_trace_tinted(o, dir, dist - 0.9 - sk, transmit) > 0.0) return vec3(0.0);
+    if (dist > 0.9 && mcm_trace_tinted(o, dir, dist - 0.9, transmit) > 0.0) return vec3(0.0);
     // the filter mcmetal gives back is pale (the glass texture is half see-through): deepen its colour, keep its
     // brightness, so the floor behind red glass is clearly red
     l *= max(mix(vec3(luma(transmit)), transmit, 3.0), vec3(0.0));
 #else
-    if (dist > 0.9 + sk && mcm_trace(o, dir, dist - 0.9 - sk) > 0.0) return vec3(0.0);
+    if (dist > 0.9 && mcm_trace(o, dir, dist - 0.9) > 0.0) return vec3(0.0);
 #endif
     return l * (total / w[pick]) * COLORED_LIGHT_STRENGTH * STYLE_BLOCK_TINT;
 }
@@ -161,14 +161,12 @@ vec3 coloredBlockLightReSTIR(vec3 p, vec3 n, int mat, float u1, float u2, float 
     vec3 dir; float dist;
     vec3 l = lightFrom(p, n, mat, target, yId, dir, dist);
     vec3 o = mat == MAT_FOLIAGE ? p + dir * 0.06 : p + n * 0.02 + dir * 0.01;
-    float sk = ownBodySkip(p, mat);
-    o += dir * sk;
   #ifdef COLORED_LIGHT_GLASS
     vec3 transmit = vec3(1.0);
-    bool blocked = dist > 0.9 + sk && mcm_trace_tinted(o, dir, dist - 0.9 - sk, transmit) > 0.0;
+    bool blocked = dist > 0.9 && mcm_trace_tinted(o, dir, dist - 0.9, transmit) > 0.0;
     l *= max(mix(vec3(luma(transmit)), transmit, 3.0), vec3(0.0));
   #else
-    bool blocked = dist > 0.9 + sk && mcm_trace(o, dir, dist - 0.9 - sk) > 0.0;
+    bool blocked = dist > 0.9 && mcm_trace(o, dir, dist - 0.9) > 0.0;
   #endif
     if (ci >= 0) lrCells[ci] = uvec2(lrPackPos(yPos), packHalf2x16(vec2(blocked ? 0.0 : W, min(M, 20.0))));
     if (blocked) return vec3(0.0);

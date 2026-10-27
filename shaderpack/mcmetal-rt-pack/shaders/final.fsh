@@ -24,7 +24,7 @@ const float centerDepthHalflife = 1.0;   // the focus follows what you look at o
 vec3 depthOfField(vec2 uv, vec3 col) {
     float depth = texture(depthtex0, uv).r;
     int mat = int(texture(colortex2, uv).r * 255.0 + 0.5);
-    if (mat == MAT_HAND) return col;
+    if (handLike(mat)) return col;
     float focus = viewDist(vec2(0.5), centerDepthSmooth), dist = depth >= 1.0 ? 1e4 : viewDist(uv, depth);
     // blur radius in pixels: like a camera lens, by how far 1/distance is from the focus's
     float coc = min(abs(1.0 / max(focus, 0.5) - 1.0 / dist) * DOF_STRENGTH * viewHeight * 0.02, 12.0);
@@ -46,7 +46,7 @@ uniform mat4 gbufferPreviousModelView, gbufferPreviousProjection;
 uniform vec3 previousCameraPosition;
 vec3 motionBlur(vec2 uv, vec3 col) {
     float depth = texture(depthtex0, uv).r;
-    if (int(texture(colortex2, uv).r * 255.0 + 0.5) == MAT_HAND) return col;
+    if (handLike(int(texture(colortex2, uv).r * 255.0 + 0.5))) return col;
     vec4 pc;
     if (depth < 1.0) {
         vec4 v = gbufferProjectionInverse * vec4(vec3(uv, depth) * 2.0 - 1.0, 1.0);
