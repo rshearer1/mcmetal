@@ -14,6 +14,7 @@
 #define RT_GI // ray-traced global illumination: bounce light, colour bleeding, sky light through openings
 //#define PATH_TRACED // path tracing like Bedrock RTX: bounce light follows several bounces, each lit by the sun and light blocks directly (slower; for M3 and newer)
 #define PT_BOUNCES 3 // [1 2 3 4 6] with Path Traced: how many times light bounces
+//#define PT_WAVEFRONT // with Path Traced in a compute pass: each bounce in its own pass over only the paths still going (fewer idle threads)
 //#define PT_COMPUTE // with Path Traced: trace in a compute pass (Metal compute, needs mcmetal with Iris compute support); the first step to faster path tracing
 #define PT_DISTANCE 48.0 // [16.0 24.0 32.0 48.0 64.0 96.0] with Path Traced: how far each bounce looks, in blocks
 #define GI_RATE 2 // [1 2 4] trace bounce light and AO for 1 in GI_RATE pixels each frame (the rest keep their average)
@@ -234,6 +235,11 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #endif
 #if defined PT_COMPUTE && !(defined PATH_TRACED && defined USE_RT && defined RT_GI && defined IRIS_FEATURE_CUSTOM_IMAGES && defined IRIS_FEATURE_COMPUTE_SHADERS)
     #undef PT_COMPUTE   // compute and custom images come with Iris on mcmetal; the fragment pass does the same work
+#endif
+#ifdef PT_WAVEFRONT
+#endif
+#if defined PT_WAVEFRONT && !(defined PT_COMPUTE && defined IRIS_FEATURE_SSBO)
+    #undef PT_WAVEFRONT
 #endif
 // MetalFX denoises the whole picture: our own GI denoiser steps aside
 #ifdef METALFX_DENOISE
