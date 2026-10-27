@@ -311,6 +311,14 @@ GLboolean glIsShader(GLuint name) { return shader_obj(name) != NULL; }
                                               // 10100 10299): index or -1; pos = block centre. MCMETAL_LIGHTS is defined.
        float mcm_hit_emission();                      // LabPBR emission (specular alpha, 0..1) at the last
                                               // mcm_trace_hit / _coarse hit; 0 for entities. MCMETAL_RT_PBR is defined.
+       float mcm_hit_roughness();                     // LabPBR roughness (1 - smoothness, specular red; 0..1) at
+                                              // the last hit; 1 for entities and without a resource pack's maps
+       float mcm_hit_f0();                            // LabPBR F0 / metal id (specular green, 0..1; >= 230/255 =
+                                              // metal) at the last hit; 0.04 for entities
+       vec3 mcm_hit_mapped_normal(vec3 normal);       // the last hit's face normal (as mcm_trace_hit gave it) bent
+                                              // by the LabPBR normal map; the face itself without one. The tangent
+                                              // frame is Minecraft's for full-block faces (u east/west, v down or
+                                              // south): right for most blocks, rotated on a few. MCMETAL_RT_HIT_PBR.
    in plain GLSL (so Iris's own parser accepts it) and calls it; origin/dir are in Iris's player space
    (camera-relative world space). We supply the body with a GL_EXT_ray_query against the terrain scene. */
 static void add_ray_tracing(mgl_shader *s)
@@ -332,6 +340,8 @@ static void add_ray_tracing(mgl_shader *s)
                                "layout(std430, binding = 15) readonly buffer McmInstances { McmTris mcm_tris[]; };\n"
                                "uniform sampler2D mcm_atlas;\n"
                                "uniform sampler2D mcm_specular; // the terrain's LabPBR specular atlas (Iris's specular)\n"
+                               "uniform sampler2D mcm_normals; // the terrain's LabPBR normal atlas (Iris's normals)\n"
+                               "#define MCMETAL_RT_HIT_PBR 1 // mcm_hit_roughness, mcm_hit_f0, mcm_hit_mapped_normal\n"
                                "#define MCMETAL_LIGHTS 1\n"
                                "#define MCMETAL_RT_COARSE 1 // mcm_trace_coarse, mcm_trace_hit_coarse\n"
                                /* light list (mglb_rt_update): count, lights (camera-relative block centre, id),
@@ -428,6 +438,28 @@ static void add_ray_tracing(mgl_shader *s)
         "  if (!mcm_hit_tex_) return 0.0;\n"
         "  float e = textureLod(mcm_specular, mcm_hit_uv_, 0.0).a;\n"
         "  return e > 254.5 / 255.0 ? 0.0 : e;\n"
+        "}\n"
+        /* MCMETAL_RT_HIT_PBR: the rest of the last hit's LabPBR material, for shiny bounces in path tracing.
+           Without a resource pack's maps Iris binds plain defaults (specular 0 = rough, normals flat). */
+        "float mcm_hit_roughness() {\n"
+        "  return mcm_hit_tex_ ? 1.0 - textureLod(mcm_specular, mcm_hit_uv_, 0.0).r : 1.0;\n"
+        "}\n"
+        "float mcm_hit_f0() {\n"
+        "  return mcm_hit_tex_ ? textureLod(mcm_specular, mcm_hit_uv_, 0.0).g : 0.04;\n"
+        "}\n"
+        "vec3 mcm_hit_mapped_normal(vec3 n) {\n"
+        "  if (!mcm_hit_tex_) return n;\n"
+        "  vec2 m = textureLod(mcm_normals, mcm_hit_uv_, 0.0).rg * 2.0 - 1.0;\n"
+        "  if (dot(m, m) < 1e-4) return n;\n" /* flat, or no map */
+        "  vec3 ts = vec3(m, sqrt(max(1.0 - dot(m, m), 0.0)));\n"
+        /* Minecraft's full-block faces: up/down u = +x, v = +z / -z; north/south u = -x / +x, v = -y; west/east
+           u = +z / -z, v = -y */
+        "  vec3 a = abs(n);\n"
+        "  vec3 t, b;\n"
+        "  if (a.y >= a.x && a.y >= a.z) { t = vec3(1.0, 0.0, 0.0); b = vec3(0.0, 0.0, n.y > 0.0 ? 1.0 : -1.0); }\n"
+        "  else if (a.z >= a.x) { t = vec3(n.z > 0.0 ? 1.0 : -1.0, 0.0, 0.0); b = vec3(0.0, -1.0, 0.0); }\n"
+        "  else { t = vec3(0.0, 0.0, n.x > 0.0 ? -1.0 : 1.0); b = vec3(0.0, -1.0, 0.0); }\n"
+        "  return normalize(t * ts.x + b * ts.y + n * ts.z);\n"
         "}\n"
         /* coarse rays (MCMETAL_RT_COARSE): every triangle counts as solid, so the ray hardware never stops to run
            the alpha test of leaves, grass and flowers. For blurry light (bounce light, AO), where a leaf's holes

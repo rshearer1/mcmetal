@@ -135,6 +135,7 @@ typedef struct mgl_program {
     int rt_entity;              /* 1 = draws entities (by Iris program name or the entity vertex format's overlay input) */
     int rt_atlas_slot;          /* x.textures[] entry holding the block atlas (u_BlockTex, gtexture...), or -1 */
     int rt_spec_slot;           /* ... and Iris's LabPBR specular atlas ("specular"), or -1 */
+    int rt_norm_slot;           /* ... and Iris's LabPBR normal atlas ("normals"), or -1 */
     int rt_euv_loc, rt_ecol_loc, rt_etex_slot; /* entity colours (mgl_rt.c): UV0, Color, the texture they sample */
     unsigned char *ublock[3];   /* default-block shadow per stage (vertex, fragment, compute) */
     int unit_of[MGL_MAX_TEXTURES * 3]; /* GL texture unit per x.textures[] entry (glUniform1i on a sampler) */
@@ -156,6 +157,7 @@ typedef struct mgl_program {
     int copy_fs;                /* the fragment stage outputs its one texture's sample unchanged (vanilla blit) */
     int jitter_loc;             /* mcm_jitter's location + 1 (MCMETAL_UPSCALE=2), 0 = not looked up yet, -1 = none */
     mgl_denoise_decl *denoise;  /* the pack's MCMETAL_DENOISE_PASS inputs (MCMETAL_DENOISE=1), or NULL */
+    int alias_noted;            /* glDispatchCompute checked whether it samples a texture it writes */
 } mgl_program;
 
 typedef struct mgl_query {

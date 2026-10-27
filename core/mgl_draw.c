@@ -256,6 +256,10 @@ static void gather_textures(mgl_draw *d, mgl_program *p, int compute)
                 bt->tex = mgl_rt_specular; /* mcm_hit_emission: the terrain's LabPBR specular atlas */
                 mgl_sampler_defaults(&bt->sampler);
                 bt->sampler.min_filter = bt->sampler.mag_filter = GL_NEAREST;
+            } else if (p->x.uses_scene && !strcmp(slot->name, "mcm_normals")) {
+                bt->tex = mgl_rt_normals; /* mcm_hit_mapped_normal: the terrain's LabPBR normal atlas */
+                mgl_sampler_defaults(&bt->sampler);
+                bt->sampler.min_filter = bt->sampler.mag_filter = GL_NEAREST;
             } else {
                 int unit = p->unit_of[i];
                 if (unit < 0 || unit >= MGL_MAX_UNITS)
@@ -757,6 +761,17 @@ void glDispatchCompute(GLuint gx, GLuint gy, GLuint gz)
     gather_uniforms(&d, p);
     d.uses_scene = p->x.uses_scene;
     gather_textures(&d, p, 1);
+    /* Once per program: say when a compute pass samples a texture it also writes as an image (Iris's colortexN
+       and colorimgN the same buffer), so packs know their reads in that pass can see this pass's own writes. */
+    if (!p->alias_noted) {
+        p->alias_noted = 1;
+        for (int i = 0; i < d.num_textures[MGL_COMPUTE]; i++)
+            for (int j = 0; j < d.num_textures[MGL_COMPUTE]; j++)
+                if (d.textures[MGL_COMPUTE][i].is_image && !d.textures[MGL_COMPUTE][j].is_image &&
+                    d.textures[MGL_COMPUTE][i].tex && d.textures[MGL_COMPUTE][i].tex == d.textures[MGL_COMPUTE][j].tex)
+                    mgl_log("compute: %s samples a texture it also writes as an image (texture slots %d and %d): "
+                            "the same buffer, no ping-pong", p->debug_name[0] ? p->debug_name : "a program", j, i);
+    }
     mglb_dispatch(&d, (int)gx, (int)gy, (int)gz);
 }
 
