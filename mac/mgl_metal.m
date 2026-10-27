@@ -7992,7 +7992,9 @@ static int tu_frame(id<MTLTexture> win, id<MTLTexture> drawable)
 
 /* MetalFX's denoiser in place of a pack's MCMETAL_DENOISE_PASS (core/mgl_denoise.c, MCMETAL_DENOISE=1).
    Apple's MTLFXTemporalDenoisedScaler (macOS 26, Apple9 GPUs: M3 and newer) denoises a ray-traced picture with
-   its history, guided by depth, motion, normals, albedo and roughness; here at the render size (denoise only).
+   its history, guided by depth, motion, normals, albedo and roughness. Usually at the render size (denoise only); when
+   the pass's inputs are smaller than its render target (a pack tracing at half size into custom images, all its
+   inputs at that size), MetalFX denoises and upscales to the target in the same step.
    One gather pass turns the pack's buffers into what MetalFX takes (fixed formats, so any pack layout works):
    colour as is, the octahedral normal decoded to xyz, roughness and F0 from their channels, diffuse and specular
    albedo split by LabPBR's metal range, depth copied to Depth32Float and, without a pack motion buffer, the
@@ -8010,12 +8012,9 @@ static const char *dn_msl =
     "vertex float4 dn_vs(uint v [[vertex_id]]) { float2 p = float2((v << 1) & 2, v & 2); return float4(p * 2.0 - 1.0, 0.0, 1.0); }\n"
     "struct DnOut { float4 col [[color(0)]]; float4 nrm [[color(1)]]; float4 alb [[color(2)]]; float4 spec [[color(3)]];\n"
     "               float rough [[color(4)]]; float2 mv [[color(5)]]; float d [[depth(any)]]; };\n"
-    "fragment DnOut dn_gather(float4 pos [[position]], texture2d<float> col [[texture(0)]], depth2d<float> dep [[texture(1)]],\n"
-    "                         texture2d<float> nrm [[texture(2)]], texture2d<float> alb [[texture(3)]], texture2d<float> rgh [[texture(4)]],\n"
-    "                         texture2d<float> spc [[texture(5)]], texture2d<float> mot [[texture(6)]], constant DnU &u [[buffer(0)]]) {\n"
-    "    uint2 px = uint2(pos.xy);\n"
+    "static DnOut gather(uint2 px, float d, texture2d<float> col, texture2d<float> nrm, texture2d<float> alb,\n"
+    "                     texture2d<float> rgh, texture2d<float> spc, texture2d<float> mot, constant DnU &u) {\n"
     "    DnOut o;\n"
-    "    float d = dep.read(px);\n"
     "    o.d = d;\n"
     "    o.col = float4(col.read(px).rgb, 1.0);\n"
     "    float2 e = nrm.read(px).xy;\n" /* the pack's octDecode (lib/common.glsl) */
@@ -8038,22 +8037,36 @@ static const char *dn_msl =
     "    o.mv = pc.w > 0.0 ? ((pc.xy / pc.w * 0.5 + 0.5) - uv) * u.size * float2(1.0, u.my) : float2(0.0);\n"
     "    return o;\n"
     "}\n"
+    /* the pack's depth: a depth texture (depthtex0), or a colour texture holding depth (a custom image at the
+       traced size, for the upscaling case) */
+    "fragment DnOut dn_gather(float4 pos [[position]], texture2d<float> col [[texture(0)]], depth2d<float> dep [[texture(1)]],\n"
+    "                         texture2d<float> nrm [[texture(2)]], texture2d<float> alb [[texture(3)]], texture2d<float> rgh [[texture(4)]],\n"
+    "                         texture2d<float> spc [[texture(5)]], texture2d<float> mot [[texture(6)]], constant DnU &u [[buffer(0)]]) {\n"
+    "    uint2 px = uint2(pos.xy);\n"
+    "    return gather(px, dep.read(px), col, nrm, alb, rgh, spc, mot, u);\n"
+    "}\n"
+    "fragment DnOut dn_gather_c(float4 pos [[position]], texture2d<float> col [[texture(0)]], texture2d<float> dep [[texture(1)]],\n"
+    "                           texture2d<float> nrm [[texture(2)]], texture2d<float> alb [[texture(3)]], texture2d<float> rgh [[texture(4)]],\n"
+    "                           texture2d<float> spc [[texture(5)]], texture2d<float> mot [[texture(6)]], constant DnU &u [[buffer(0)]]) {\n"
+    "    uint2 px = uint2(pos.xy);\n"
+    "    return gather(px, dep.read(px).r, col, nrm, alb, rgh, spc, mot, u);\n"
+    "}\n"
     "fragment float4 dn_put(float4 pos [[position]], texture2d<float> src [[texture(0)]]) { return src.read(uint2(pos.xy)); }\n";
 
 static struct {
     id fx; /* id<MTLFXTemporalDenoisedScaler> */
     id<MTLTexture> col, nrm, alb, spec, rough, mv, dep, out;
-    int w, h;
-    id<MTLRenderPipelineState> gather, put;
+    int w, h, ow, oh; /* input (traced) size, output (render target) size */
+    id<MTLRenderPipelineState> gather, gather_c, put;
     MTLPixelFormat put_fmt;
     id<MTLDepthStencilState> ds;
     int failed, logged, warned_size;
     unsigned long long last_frame;
 } dn;
 
-API_AVAILABLE(macos(26.0)) static int dn_setup(int w, int h)
+API_AVAILABLE(macos(26.0)) static int dn_setup(int w, int h, int ow, int oh)
 {
-    if (dn.fx && dn.w == w && dn.h == h)
+    if (dn.fx && dn.w == w && dn.h == h && dn.ow == ow && dn.oh == oh)
         return 1;
     if (dn.failed)
         return 0;
@@ -8071,12 +8084,15 @@ API_AVAILABLE(macos(26.0)) static int dn_setup(int w, int h)
     d.normalTextureFormat = MTLPixelFormatRGBA16Float;
     d.roughnessTextureFormat = MTLPixelFormatR16Float;
     d.outputTextureFormat = MTLPixelFormatRGBA16Float;
-    d.inputWidth = d.outputWidth = (NSUInteger)w;
-    d.inputHeight = d.outputHeight = (NSUInteger)h;
+    d.inputWidth = (NSUInteger)w;
+    d.inputHeight = (NSUInteger)h;
+    d.outputWidth = (NSUInteger)ow;
+    d.outputHeight = (NSUInteger)oh;
     d.autoExposureEnabled = YES;
     id<MTLFXTemporalDenoisedScaler> fx = [d newTemporalDenoisedScalerWithDevice:dev];
     if (!fx) {
-        mgl_log("denoiser: MetalFX wouldn't make one for %dx%d (this Mac takes %.2fx to %.2fx); the pack's own pass runs", w, h,
+        mgl_log("denoiser: MetalFX wouldn't make one for %dx%d to %dx%d (this Mac takes %.2fx to %.2fx); the pack's own pass runs",
+                w, h, ow, oh,
                 [MTLFXTemporalDenoisedScalerDescriptor supportedInputContentMinScaleForDevice:dev],
                 [MTLFXTemporalDenoisedScalerDescriptor supportedInputContentMaxScaleForDevice:dev]);
         dn.failed = 1;
@@ -8094,11 +8110,14 @@ API_AVAILABLE(macos(26.0)) static int dn_setup(int w, int h)
             pd.colorAttachments[i].pixelFormat = f[i];
         pd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
         dn.gather = lib ? [dev newRenderPipelineStateWithDescriptor:pd error:&e] : nil;
+        pd.fragmentFunction = [lib newFunctionWithName:@"dn_gather_c"];
+        dn.gather_c = dn.gather ? [dev newRenderPipelineStateWithDescriptor:pd error:&e] : nil;
         MTLDepthStencilDescriptor *dd = [[MTLDepthStencilDescriptor alloc] init];
         dd.depthCompareFunction = MTLCompareFunctionAlways;
         dd.depthWriteEnabled = YES;
         dn.ds = [dev newDepthStencilStateWithDescriptor:dd];
-        if (!dn.gather) {
+        if (!dn.gather || !dn.gather_c) {
+            dn.gather = nil;
             mgl_log("denoiser: gather shader failed: %s", e.localizedDescription.UTF8String);
             dn.failed = 1;
             return 0;
@@ -8107,6 +8126,8 @@ API_AVAILABLE(macos(26.0)) static int dn_setup(int w, int h)
     dn.fx = fx;
     dn.w = w;
     dn.h = h;
+    dn.ow = ow;
+    dn.oh = oh;
     dn.col = fg_texture(MTLPixelFormatRGBA16Float, w, h, MTLTextureUsageRenderTarget | fx.colorTextureUsage);
     dn.nrm = fg_texture(MTLPixelFormatRGBA16Float, w, h, MTLTextureUsageRenderTarget | fx.normalTextureUsage);
     dn.alb = fg_texture(MTLPixelFormatRGBA16Float, w, h, MTLTextureUsageRenderTarget | fx.diffuseAlbedoTextureUsage);
@@ -8114,9 +8135,12 @@ API_AVAILABLE(macos(26.0)) static int dn_setup(int w, int h)
     dn.rough = fg_texture(MTLPixelFormatR16Float, w, h, MTLTextureUsageRenderTarget | fx.roughnessTextureUsage);
     dn.mv = fg_texture(MTLPixelFormatRG16Float, w, h, MTLTextureUsageRenderTarget | fx.motionTextureUsage);
     dn.dep = fg_texture(MTLPixelFormatDepth32Float, w, h, MTLTextureUsageRenderTarget | fx.depthTextureUsage);
-    dn.out = fg_texture(MTLPixelFormatRGBA16Float, w, h, fx.outputTextureUsage);
+    dn.out = fg_texture(MTLPixelFormatRGBA16Float, ow, oh, fx.outputTextureUsage);
     dn.last_frame = 0;
-    mgl_log("denoiser: MetalFX denoiser made for %dx%d", w, h);
+    if (ow == w && oh == h)
+        mgl_log("denoiser: MetalFX denoiser made for %dx%d", w, h);
+    else
+        mgl_log("denoiser: MetalFX denoiser made for %dx%d, upscaling to %dx%d", w, h, ow, oh);
     return 1;
 }
 
@@ -8141,15 +8165,20 @@ int mglb_denoise(const mglb_denoise_in *in)
 #ifdef MGL_HAVE_DENOISER
     if (@available(macOS 26.0, *)) {
         mglb_texture *ot = in->out;
-        int w = ot->d.width, h = ot->d.height;
-        if (in->color->d.width != w || in->color->d.height != h || in->depth->d.width != w || in->depth->d.height != h ||
-            (mgl_cam.seen & 0x3f) != 0x3f) {
+        int ow = ot->d.width, oh = ot->d.height;          /* the pass's render target: what MetalFX writes */
+        int w = in->color->d.width, h = in->color->d.height; /* what the pack traced: every input at this size */
+        mglb_texture *ins[7] = {in->color, in->depth, in->normal, in->albedo, in->roughness, in->specular, in->motion};
+        int same = 1;
+        for (int i = 1; i < 7; i++)
+            if (ins[i] && (ins[i]->d.width != w || ins[i]->d.height != h))
+                same = 0;
+        if (!same || w > ow || h > oh || (mgl_cam.seen & 0x3f) != 0x3f) {
             if (!dn.warned_size++)
-                mgl_log("denoiser: colour %dx%d, depth %dx%d and target %dx%d differ (or no camera yet); the pack's own pass runs",
-                        in->color->d.width, in->color->d.height, in->depth->d.width, in->depth->d.height, w, h);
+                mgl_log("denoiser: inputs not all %dx%d (colour), or bigger than the %dx%d target (or no camera yet); "
+                        "the pack's own pass runs", w, h, ow, oh);
             return 0;
         }
-        if (!dn_setup(w, h))
+        if (!dn_setup(w, h, ow, oh))
             return 0;
         id<MTLRenderPipelineState> put = dn_put_pipeline(OBJ(id<MTLTexture>, ot->mtl).pixelFormat);
         if (!put)
@@ -8193,7 +8222,7 @@ int mglb_denoise(const mglb_denoise_in *in)
         rp.depthAttachment.loadAction = MTLLoadActionDontCare;
         rp.depthAttachment.storeAction = MTLStoreActionStore;
         id<MTLRenderCommandEncoder> e = [current_cb() renderCommandEncoderWithDescriptor:rp];
-        [e setRenderPipelineState:dn.gather];
+        [e setRenderPipelineState:is_depth_format(OBJ(id<MTLTexture>, in->depth->mtl).pixelFormat) ? dn.gather : dn.gather_c];
         [e setDepthStencilState:dn.ds];
         mglb_texture *src[7] = {in->color, in->depth, in->normal, in->albedo, in->roughness,
                                 in->specular ? in->specular : in->roughness, in->motion ? in->motion : in->roughness};
@@ -8247,7 +8276,7 @@ int mglb_denoise(const mglb_denoise_in *in)
         ov_side_end();
         tex_dirty(ot);
         if (!dn.logged++)
-            mgl_log("denoiser: first frame denoised by MetalFX (%dx%d, motion from %s)", w, h,
+            mgl_log("denoiser: first frame denoised by MetalFX (%dx%d to %dx%d, motion from %s)", w, h, ow, oh,
                     in->motion ? "the pack" : "depth and the camera");
         return 1;
     }

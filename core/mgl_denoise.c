@@ -21,7 +21,11 @@
    Each named sampler must be declared, and read somewhere in the shader, or the compiler drops it. The pass writes
    its result to its first render target, and its own code is what runs when MetalFX can't (another Mac, the
    switch off): a plain copy of the colour, or the pack's own denoiser. With MetalFX the draw is replaced by
-   MetalFX reading those textures and writing the first render target. */
+   MetalFX reading those textures and writing the first render target.
+   Trace small, show big: when every input is smaller than the pass's render target (a pack tracing at half size
+   into custom images from a compute pass, with its guides at that size too), MetalFX denoises and upscales to the
+   target in one step. The depth input may then be a colour texture holding depth (R32F or R16F, 0..1 like
+   depthtex0). The pack's own code for that pass must then upscale too, for when MetalFX can't run. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
