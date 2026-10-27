@@ -213,6 +213,15 @@ extern int mgl_rt_light_ids[2];
 extern float mgl_rt_radius; /* MCMETAL_RT_RADIUS: the scene keeps only sections this close to the camera (0 = all) */
 mglb_buffer *mglb_rt_lights(void); /* this frame's light list (mcm_lights_near's McmLights) */
 
+/* MetalFX's denoiser in place of a pack's MCMETAL_DENOISE_PASS (core/mgl_denoise.c): the textures that pass reads,
+   by role, and its first render target. 1: done (the pack's draw is skipped); 0: not possible, draw it. */
+typedef struct mglb_denoise_in {
+    mglb_texture *color, *depth, *normal, *albedo, *roughness, *specular, *motion; /* specular, motion: optional */
+    mglb_texture *out;
+    int roughness_ch, specular_ch; /* channel 0-3 that holds each */
+} mglb_denoise_in;
+int mglb_denoise(const mglb_denoise_in *in);
+
 /* Camera from Iris's uniforms, as the pack was last given them (column-major, GL conventions), for MetalFX frame
    interpolation's motion vectors (MCMETAL_FRAMEGEN): gbufferModelView, gbufferProjection,
    gbufferPreviousModelView, gbufferPreviousProjection; cameraPosition, previousCameraPosition. seen: bit per

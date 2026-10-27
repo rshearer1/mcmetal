@@ -19,6 +19,9 @@
 #define MGL_BUF_VERTEX_BASE 21  /* 21..29 */
 #define MGL_BUF_SCENE 30        /* ray-tracing scene (accelerationStructureEXT), see STEP2-RAYTRACING.md */
 #define MGL_MAX_STAGE_TEXTURES 31
+/* mcm_trace's intersection function table (fragment and compute stages only, where 21..29 hold no vertex buffers;
+   compute programs of geometry shaders never get one): see mgl_rtmsl.c */
+#define MGL_BUF_RT_FUNCS 29
 
 enum mgl_stage { MGL_VERTEX, MGL_FRAGMENT, MGL_COMPUTE, MGL_NUM_STAGES };
 
@@ -105,3 +108,12 @@ void mgl_gs_translate(const char *src[MGL_NUM_STAGES], const char *geometry, mgl
 /* Internal buffers for geometry emulation: GLSL storage blocks named "mgl_i<N>_" map to MSL buffer
    MGL_BUF_INTERNAL_BASE + N (only in compute and the passthrough vertex stage, where no vertex buffers are bound). */
 #define MGL_BUF_INTERNAL_BASE 21
+
+/* mgl_rtmsl.c: the MSL of a fragment or compute stage that traces rays (mcm_rq), moved from Metal's
+   intersection_query to its intersector with the intersection function "mcm_any_hit" (in the same source), which
+   must be linked into the pipeline and put at index 0 of a table bound at [[buffer(table_index)]]. primitive_data:
+   mcm_any_hit reads each triangle's record from the scene's per-primitive data (MGL_RT_PRIM_DATA, words 0-6 of the
+   record) instead of through the instance list. NULL when the MSL doesn't trace or isn't in the expected shape
+   (keep the original then). Free the result. */
+char *mgl_rt_native_msl(const char *msl, int table_index, int primitive_data);
+#define MGL_RT_PRIM_DATA_BYTES 28 /* record words 0-6: texture coordinates, flags, colours */

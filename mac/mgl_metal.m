@@ -7,6 +7,7 @@
 #import <QuartzCore/CAMetalLayer.h>
 #import <MetalFX/MetalFX.h>
 #import <AppKit/AppKit.h>
+#import <objc/runtime.h>
 #include <ctype.h>
 #include <math.h>
 #include <stdatomic.h>
@@ -1523,6 +1524,9 @@ struct mglb_program {
     void *cspec;     /* NSMutableDictionary: vertex format -> compute pipeline made for it (NSNull while compiling) */
     uint32_t id;
     int discards;    /* the fragment stage can discard (so a full-screen draw may not cover every pixel) */
+    int vertex_writes; /* the vertex stage writes memory (storage buffers or images): never run it twice */
+    void *ihit;      /* mcm_trace's intersection function (MTLFunction) when the fragment or compute stage traces on
+                        Metal's intersector (core/mgl_rtmsl.c), else NULL */
     char label[112]; /* "GL program N [app name]", for error reports and MGL_*_PROGRAMS */
 };
 
@@ -1777,12 +1781,8 @@ static char *scale_vertex_inputs(const char *msl)
     return out;
 }
 
-static id<MTLFunction> compile_fn_lib(const char *msl, NSString *what, char **err, id<MTLLibrary> *lib_out);
-static id<MTLFunction> compile_fn(const char *msl, NSString *what, char **err)
-{
-    return compile_fn_lib(msl, what, err, NULL);
-}
-
+static id<MTLFunction> compile_fn_lib(const char *msl, NSString *what, char **err, id<MTLLibrary> *lib_out,
+                                      id<MTLFunction> *hit_out);
 /* sin(, cos( and pow( calls in generated MSL -> precise:: versions (NULL if there is none); not asin, sinh
    or already-qualified calls. The rest of the maths functions stay fast. */
 static char precise_names[32][16];
@@ -1835,7 +1835,8 @@ static char *precise_sin(const char *msl)
     return out;
 }
 
-static id<MTLFunction> compile_fn_lib(const char *msl, NSString *what, char **err, id<MTLLibrary> *lib_out)
+static id<MTLFunction> compile_fn_lib(const char *msl, NSString *what, char **err, id<MTLLibrary> *lib_out,
+                                      id<MTLFunction> *hit_out)
 {
     NSError *e = nil;
     MTLCompileOptions *o = [[MTLCompileOptions alloc] init];
@@ -1868,6 +1869,8 @@ static id<MTLFunction> compile_fn_lib(const char *msl, NSString *what, char **er
             *err = strdup([NSString stringWithFormat:@"%@: %@", what, e.localizedDescription].UTF8String);
         return nil;
     }
+    if (hit_out && strstr(msl, "mcm_any_hit"))
+        *hit_out = [lib newFunctionWithName:@"mcm_any_hit"];
     if (strstr(msl, "[[function_constant(")) {
         if (lib_out)
             *lib_out = lib;
@@ -1977,6 +1980,98 @@ static void archive_maybe_save(void)
 }
 
 /* Runs on the link worker threads (core/mgl_program.c), several at once: MTLDevice compiles are thread-safe. */
+/* MGL_RT_NATIVE=0: trace with intersection queries, as SPIRV-Cross writes them (the way before 10-26) */
+static int rt_native_on(int fragment)
+{
+    static int env = -1;
+    if (env < 0) {
+        const char *e = getenv("MGL_RT_NATIVE");
+        env = !e || atoi(e) != 0;
+    }
+    if (!env || !dev.supportsRaytracing || !dev.supportsFunctionPointers)
+        return 0;
+    if (@available(macOS 12.0, *))
+        return !fragment || (dev.supportsRaytracingFromRender && dev.supportsFunctionPointersFromRender);
+    return 0;
+}
+
+/* MGL_RT_PRIM_DATA=1: mcm_any_hit reads the triangle record from the scene's per-primitive data instead of through
+   the instance list (Apple measured 10-16% from it in its own ray tracing app). Off by default: on the M3
+   (RT-NATIVE1, RT-GLASS1, 2026-10-27) it was no faster than the chain, and with it the glass test scene showed a
+   large water-like sheet over the grass behind the panes (only with reflections and caustics on). Cause not found
+   yet. */
+static int rt_prim_data_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("MGL_RT_PRIM_DATA");
+        on = e && atoi(e) != 0;
+        if (@available(macOS 14.0, *)) {
+        } else
+            on = 0;
+    }
+    return on;
+}
+
+/* a stage that traces rays, on Metal's intersector (core/mgl_rtmsl.c); on any failure the query version stays */
+static id<MTLFunction> compile_tracing(const char *msl, NSString *what, char **err, id<MTLLibrary> *lib_out,
+                                       id<MTLFunction> *hit_out, int fragment)
+{
+    char *native = rt_native_on(fragment) ? mgl_rt_native_msl(msl, MGL_BUF_RT_FUNCS, rt_prim_data_on()) : NULL;
+    if (native) {
+        char *nerr = NULL;
+        id<MTLFunction> hit = nil;
+        id<MTLFunction> f = compile_fn_lib(native, what, &nerr, lib_out, &hit);
+        free(native);
+        if (f && hit) {
+            static int noted;
+            if (!noted++)
+                mgl_log("ray tracing: shaders trace on Metal's intersector with an intersection function%s "
+                        "(MGL_RT_NATIVE=0: intersection queries)", rt_prim_data_on() ? ", per-primitive data" : "");
+            *hit_out = hit;
+            return f;
+        }
+        static int warned;
+        if (warned++ < 3)
+            mgl_log("ray tracing: %s on the intersector failed, keeping intersection queries: %s", what.UTF8String,
+                    nerr ? nerr : "no mcm_any_hit");
+        free(nerr);
+        if (lib_out)
+            *lib_out = nil;
+    }
+    return compile_fn_lib(msl, what, err, lib_out, NULL);
+}
+
+/* the intersection function table of a pipeline that traces natively: made once, never changed (the payload
+   carries what mcm_any_hit reads), kept on the pipeline object */
+static char ift_key;
+static void attach_ift(id ps, id<MTLFunction> hit, int compute)
+{
+    if (!ps || !hit)
+        return;
+    MTLIntersectionFunctionTableDescriptor *td = [[MTLIntersectionFunctionTableDescriptor alloc] init];
+    td.functionCount = 1;
+    id<MTLIntersectionFunctionTable> table = nil;
+    id<MTLFunctionHandle> h = nil;
+    if (compute) {
+        id<MTLComputePipelineState> c = ps;
+        table = [c newIntersectionFunctionTableWithDescriptor:td];
+        h = [c functionHandleWithFunction:hit];
+    } else if (@available(macOS 13.0, *)) {
+        id<MTLRenderPipelineState> r = ps;
+        table = [r newIntersectionFunctionTableWithDescriptor:td stage:MTLRenderStageFragment];
+        h = [r functionHandleWithFunction:hit stage:MTLRenderStageFragment];
+    }
+    if (!table || !h) {
+        mgl_log("ray tracing: no intersection function table for a pipeline; its rays find nothing");
+        return;
+    }
+    [table setFunction:h atIndex:0];
+    objc_setAssociatedObject(ps, &ift_key, table, OBJC_ASSOCIATION_RETAIN);
+}
+
+static id<MTLIntersectionFunctionTable> ift_of(id ps) { return ps ? objc_getAssociatedObject(ps, &ift_key) : nil; }
+
 mglb_program *mglb_program_new(const char *msl_vertex, const char *msl_fragment, const char *msl_compute, char **err)
 {
     static uint32_t next_id;
@@ -1986,10 +2081,20 @@ mglb_program *mglb_program_new(const char *msl_vertex, const char *msl_fragment,
     @autoreleasepool {
         if (msl_compute) {
             id<MTLLibrary> clib = nil;
-            id<MTLFunction> f = compile_fn_lib(msl_compute, @"compute", err, &clib);
+            id<MTLFunction> hit = nil;
+            id<MTLFunction> f = msl_vertex ? compile_fn_lib(msl_compute, @"compute", err, &clib, NULL)
+                                           : compile_tracing(msl_compute, @"compute", err, &clib, &hit, 0);
             NSError *e = nil;
             id<MTLComputePipelineState> ps = nil;
-            if (f && get_archive()) {
+            if (f && hit) { /* linked intersection function: no binary archive (it would also need the function) */
+                MTLComputePipelineDescriptor *cpd = [[MTLComputePipelineDescriptor alloc] init];
+                cpd.computeFunction = f;
+                MTLLinkedFunctions *lf = [MTLLinkedFunctions linkedFunctions];
+                lf.functions = @[ hit ];
+                cpd.linkedFunctions = lf;
+                ps = [dev newComputePipelineStateWithDescriptor:cpd options:MTLPipelineOptionNone reflection:nil error:&e];
+                attach_ift(ps, hit, 1);
+            } else if (f && get_archive()) {
                 MTLComputePipelineDescriptor *cpd = [[MTLComputePipelineDescriptor alloc] init];
                 cpd.computeFunction = f;
                 cpd.binaryArchives = @[ archive ];
@@ -2019,9 +2124,10 @@ mglb_program *mglb_program_new(const char *msl_vertex, const char *msl_fragment,
         }
         char *scaled = msl_vertex ? scale_vertex_inputs(msl_vertex) : NULL;
         id<MTLLibrary> vlib = nil;
-        id<MTLFunction> v = msl_vertex ? compile_fn_lib(scaled ? scaled : msl_vertex, @"vertex", err, &vlib) : nil;
+        id<MTLFunction> v = msl_vertex ? compile_fn_lib(scaled ? scaled : msl_vertex, @"vertex", err, &vlib, NULL) : nil;
         free(scaled);
-        id<MTLFunction> f = v && msl_fragment ? compile_fn(msl_fragment, @"fragment", err) : nil;
+        id<MTLFunction> hit = nil;
+        id<MTLFunction> f = v && msl_fragment ? compile_tracing(msl_fragment, @"fragment", err, NULL, &hit, 1) : nil;
         if (!v || (msl_fragment && !f)) {
             release_obj(p->compute);
             free(p);
@@ -2029,7 +2135,17 @@ mglb_program *mglb_program_new(const char *msl_vertex, const char *msl_fragment,
         }
         p->vfn = retain_obj(v);
         p->ffn = f ? retain_obj(f) : NULL;
+        p->ihit = hit ? retain_obj(hit) : NULL;
         p->discards = msl_fragment && strstr(msl_fragment, "discard_fragment");
+        {
+            const char *m = strstr(msl_vertex, " main0(");
+            const char *end = m ? strchr(m, '\n') : NULL;
+            for (const char *q = m; q && q < end && !p->vertex_writes; q++)
+                p->vertex_writes = (!strncmp(q, "device ", 7) && (q - m < 6 || strncmp(q - 6, "const ", 6))) ||
+                                   !strncmp(q, "access::write", 13) || !strncmp(q, "access::read_write", 18);
+            if (!m)
+                p->vertex_writes = 1;
+        }
         if (vlib) {
             p->vlib = retain_obj(vlib);
             p->vscaled = retain_obj([NSMutableDictionary dictionary]);
@@ -2044,6 +2160,7 @@ void mglb_program_release(mglb_program *p)
         return;
     release_obj(p->vfn);
     release_obj(p->ffn);
+    release_obj(p->ihit);
     release_obj(p->vlib);
     release_obj(p->vscaled);
     release_obj(p->compute);
@@ -2863,6 +2980,12 @@ static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_targ
         }
     }
     pd.fragmentFunction = d->program->ffn ? OBJ(id<MTLFunction>, d->program->ffn) : nil;
+    id<MTLFunction> hit = d->program->ihit && !k.probe ? OBJ(id<MTLFunction>, d->program->ihit) : nil;
+    if (hit) { /* mcm_trace on the intersector (core/mgl_rtmsl.c) */
+        MTLLinkedFunctions *lf = [MTLLinkedFunctions linkedFunctions];
+        lf.functions = @[ hit ];
+        pd.fragmentLinkedFunctions = lf;
+    }
     if (k.probe)
         pd.fragmentFunction = probe_fragment();
     for (int i = 0; i < MGL_MAX_ATTACHMENTS; i++) {
@@ -2912,7 +3035,7 @@ static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_targ
         }
     }
     pd.vertexDescriptor = vd;
-    if (get_archive())
+    if (get_archive() && !hit)
         pd.binaryArchives = @[ archive ];
     if (opt_async_pipes > 0) {
         MGLPendingPipe *pp = [[MGLPendingPipe alloc] init];
@@ -2929,7 +3052,9 @@ static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_targ
           [dev newRenderPipelineStateWithDescriptor:pd
                                   completionHandler:^(id<MTLRenderPipelineState> made, NSError *err) {
                                     if (made) {
-                                        archive_add_render(pd);
+                                        attach_ift(made, hit, 0);
+                                        if (!hit)
+                                            archive_add_render(pd);
                                         @synchronized(pipelines) {
                                             pipelines[key] = made;
                                         }
@@ -2970,7 +3095,9 @@ static id<MTLRenderPipelineState> get_pipeline(const mgl_draw *d, const mgl_targ
         mgl_log("pipeline creation failed: %s", e.localizedDescription.UTF8String);
         return nil;
     }
-    archive_add_render(pd);
+    attach_ift(ps, hit, 0);
+    if (!hit)
+        archive_add_render(pd);
     @synchronized(pipelines) {
         pipelines[key] = ps;
     }
@@ -3215,12 +3342,18 @@ static id<MTLRenderCommandEncoder> pass_for(const mgl_target *t)
     return begin_pass(t, 0, NULL, 0, 0);
 }
 
-/* MGL_SMART_LOAD=1 (off by default: a draw of six vertices need not cover the target, gl_smoke test 1 draws
-   half the screen after a clear and loses the clear): a new pass whose first draw is a full-screen triangle or quad that overwrites a colour
-   attachment (no blending, all channels written, no discard, no scissor) doesn't load that attachment's old
-   contents from memory first. Shader packs' composite passes are made of these; on Apple GPUs each load reads
-   the whole image into tile memory. */
+/* MGL_SMART_LOAD (on; =0 off): a new pass whose first draw is a full-screen triangle or quad that overwrites a
+   colour attachment (no blending, all channels written, no discard, no scissor) doesn't load that attachment's old
+   contents from memory first. Shader packs' composite passes are made of these; on Apple GPUs each load reads the
+   whole image into tile memory (Apple: load and store actions are most of a renderer's bandwidth).
+   Six vertices need not cover the target (gl_smoke test 1 draws half the screen; a pack can shrink its quad in the
+   vertex shader for a bloom tile), so we check, on the GPU: smart_load_covers runs the draw's own vertex stage into
+   a depth-only scratch target with the depth test on (Less, depth writes on, so a pixel drawn again at the same or
+   a greater depth isn't counted twice) and counts the pixels it reaches. Only a
+   draw seen to reach every pixel skips the load; it is checked again every 120 frames, and a program seen once
+   not to is never trusted again. */
 static unsigned opt_smart_load = ~0u;
+static int smart_load_covers(const mgl_draw *d);
 static id<MTLRenderCommandEncoder> pass_for_draw(const mgl_draw *d)
 {
     gs_flush();
@@ -3228,8 +3361,10 @@ static id<MTLRenderCommandEncoder> pass_for_draw(const mgl_draw *d)
     target_dirty(t);
     if (renc && same_target(t, &renc_target))
         return renc;
-    if (opt_smart_load == ~0u)
-        opt_smart_load = opt("MGL_SMART_LOAD");
+    if (opt_smart_load == ~0u) {
+        const char *e = getenv("MGL_SMART_LOAD");
+        opt_smart_load = !e || !*e || *e != '0';
+    }
     unsigned overwrite = 0;
     if (opt_smart_load && d->instances <= 1 && d->count <= 6 && !d->multi_n && !d->program->discards &&
         (!d->depth_test || !t->depth) &&
@@ -3240,6 +3375,8 @@ static id<MTLRenderCommandEncoder> pass_for_draw(const mgl_draw *d)
         for (int i = 0; i < MGL_MAX_ATTACHMENTS; i++)
             if (t->tex[i] && !d->blend[i].enabled && (d->blend[i].color_mask & 15) == 15)
                 overwrite |= 1u << i;
+    if (overwrite && !smart_load_covers(d))
+        overwrite = 0;
     pass_dontcare = overwrite;
     id<MTLRenderCommandEncoder> e = begin_pass(t, 0, NULL, 0, 0);
     pass_dontcare = 0;
@@ -3834,7 +3971,7 @@ static id<MTLTexture> swizzled_view(id<MTLTexture> t, const int sw[4])
                                      levels:NSMakeRange(0, t.mipmapLevelCount) slices:NSMakeRange(0, slices) swizzle:ch];
 }
 
-static void bind_scene(id<MTLRenderCommandEncoder> e, id<MTLComputeCommandEncoder> c);
+static void bind_scene(id<MTLRenderCommandEncoder> e, id<MTLComputeCommandEncoder> c, id ps);
 
 static void bind_stage_resources_f(id<MTLRenderCommandEncoder> e, id<MTLComputeCommandEncoder> c, const mgl_draw *d,
                                    int s, int filter)
@@ -4007,6 +4144,224 @@ static int apply_base_vertex(id<MTLRenderCommandEncoder> e, const mgl_draw *d, l
     return 0;
 }
 
+/* ---- MGL_SMART_LOAD's coverage check (see pass_for_draw) ---- */
+#define SL_SLOTS 256 /* draws checked at once (each an 8-byte visibility counter) */
+typedef struct sl_entry { uint64_t key; int state; unsigned long frame; uint32_t program; } sl_entry; /* 1 checking, 2 covers */
+static sl_entry sl_tab[1024];
+static pthread_mutex_t sl_lock = PTHREAD_MUTEX_INITIALIZER;
+static uint32_t sl_banned[64]; /* programs seen not to cover their target (ids; a small set) */
+static int sl_nbanned;
+static id<MTLBuffer> sl_vis;
+static unsigned sl_next_slot;
+static unsigned long sl_frame; /* advanced at each present */
+static unsigned long sl_checks, sl_partial;
+static NSMutableDictionary *sl_pipes; /* program id + vertex layout -> depth-only pipeline */
+static NSMutableDictionary *sl_depths; /* "WxH" -> memoryless Depth32Float texture */
+
+static uint64_t sl_hash(uint64_t h, uint64_t v)
+{
+    h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2);
+    return h * 0xFF51AFD7ED558CCDull;
+}
+
+static int sl_is_banned(uint32_t id)
+{
+    for (int i = 0; i < sl_nbanned; i++)
+        if (sl_banned[i] == id)
+            return 1;
+    return 0;
+}
+
+static id<MTLRenderPipelineState> sl_pipeline(const mgl_draw *d, NSData *layout)
+{
+    if (!sl_pipes)
+        sl_pipes = [NSMutableDictionary dictionary];
+    NSMutableData *key = [NSMutableData dataWithBytes:&d->program->id length:sizeof d->program->id];
+    [key appendData:layout];
+    id ps = sl_pipes[key];
+    if (ps)
+        return ps == [NSNull null] ? nil : ps;
+    MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
+    pd.vertexFunction = OBJ(id<MTLFunction>, d->program->vfn);
+    pd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+    MTLVertexDescriptor *vd = [MTLVertexDescriptor vertexDescriptor];
+    for (int i = 0; i < MGL_MAX_VERTEX_ATTRIBS; i++)
+        if (d->attrs[i].enabled) {
+            vd.attributes[i].format = vertex_format(&d->attrs[i]);
+            vd.attributes[i].offset = (NSUInteger)d->attrs[i].offset;
+            vd.attributes[i].bufferIndex = (NSUInteger)(MGL_BUF_VERTEX_BASE + d->attrs[i].buffer);
+        }
+    for (int i = 0; i < d->num_vbufs; i++) {
+        MTLVertexBufferLayoutDescriptor *l = vd.layouts[MGL_BUF_VERTEX_BASE + i];
+        if (d->vbufs[i].stride == 0) {
+            l.stepFunction = MTLVertexStepFunctionPerInstance;
+            l.stepRate = 0x7FFFFFFF;
+            l.stride = 16;
+        } else if (d->vbufs[i].divisor) {
+            l.stepFunction = MTLVertexStepFunctionPerInstance;
+            l.stepRate = (NSUInteger)d->vbufs[i].divisor;
+            l.stride = (NSUInteger)d->vbufs[i].stride;
+        } else {
+            l.stepFunction = MTLVertexStepFunctionPerVertex;
+            l.stride = (NSUInteger)d->vbufs[i].stride;
+        }
+    }
+    pd.vertexDescriptor = vd;
+    NSError *e = nil;
+    ps = [dev newRenderPipelineStateWithDescriptor:pd error:&e];
+    if (!ps)
+        mgl_log("smart load: no coverage check for %s (%s); its passes keep loading", d->program->label,
+                e.localizedDescription.UTF8String);
+    sl_pipes[key] = ps ?: [NSNull null];
+    return ps;
+}
+
+/* 1: this draw reached every pixel of its target when last checked (within 120 frames); else 0, after encoding a
+   check when none is pending */
+static int smart_load_covers(const mgl_draw *d)
+{
+    const mgl_target *t = &d->target;
+    mglb_program *p = d->program;
+    if (p->vertex_writes || p->vlib || !p->vfn || t->width <= 0 || t->height <= 0)
+        return 0;
+    /* what decides where the vertices land, uniforms aside (the recheck covers those) */
+    uint64_t k = sl_hash(0x243F6A8885A308D3ull, p->id);
+    k = sl_hash(k, (uint64_t)d->primitive << 32 | (uint32_t)d->count);
+    k = sl_hash(k, (uint64_t)(uint32_t)d->first << 32 | (uint32_t)d->base_vertex);
+    k = sl_hash(k, (uint64_t)(uint32_t)t->width << 32 | (uint32_t)t->height);
+    for (int i = 0; i < 4; i++)
+        k = sl_hash(k, (uint64_t)(uint32_t)d->viewport[i]);
+    k = sl_hash(k, (uint64_t)d->cull << 8 | (uint64_t)(d->cull_face & 0xFFFF) << 16 | (uint64_t)(d->front_face & 0xFFFF) << 32);
+    for (int i = 0; i < d->num_vbufs; i++) {
+        const mglb_buffer *b = d->vbufs[i].buf;
+        k = sl_hash(k, (uintptr_t)b);
+        k = sl_hash(k, b ? b->written : 0);
+        k = sl_hash(k, d->vbufs[i].offset);
+    }
+    if (d->index_buf) {
+        k = sl_hash(k, (uintptr_t)d->index_buf);
+        k = sl_hash(k, d->index_buf->written);
+        k = sl_hash(k, d->index_offset);
+    }
+    pthread_mutex_lock(&sl_lock);
+    int banned = sl_is_banned(p->id);
+    sl_entry *en = &sl_tab[k % (sizeof sl_tab / sizeof sl_tab[0])];
+    int known = !banned && en->key == k;
+    int covers = known && en->state == 2 && sl_frame - en->frame < 120;
+    int checking = known && en->state == 1;
+    pthread_mutex_unlock(&sl_lock);
+    if (banned || covers || checking)
+        return covers;
+
+    /* the check: the draw's vertex stage into a memoryless depth target, depth test on, counting samples */
+    NSMutableData *layout = [NSMutableData data];
+    for (int i = 0; i < MGL_MAX_VERTEX_ATTRIBS; i++)
+        if (d->attrs[i].enabled) {
+            int32_t a[4] = {i, (int32_t)vertex_format(&d->attrs[i]), (int32_t)d->attrs[i].offset, d->attrs[i].buffer};
+            [layout appendBytes:a length:sizeof a];
+        }
+    for (int i = 0; i < d->num_vbufs; i++) {
+        int32_t l[2] = {(int32_t)d->vbufs[i].stride, (int32_t)d->vbufs[i].divisor};
+        [layout appendBytes:l length:sizeof l];
+    }
+    id<MTLRenderPipelineState> ps = sl_pipeline(d, layout);
+    if (!ps)
+        return 0;
+    if (!sl_vis)
+        sl_vis = [dev newBufferWithLength:8 * SL_SLOTS options:MTLResourceStorageModeShared];
+    if (!sl_depths)
+        sl_depths = [NSMutableDictionary dictionary];
+    NSString *dk = [NSString stringWithFormat:@"%dx%d", t->width, t->height];
+    id<MTLTexture> depth = sl_depths[dk];
+    if (!depth) {
+        MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+                                                                                      width:(NSUInteger)t->width
+                                                                                     height:(NSUInteger)t->height
+                                                                                  mipmapped:NO];
+        td.storageMode = MTLStorageModeMemoryless;
+        td.usage = MTLTextureUsageRenderTarget;
+        depth = [dev newTextureWithDescriptor:td];
+        if (!depth)
+            return 0;
+        sl_depths[dk] = depth;
+    }
+    static id<MTLDepthStencilState> ds;
+    if (!ds) {
+        MTLDepthStencilDescriptor *dd = [[MTLDepthStencilDescriptor alloc] init];
+        dd.depthCompareFunction = MTLCompareFunctionLess;
+        dd.depthWriteEnabled = YES;
+        ds = [dev newDepthStencilStateWithDescriptor:dd];
+    }
+    unsigned slot = sl_next_slot++ % SL_SLOTS;
+    ((uint64_t *)sl_vis.contents)[slot] = 0;
+    end_encoders();
+    MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
+    rp.depthAttachment.texture = depth;
+    rp.depthAttachment.loadAction = MTLLoadActionClear;
+    rp.depthAttachment.clearDepth = 1.0;
+    rp.depthAttachment.storeAction = MTLStoreActionDontCare;
+    rp.visibilityResultBuffer = sl_vis;
+    rp.renderTargetWidth = (NSUInteger)t->width;
+    rp.renderTargetHeight = (NSUInteger)t->height;
+    id<MTLCommandBuffer> cb = current_cb();
+    id<MTLRenderCommandEncoder> e = [cb renderCommandEncoderWithDescriptor:rp];
+    [e setLabel:@"smart load coverage check"];
+    [e setRenderPipelineState:ps];
+    [e setDepthStencilState:ds];
+    [e setViewport:(MTLViewport){d->viewport[0], d->viewport[1], d->viewport[2], d->viewport[3], 0, 1}];
+    [e setCullMode:!d->cull ? MTLCullModeNone : d->cull_face == GL_FRONT ? MTLCullModeFront : MTLCullModeBack];
+    [e setFrontFacingWinding:d->front_face == GL_CW ? MTLWindingCounterClockwise : MTLWindingClockwise];
+    [e setVisibilityResultMode:MTLVisibilityResultModeCounting offset:slot * 8];
+    for (int i = 0; i < d->num_vbufs; i++) {
+        [e setVertexBuffer:draw_buf(d->vbufs[i].buf) offset:d->vbufs[i].offset atIndex:(NSUInteger)(MGL_BUF_VERTEX_BASE + i)];
+        use_buffer(d->vbufs[i].buf);
+    }
+    bind_stage_resources(e, nil, d, 0);
+    if (d->uses_scene)
+        bind_scene(e, nil, nil);
+    int ok;
+    MTLPrimitiveType pt = prim(d->primitive, &ok);
+    if (d->index_buf) {
+        int bv = apply_base_vertex(e, d, d->base_vertex);
+        [e drawIndexedPrimitives:pt indexCount:(NSUInteger)d->count
+                       indexType:d->index_type == GL_UNSIGNED_SHORT ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32
+                     indexBuffer:draw_buf(d->index_buf) indexBufferOffset:d->index_offset
+                   instanceCount:1 baseVertex:bv baseInstance:0];
+        use_buffer(d->index_buf);
+    } else
+        [e drawPrimitives:pt vertexStart:(NSUInteger)d->first vertexCount:(NSUInteger)d->count instanceCount:1];
+    [e endEncoding];
+    rs_reset();
+    pthread_mutex_lock(&sl_lock);
+    *en = (sl_entry){k, 1, sl_frame, p->id};
+    sl_checks++;
+    pthread_mutex_unlock(&sl_lock);
+    uint64_t need = (uint64_t)t->width * (uint64_t)t->height;
+    id<MTLBuffer> vis = sl_vis;
+    uint32_t pid = p->id;
+    NSString *label = @(p->label);
+    [cb addCompletedHandler:^(id<MTLCommandBuffer> done) {
+      uint64_t got = ((const uint64_t *)vis.contents)[slot];
+      int full = done.status == MTLCommandBufferStatusCompleted && got >= need;
+      pthread_mutex_lock(&sl_lock);
+      if (en->key == k && en->state == 1) {
+          en->state = full ? 2 : 0;
+          en->frame = sl_frame;
+      }
+      if (!full && done.status == MTLCommandBufferStatusCompleted && !sl_is_banned(pid)) {
+          if (sl_nbanned < (int)(sizeof sl_banned / sizeof sl_banned[0]))
+              sl_banned[sl_nbanned++] = pid;
+          sl_partial++;
+          pthread_mutex_unlock(&sl_lock);
+          mgl_log("smart load: %s's full-screen draw reaches %llu of %llu pixels; its passes keep loading",
+                  label.UTF8String, (unsigned long long)got, (unsigned long long)need);
+          return;
+      }
+      pthread_mutex_unlock(&sl_lock);
+    }];
+    return 0;
+}
+
 void mglb_draw(const mgl_draw *d)
 {
     int ok;
@@ -4084,7 +4439,7 @@ void mglb_draw(const mgl_draw *d)
     bind_stage_resources_f(e, nil, d, 0, f);
     bind_stage_resources_f(e, nil, d, 1, f);
     if (d->uses_scene)
-        bind_scene(e, nil);
+        bind_scene(e, nil, ps);
     if (debug_draws()) {
         if (d->multi_n > 0)
             for (int i = 0; i < d->multi_n; i++)
@@ -4151,7 +4506,7 @@ void mglb_dispatch(const mgl_draw *d, int gx, int gy, int gz)
     [c setComputePipelineState:OBJ(id<MTLComputePipelineState>, d->program->compute)];
     bind_stage_resources(nil, c, d, 2);
     if (d->uses_scene)
-        bind_scene(nil, c);
+        bind_scene(nil, c, OBJ(id<MTLComputePipelineState>, d->program->compute));
     MTLSize tg = MTLSizeMake((NSUInteger)(d->local_size[0] > 0 ? d->local_size[0] : 1),
                              (NSUInteger)(d->local_size[1] > 0 ? d->local_size[1] : 1),
                              (NSUInteger)(d->local_size[2] > 0 ? d->local_size[2] : 1));
@@ -4676,7 +5031,7 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
         [c setComputePipelineState:gps ?: OBJ(id<MTLComputePipelineState>, d->program->compute)];
         bind_stage_resources(nil, c, d, 2);
         if (d->uses_scene)
-            bind_scene(nil, c);
+            bind_scene(nil, c, nil); /* a geometry shader's compute stage traces with queries */
         [c setBytes:desc length:sizeof desc atIndex:MGL_BUF_INTERNAL_BASE];
         for (int i = 0; i < 4; i++) { /* unused slots get any valid buffer */
             mglb_buffer *b = i < d->num_vbufs ? d->vbufs[i].buf : d->num_vbufs ? d->vbufs[0].buf : NULL;
@@ -4766,7 +5121,7 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
             bind_stage_resources(e, nil, p, 0);
             bind_stage_resources(e, nil, p, 1);
             if (p->uses_scene)
-                bind_scene(e, nil);
+                bind_scene(e, nil, ps);
             [e setVertexBuffer:ovb offset:ovo atIndex:MGL_BUF_INTERNAL_BASE + 6];
             [e setVertexBuffer:ocb offset:oco atIndex:MGL_BUF_INTERNAL_BASE + 7];
             [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:vertices];
@@ -4850,6 +5205,10 @@ static void gs_flush_at(int line)
 /* this frame's build, between the decode pass and the build pass */
 @property(nonatomic) mglb_buffer *pos;
 @property(nonatomic, strong) MTLPrimitiveAccelerationStructureDescriptor *desc;
+/* MGL_RT_REGIONS: the positions of its last build, kept for its region's structure, and their layout
+   (0 one non-opaque geometry, 1 one opaque, 2 opaque + non-opaque halves); dead: dropped from the cache */
+@property(nonatomic) mglb_buffer *kept;
+@property(nonatomic) int layout, dead;
 @end
 @implementation RtSection
 - (void)dealloc
@@ -4857,6 +5216,7 @@ static void gs_flush_at(int line)
     mglb_buffer_release(_tris);
     mglb_buffer_release(_lights);
     mglb_buffer_release(_pos);
+    mglb_buffer_release(_kept);
 }
 @end
 static mglb_buffer *rt_inst;                    /* GPU address of each scene instance's triangle data */
@@ -4965,6 +5325,7 @@ static void rt_tab_drop(size_t at)
     rt_tab[at].sec = NULL; /* h stays: probes keep going past it */
     rt_tab_live--;
     rt_tab_dead++;
+    s.dead = 1;
     rt_retire(s);
 }
 
@@ -5173,7 +5534,10 @@ static void encode_decode(id<MTLComputeCommandEncoder> c, const mgl_rt_geom *g, 
     use_buffer(s.pos);
 }
 
-static MTLAccelerationStructureTriangleGeometryDescriptor *tri_geometry(mglb_buffer *pos, size_t first, int tris, BOOL opaque)
+/* rec: the section's triangle records, kept in the structure as per-primitive data for mcm_any_hit (cutout
+   triangles only: solid ones never call it) */
+static MTLAccelerationStructureTriangleGeometryDescriptor *tri_geometry(mglb_buffer *pos, size_t first, int tris, BOOL opaque,
+                                                                        mglb_buffer *rec)
 {
     MTLAccelerationStructureTriangleGeometryDescriptor *tg = [MTLAccelerationStructureTriangleGeometryDescriptor descriptor];
     tg.vertexBuffer = OBJ(id<MTLBuffer>, pos->mtl);
@@ -5182,6 +5546,13 @@ static MTLAccelerationStructureTriangleGeometryDescriptor *tri_geometry(mglb_buf
     tg.vertexFormat = MTLAttributeFormatFloat3;
     tg.triangleCount = (NSUInteger)tris;
     tg.opaque = opaque; /* NO: mcm_trace runs the alpha test on the hit */
+    if (!opaque && rec && rt_prim_data_on() && rt_native_on(0))
+        if (@available(macOS 14.0, *)) {
+            tg.primitiveDataBuffer = OBJ(id<MTLBuffer>, rec->mtl);
+            tg.primitiveDataBufferOffset = 0;
+            tg.primitiveDataStride = 48;
+            tg.primitiveDataElementSize = MGL_RT_PRIM_DATA_BYTES;
+        }
     return tg;
 }
 
@@ -5222,7 +5593,7 @@ static RtSection *section_new(const mgl_rt_geom *g, const rt_key *k, uint64_t h)
         return nil;
     MTLPrimitiveAccelerationStructureDescriptor *pd = [MTLPrimitiveAccelerationStructureDescriptor descriptor];
     /* placeholder buffer for the size query; the real one is set once decoded */
-    pd.geometryDescriptors = @[ tri_geometry(s.tris, 0, tris, NO) ];
+    pd.geometryDescriptors = @[ tri_geometry(s.tris, 0, tris, NO, s.tris) ];
     pd.usage = rt_upgrade_on() ? MTLAccelerationStructureUsagePreferFastBuild : MTLAccelerationStructureUsageNone;
     s.as = new_as(pd);
     if (!s.as)
@@ -5245,10 +5616,10 @@ static void section_upgrade(RtSection *s)
     MTLPrimitiveAccelerationStructureDescriptor *pd = [MTLPrimitiveAccelerationStructureDescriptor descriptor];
     int split = solid && cut;
     if (split) {
-        pd.geometryDescriptors = @[ tri_geometry(s.tris, 0, tris, YES), tri_geometry(s.tris, (size_t)tris, tris, NO) ];
+        pd.geometryDescriptors = @[ tri_geometry(s.tris, 0, tris, YES, s.tris), tri_geometry(s.tris, (size_t)tris, tris, NO, s.tris) ];
         rt_split++;
     } else {
-        pd.geometryDescriptors = @[ tri_geometry(s.tris, 0, tris, solid ? YES : NO) ];
+        pd.geometryDescriptors = @[ tri_geometry(s.tris, 0, tris, solid ? YES : NO, s.tris) ];
         rt_solid += solid ? 1 : 0;
     }
 #if defined(__MAC_26_0) && __MAC_OS_X_VERSION_MAX_ALLOWED >= __MAC_26_0
@@ -5441,6 +5812,206 @@ static id<MTLAccelerationStructure> entity_as(mglb_buffer **tris_out)
     return as;
 }
 
+/* MGL_RT_REGIONS=1 (off by default; an A/B test of Apple's "fewer instances" advice): one scene instance per
+   Sodium region (one vertex buffer, 8x4x8 sections) instead of one per section, so a long ray enters far fewer
+   instances. A region's structure is built from copies of its sections' positions and triangle records (two
+   geometries, opaque and not, like a split section), so it stands on its own: primitive ids index the region's
+   own records and mcm_trace needs no change. It holds the sections drawn this frame and those seen in the last
+   ~4 s that are still cached (so turning doesn't rebuild it). It is rebuilt when one of its sections is new,
+   rebuilt or dropped, at most a few regions a frame; until a region has a structure, its sections go in one by
+   one as before. Costs: the kept positions (36 or 72 bytes a triangle) and the region rebuilds. */
+@interface RtRegion : NSObject
+@property(nonatomic, strong) id<MTLAccelerationStructure> as;
+@property(nonatomic) mglb_buffer *tris;
+@property(nonatomic, strong) NSMutableArray<RtSection *> *members, *seen;
+@property(nonatomic, strong) NSMutableArray<NSNumber *> *seen_idx; /* their index in this frame's section list */
+@property(nonatomic, strong) NSHashTable<RtSection *> *member_set;
+@property(nonatomic) uint64_t built_frame, seen_frame;
+@property(nonatomic) int ntris;
+@end
+@implementation RtRegion
+- (void)dealloc { mglb_buffer_release(_tris); }
+@end
+static NSMutableDictionary<NSNumber *, RtRegion *> *rt_region_tab;
+static unsigned long rt_region_builds, rt_region_build_tris;
+
+static int rt_regions_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        on = opt("MGL_RT_REGIONS");
+        if (on)
+            mgl_log("ray tracing: one scene instance per region (MGL_RT_REGIONS)");
+    }
+    return on;
+}
+
+static NSHashTable *rt_ptr_set(void)
+{
+    return [NSHashTable hashTableWithOptions:NSPointerFunctionsStrongMemory | NSPointerFunctionsObjectPointerPersonality];
+}
+
+/* (Re)build a region's structure from its sections; 0 if it has none to build from */
+static int rt_region_build(RtRegion *r)
+{
+    NSMutableArray<RtSection *> *mem = [NSMutableArray array];
+    NSHashTable *set = rt_ptr_set();
+    long total = 0;
+    for (int pass = 0; pass < 2; pass++)
+        for (RtSection *s in pass ? r.members : r.seen)
+            if (s.kept && !s.dead && ![set containsObject:s] && (!pass || rt_frame - s.last_frame <= 240)) {
+                [mem addObject:s];
+                [set addObject:s];
+                total += s.ntris;
+            }
+    if (!total)
+        return 0;
+    mglb_buffer *pos = mglb_buffer_new((size_t)total * 72), *tris = mglb_buffer_new((size_t)total * 48);
+    if (!pos || !tris) {
+        mglb_buffer_release(pos);
+        mglb_buffer_release(tris);
+        return 0;
+    }
+    end_encoders();
+    id<MTLBlitCommandEncoder> b = [current_cb() blitCommandEncoder];
+    id<MTLBuffer> P = OBJ(id<MTLBuffer>, pos->mtl), T = OBJ(id<MTLBuffer>, tris->mtl);
+    [b fillBuffer:P range:NSMakeRange(0, (NSUInteger)total * 72) value:0]; /* zero triangles: in neither geometry */
+    size_t half = (size_t)total * 36, o = 0;
+    for (RtSection *s in mem) {
+        id<MTLBuffer> K = OBJ(id<MTLBuffer>, s.kept->mtl);
+        size_t n = (size_t)s.ntris * 36;
+        if (s.layout == 2) {
+            [b copyFromBuffer:K sourceOffset:0 toBuffer:P destinationOffset:o * 36 size:n];
+            [b copyFromBuffer:K sourceOffset:n toBuffer:P destinationOffset:half + o * 36 size:n];
+        } else {
+            [b copyFromBuffer:K sourceOffset:0 toBuffer:P destinationOffset:(s.layout ? 0 : half) + o * 36 size:n];
+        }
+        [b copyFromBuffer:OBJ(id<MTLBuffer>, s.tris->mtl) sourceOffset:0 toBuffer:T destinationOffset:o * 48
+                     size:(size_t)s.ntris * 48];
+        use_buffer(s.kept);
+        use_buffer(s.tris);
+        o += (size_t)s.ntris;
+    }
+    [b endEncoding];
+    MTLPrimitiveAccelerationStructureDescriptor *pd = [MTLPrimitiveAccelerationStructureDescriptor descriptor];
+    pd.geometryDescriptors = @[ tri_geometry(pos, 0, (int)total, YES, tris), tri_geometry(pos, (size_t)total, (int)total, NO, tris) ];
+#if defined(__MAC_26_0) && __MAC_OS_X_VERSION_MAX_ALLOWED >= __MAC_26_0
+    if (@available(macOS 26.0, *))
+        pd.usage = MTLAccelerationStructureUsagePreferFastIntersection;
+#endif
+    id<MTLAccelerationStructure> as = build_as(pd, "rt build regions");
+    use_buffer(pos);
+    mglb_buffer_release(pos); /* copied into the structure; the pool keeps it until the build has run */
+    if (!as) {
+        mglb_buffer_release(tris);
+        return 0;
+    }
+    rt_retire(r.as);
+    use_buffer(r.tris);
+    mglb_buffer_release(r.tris);
+    r.as = as;
+    r.tris = tris;
+    r.members = mem;
+    r.member_set = set;
+    r.ntris = (int)total;
+    r.built_frame = rt_frame;
+    rt_region_builds++;
+    rt_region_build_tris += (unsigned long)total;
+    return 1;
+}
+
+static void rt_instance(MTLAccelerationStructureUserIDInstanceDescriptor *d, const float *origin, int translucent,
+                        int index, int user)
+{
+    memset(d, 0, sizeof *d);
+    d->transformationMatrix.columns[0] = MTLPackedFloat3Make(1, 0, 0);
+    d->transformationMatrix.columns[1] = MTLPackedFloat3Make(0, 1, 0);
+    d->transformationMatrix.columns[2] = MTLPackedFloat3Make(0, 0, 1);
+    d->transformationMatrix.columns[3] = MTLPackedFloat3Make(origin[0], origin[1], origin[2]);
+    d->options = MTLAccelerationStructureInstanceOptionNone;
+    d->mask = translucent ? 0x02 : 0x01;
+    d->accelerationStructureIndex = (uint32_t)index;
+    d->userID = (uint32_t)user;
+}
+
+/* This frame's instances with MGL_RT_REGIONS: one per region that has a structure, else its sections one by one */
+static int rt_region_instances(const mgl_rt_geom *g, RtSection *__strong *secs, const int *sec_geom, int nsec,
+                               MTLAccelerationStructureUserIDInstanceDescriptor *descs, uint64_t *addr,
+                               NSMutableArray<id<MTLAccelerationStructure>> *parts)
+{
+    @autoreleasepool { /* the render thread has no pool of its own */
+    if (!rt_region_tab)
+        rt_region_tab = [NSMutableDictionary dictionary];
+    NSMutableArray<RtRegion *> *live = [NSMutableArray array];
+    NSMutableArray<NSNumber *> *first = [NSMutableArray array]; /* a section of each, for its origin and mask */
+    for (int i = 0; i < nsec; i++) {
+        const mgl_rt_geom *gi = &g[sec_geom[i]];
+        NSNumber *key = @((uintptr_t)gi->vbuf | (gi->translucent ? 1u : 0u));
+        RtRegion *r = rt_region_tab[key];
+        if (!r)
+            r = rt_region_tab[key] = [RtRegion new];
+        if (r.seen_frame != rt_frame) {
+            r.seen_frame = rt_frame;
+            r.seen = [NSMutableArray array];
+            r.seen_idx = [NSMutableArray array];
+            [live addObject:r];
+            [first addObject:@(i)];
+        }
+        [r.seen addObject:secs[i]];
+        [r.seen_idx addObject:@(i)];
+    }
+    int builds = 0, count = 0;
+    long build_tris = 0;
+    for (NSUInteger j = 0; j < live.count; j++) {
+        RtRegion *r = live[j];
+        int dirty = !r.as;
+        for (RtSection *s in r.seen) /* (a section without kept positions can't be in it: no use rebuilding for it) */
+            dirty |= s.kept && (![r.member_set containsObject:s] || s.built_frame > r.built_frame);
+        for (RtSection *s in r.members)
+            dirty |= s.dead;
+        if (dirty && builds < 8 && build_tris < 1500000) {
+            int before = r.ntris;
+            if (rt_region_build(r)) {
+                builds++;
+                build_tris += r.ntris > before ? r.ntris : before;
+            }
+        }
+        int fi = first[j].intValue;
+        const mgl_rt_geom *g0 = &g[sec_geom[fi]];
+        if (r.as) {
+            addr[count] = OBJ(id<MTLBuffer>, r.tris->mtl).gpuAddress;
+            rt_tris_c[count] = OBJ(id<MTLBuffer>, r.tris->mtl);
+            use_buffer(r.tris);
+            rt_instance(&descs[count], g0->region, g0->translucent, count, sec_geom[fi]);
+            [parts addObject:r.as];
+            count++;
+            continue;
+        }
+        for (NSNumber *ix in r.seen_idx) { /* no structure yet: its sections as before */
+            int i = ix.intValue;
+            addr[count] = OBJ(id<MTLBuffer>, secs[i].tris->mtl).gpuAddress;
+            rt_tris_c[count] = OBJ(id<MTLBuffer>, secs[i].tris->mtl);
+            rt_instance(&descs[count], g[sec_geom[i]].region, g[sec_geom[i]].translucent, count, sec_geom[i]);
+            [parts addObject:secs[i].as];
+            count++;
+        }
+    }
+    if (rt_frame % 60 == 0) /* regions unseen for ~4 s */
+        for (NSNumber *key in rt_region_tab.allKeys)
+            if (rt_frame - rt_region_tab[key].seen_frame > 240) {
+                rt_retire(rt_region_tab[key]);
+                [rt_region_tab removeObjectForKey:key];
+            }
+    static int logged;
+    if (rt_frame % 120 == 0 || !logged++)
+        mgl_log("ray tracing: %d instances for %d sections in %lu regions; %lu region builds (%luk triangles) lately",
+                count, nsec, (unsigned long)live.count, rt_region_builds, rt_region_build_tris / 1000);
+    if (rt_frame % 120 == 0)
+        rt_region_builds = rt_region_build_tris = 0;
+    return count;
+    }
+}
+
 static void rt_update(const mgl_rt_geom *g, int n);
 void mglb_rt_update(const mgl_rt_geom *g, int n)
 {
@@ -5486,7 +6057,7 @@ static void rt_update(const mgl_rt_geom *g, int n)
     uint64_t *addr = table->ptr;
     free(rt_tris_c);
     rt_tris_c = (__unsafe_unretained id<MTLResource> *)calloc(slots, sizeof(id));
-    int count = 0;
+    int count = 0, nsec = 0, regions = rt_regions_on();
     RtSection *__strong *secs = (RtSection *__strong *)calloc((size_t)(n ? n : 1), sizeof(RtSection *));
     int *sec_geom = calloc((size_t)(n ? n : 1), sizeof(int));
     /* sections to decode and build this frame: new ones (with their per-triangle data) and ones rebuilt for tracing */
@@ -5518,8 +6089,11 @@ static void rt_update(const mgl_rt_geom *g, int n)
             }
         }
         sec.last_frame = rt_frame;
-        secs[count] = sec;
-        sec_geom[count] = i;
+        secs[nsec] = sec;
+        sec_geom[nsec] = i;
+        nsec++;
+        if (regions)
+            continue;
         addr[count] = OBJ(id<MTLBuffer>, sec.tris->mtl).gpuAddress;
         rt_tris_c[count] = OBJ(id<MTLBuffer>, sec.tris->mtl);
         MTLAccelerationStructureUserIDInstanceDescriptor *d = &descs[count];
@@ -5553,7 +6127,15 @@ static void rt_update(const mgl_rt_geom *g, int n)
             for (MTLAccelerationStructureGeometryDescriptor *gd in s.desc.geometryDescriptors)
                 ((MTLAccelerationStructureTriangleGeometryDescriptor *)gd).vertexBuffer = OBJ(id<MTLBuffer>, s.pos->mtl);
             encode_build(e, s.as, s.desc);
-            mglb_buffer_release(s.pos); /* the pool keeps it until the GPU is done with it */
+            if (rt_regions_on()) { /* its region's structure is made from these positions */
+                MTLAccelerationStructureTriangleGeometryDescriptor *g0 =
+                    (MTLAccelerationStructureTriangleGeometryDescriptor *)s.desc.geometryDescriptors[0];
+                s.layout = s.desc.geometryDescriptors.count == 2 ? 2 : g0.opaque ? 1 : 0;
+                mglb_buffer_release(s.kept);
+                s.kept = s.pos;
+            } else {
+                mglb_buffer_release(s.pos); /* the pool keeps it until the GPU is done with it */
+            }
             s.pos = NULL;
             s.desc = nil;
         }
@@ -5566,8 +6148,10 @@ static void rt_update(const mgl_rt_geom *g, int n)
         for (size_t i = 0; i < rt_tab_cap; i++)
             if (rt_tab[i].sec && rt_frame - ((__bridge RtSection *)rt_tab[i].sec).last_frame > 240)
                 rt_tab_drop(i);
-    rt_build_lights(g, secs, sec_geom, count);
-    for (int i = 0; i < count; i++)
+    if (regions)
+        count = rt_region_instances(g, secs, sec_geom, nsec, descs, addr, parts);
+    rt_build_lights(g, secs, sec_geom, nsec);
+    for (int i = 0; i < nsec; i++)
         secs[i] = nil;
     free(secs);
     free(sec_geom);
@@ -5632,17 +6216,22 @@ static void rt_update(const mgl_rt_geom *g, int n)
     }
 }
 
-static void bind_scene(id<MTLRenderCommandEncoder> e, id<MTLComputeCommandEncoder> c)
+static void bind_scene(id<MTLRenderCommandEncoder> e, id<MTLComputeCommandEncoder> c, id ps)
 {
     if (!rt_scene)
         return;
+    id<MTLIntersectionFunctionTable> ift = ift_of(ps);
     if (c) {
+        if (ift)
+            [c setIntersectionFunctionTable:ift atBufferIndex:MGL_BUF_RT_FUNCS];
         [c setAccelerationStructure:rt_scene atBufferIndex:MGL_BUF_SCENE];
         [c useResources:rt_parts_c count:rt_parts_n usage:MTLResourceUsageRead];
         [c useResources:rt_tris_c count:rt_tris_n usage:MTLResourceUsageRead];
     } else {
         [e setVertexAccelerationStructure:rt_scene atBufferIndex:MGL_BUF_SCENE];
         [e setFragmentAccelerationStructure:rt_scene atBufferIndex:MGL_BUF_SCENE];
+        if (ift)
+            [e setFragmentIntersectionFunctionTable:ift atBufferIndex:MGL_BUF_RT_FUNCS];
         [e useResources:rt_parts_c count:rt_parts_n usage:MTLResourceUsageRead
                  stages:MTLRenderStageVertex | MTLRenderStageFragment];
         [e useResources:rt_tris_c count:rt_tris_n usage:MTLResourceUsageRead
@@ -6732,6 +7321,272 @@ static int tu_frame(id<MTLTexture> win, id<MTLTexture> drawable)
     return 1;
 }
 
+/* MetalFX's denoiser in place of a pack's MCMETAL_DENOISE_PASS (core/mgl_denoise.c, MCMETAL_DENOISE=1).
+   Apple's MTLFXTemporalDenoisedScaler (macOS 26, Apple9 GPUs: M3 and newer) denoises a ray-traced picture with
+   its history, guided by depth, motion, normals, albedo and roughness; here at the render size (denoise only).
+   One gather pass turns the pack's buffers into what MetalFX takes (fixed formats, so any pack layout works):
+   colour as is, the octahedral normal decoded to xyz, roughness and F0 from their channels, diffuse and specular
+   albedo split by LabPBR's metal range, depth copied to Depth32Float and, without a pack motion buffer, the
+   camera's motion worked out from depth (as the snapshot's motion for the upscaler does). MetalFX writes its own
+   texture, and a last pass puts that into the pass's render target in that target's format.
+   Conventions: textures hold GL rows (row 0 at the bottom) and every input agrees, so motion is previous minus
+   current in texel rows, scale 1; for the matrices MetalFX gets Metal's clip space for those rows (y negated,
+   z in [0, 1]). MCMETAL_DN_FLIPY=0 keeps GL's y, MCMETAL_DN_MY=-1 negates the motion's y (checks on a Mac). */
+#if defined(__MAC_26_0) && __MAC_OS_X_VERSION_MAX_ALLOWED >= __MAC_26_0
+#define MGL_HAVE_DENOISER 1
+static const char *dn_msl =
+    "#include <metal_stdlib>\nusing namespace metal;\n"
+    "struct DnU { float4x4 inv_proj, inv_view, prev_view, prev_proj; float4 cam_delta; float2 size; uint rough_ch, spec_ch;\n"
+    "             uint have_motion, have_spec; float my, pad; };\n"
+    "vertex float4 dn_vs(uint v [[vertex_id]]) { float2 p = float2((v << 1) & 2, v & 2); return float4(p * 2.0 - 1.0, 0.0, 1.0); }\n"
+    "struct DnOut { float4 col [[color(0)]]; float4 nrm [[color(1)]]; float4 alb [[color(2)]]; float4 spec [[color(3)]];\n"
+    "               float rough [[color(4)]]; float2 mv [[color(5)]]; float d [[depth(any)]]; };\n"
+    "fragment DnOut dn_gather(float4 pos [[position]], texture2d<float> col [[texture(0)]], depth2d<float> dep [[texture(1)]],\n"
+    "                         texture2d<float> nrm [[texture(2)]], texture2d<float> alb [[texture(3)]], texture2d<float> rgh [[texture(4)]],\n"
+    "                         texture2d<float> spc [[texture(5)]], texture2d<float> mot [[texture(6)]], constant DnU &u [[buffer(0)]]) {\n"
+    "    uint2 px = uint2(pos.xy);\n"
+    "    DnOut o;\n"
+    "    float d = dep.read(px);\n"
+    "    o.d = d;\n"
+    "    o.col = float4(col.read(px).rgb, 1.0);\n"
+    "    float2 e = nrm.read(px).xy;\n" /* the pack's octDecode (lib/common.glsl) */
+    "    float3 n = float3(e, 1.0 - abs(e.x) - abs(e.y));\n"
+    "    float t = saturate(-n.z);\n"
+    "    n.xy -= float2(n.x >= 0.0 ? t : -t, n.y >= 0.0 ? t : -t);\n"
+    "    o.nrm = float4(length(n) > 0.0 ? normalize(n) : float3(0.0, 1.0, 0.0), 0.0);\n"
+    "    float3 a = alb.read(px).rgb;\n"
+    "    float f0 = u.have_spec ? spc.read(px)[u.spec_ch] : 0.04;\n"
+    "    bool metal = f0 >= 229.5 / 255.0;\n"
+    "    o.alb = float4(metal ? float3(0.0) : a, 1.0);\n"
+    "    o.spec = float4(metal ? a : float3(f0), 1.0);\n"
+    "    o.rough = saturate(rgh.read(px)[u.rough_ch]);\n"
+    "    if (u.have_motion) { float2 m = mot.read(px).xy; o.mv = float2(m.x, m.y * u.my); return o; }\n"
+    "    float2 uv = (float2(px) + 0.5) / u.size;\n"
+    "    float4 v = u.inv_proj * float4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);\n"
+    "    v /= v.w;\n"
+    "    float3 w = (u.inv_view * v).xyz + u.cam_delta.xyz;\n"
+    "    float4 pc = u.prev_proj * (u.prev_view * float4(w, 1.0));\n"
+    "    o.mv = pc.w > 0.0 ? ((pc.xy / pc.w * 0.5 + 0.5) - uv) * u.size * float2(1.0, u.my) : float2(0.0);\n"
+    "    return o;\n"
+    "}\n"
+    "fragment float4 dn_put(float4 pos [[position]], texture2d<float> src [[texture(0)]]) { return src.read(uint2(pos.xy)); }\n";
+
+static struct {
+    id fx; /* id<MTLFXTemporalDenoisedScaler> */
+    id<MTLTexture> col, nrm, alb, spec, rough, mv, dep, out;
+    int w, h;
+    id<MTLRenderPipelineState> gather, put;
+    MTLPixelFormat put_fmt;
+    id<MTLDepthStencilState> ds;
+    int failed, logged, warned_size;
+    unsigned long long last_frame;
+} dn;
+
+API_AVAILABLE(macos(26.0)) static int dn_setup(int w, int h)
+{
+    if (dn.fx && dn.w == w && dn.h == h)
+        return 1;
+    if (dn.failed)
+        return 0;
+    if (![MTLFXTemporalDenoisedScalerDescriptor supportsDevice:dev]) {
+        mgl_log("denoiser: MetalFX's denoiser needs an M3 or newer; the pack's own pass runs");
+        dn.failed = 1;
+        return 0;
+    }
+    MTLFXTemporalDenoisedScalerDescriptor *d = [[MTLFXTemporalDenoisedScalerDescriptor alloc] init];
+    d.colorTextureFormat = MTLPixelFormatRGBA16Float;
+    d.depthTextureFormat = MTLPixelFormatDepth32Float;
+    d.motionTextureFormat = MTLPixelFormatRG16Float;
+    d.diffuseAlbedoTextureFormat = MTLPixelFormatRGBA16Float;
+    d.specularAlbedoTextureFormat = MTLPixelFormatRGBA16Float;
+    d.normalTextureFormat = MTLPixelFormatRGBA16Float;
+    d.roughnessTextureFormat = MTLPixelFormatR16Float;
+    d.outputTextureFormat = MTLPixelFormatRGBA16Float;
+    d.inputWidth = d.outputWidth = (NSUInteger)w;
+    d.inputHeight = d.outputHeight = (NSUInteger)h;
+    d.autoExposureEnabled = YES;
+    id<MTLFXTemporalDenoisedScaler> fx = [d newTemporalDenoisedScalerWithDevice:dev];
+    if (!fx) {
+        mgl_log("denoiser: MetalFX wouldn't make one for %dx%d (this Mac takes %.2fx to %.2fx); the pack's own pass runs", w, h,
+                [MTLFXTemporalDenoisedScalerDescriptor supportedInputContentMinScaleForDevice:dev],
+                [MTLFXTemporalDenoisedScalerDescriptor supportedInputContentMaxScaleForDevice:dev]);
+        dn.failed = 1;
+        return 0;
+    }
+    if (!dn.gather) {
+        NSError *e = nil;
+        id<MTLLibrary> lib = [dev newLibraryWithSource:[NSString stringWithUTF8String:dn_msl] options:nil error:&e];
+        MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
+        pd.vertexFunction = [lib newFunctionWithName:@"dn_vs"];
+        pd.fragmentFunction = [lib newFunctionWithName:@"dn_gather"];
+        MTLPixelFormat f[6] = {MTLPixelFormatRGBA16Float, MTLPixelFormatRGBA16Float, MTLPixelFormatRGBA16Float,
+                               MTLPixelFormatRGBA16Float, MTLPixelFormatR16Float, MTLPixelFormatRG16Float};
+        for (int i = 0; i < 6; i++)
+            pd.colorAttachments[i].pixelFormat = f[i];
+        pd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+        dn.gather = lib ? [dev newRenderPipelineStateWithDescriptor:pd error:&e] : nil;
+        MTLDepthStencilDescriptor *dd = [[MTLDepthStencilDescriptor alloc] init];
+        dd.depthCompareFunction = MTLCompareFunctionAlways;
+        dd.depthWriteEnabled = YES;
+        dn.ds = [dev newDepthStencilStateWithDescriptor:dd];
+        if (!dn.gather) {
+            mgl_log("denoiser: gather shader failed: %s", e.localizedDescription.UTF8String);
+            dn.failed = 1;
+            return 0;
+        }
+    }
+    dn.fx = fx;
+    dn.w = w;
+    dn.h = h;
+    dn.col = fg_texture(MTLPixelFormatRGBA16Float, w, h, MTLTextureUsageRenderTarget | fx.colorTextureUsage);
+    dn.nrm = fg_texture(MTLPixelFormatRGBA16Float, w, h, MTLTextureUsageRenderTarget | fx.normalTextureUsage);
+    dn.alb = fg_texture(MTLPixelFormatRGBA16Float, w, h, MTLTextureUsageRenderTarget | fx.diffuseAlbedoTextureUsage);
+    dn.spec = fg_texture(MTLPixelFormatRGBA16Float, w, h, MTLTextureUsageRenderTarget | fx.specularAlbedoTextureUsage);
+    dn.rough = fg_texture(MTLPixelFormatR16Float, w, h, MTLTextureUsageRenderTarget | fx.roughnessTextureUsage);
+    dn.mv = fg_texture(MTLPixelFormatRG16Float, w, h, MTLTextureUsageRenderTarget | fx.motionTextureUsage);
+    dn.dep = fg_texture(MTLPixelFormatDepth32Float, w, h, MTLTextureUsageRenderTarget | fx.depthTextureUsage);
+    dn.out = fg_texture(MTLPixelFormatRGBA16Float, w, h, fx.outputTextureUsage);
+    dn.last_frame = 0;
+    mgl_log("denoiser: MetalFX denoiser made for %dx%d", w, h);
+    return 1;
+}
+
+static id<MTLRenderPipelineState> dn_put_pipeline(MTLPixelFormat fmt)
+{
+    if (dn.put && dn.put_fmt == fmt)
+        return dn.put;
+    NSError *e = nil;
+    id<MTLLibrary> lib = [dev newLibraryWithSource:[NSString stringWithUTF8String:dn_msl] options:nil error:&e];
+    MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
+    pd.vertexFunction = [lib newFunctionWithName:@"dn_vs"];
+    pd.fragmentFunction = [lib newFunctionWithName:@"dn_put"];
+    pd.colorAttachments[0].pixelFormat = fmt;
+    dn.put = lib ? [dev newRenderPipelineStateWithDescriptor:pd error:&e] : nil;
+    dn.put_fmt = fmt;
+    return dn.put;
+}
+#endif
+
+int mglb_denoise(const mglb_denoise_in *in)
+{
+#ifdef MGL_HAVE_DENOISER
+    if (@available(macOS 26.0, *)) {
+        mglb_texture *ot = in->out;
+        int w = ot->d.width, h = ot->d.height;
+        if (in->color->d.width != w || in->color->d.height != h || in->depth->d.width != w || in->depth->d.height != h ||
+            (mgl_cam.seen & 0x3f) != 0x3f) {
+            if (!dn.warned_size++)
+                mgl_log("denoiser: colour %dx%d, depth %dx%d and target %dx%d differ (or no camera yet); the pack's own pass runs",
+                        in->color->d.width, in->color->d.height, in->depth->d.width, in->depth->d.height, w, h);
+            return 0;
+        }
+        if (!dn_setup(w, h))
+            return 0;
+        id<MTLRenderPipelineState> put = dn_put_pipeline(OBJ(id<MTLTexture>, ot->mtl).pixelFormat);
+        if (!put)
+            return 0;
+        end_encoders();
+        struct {
+            float inv_proj[16], inv_view[16], prev_view[16], prev_proj[16];
+            float cam_delta[4];
+            float size[2];
+            uint32_t rough_ch, spec_ch, have_motion, have_spec;
+            float my, pad;
+        } u = {0};
+        mat_inverse(mgl_cam.mat[1], u.inv_proj);
+        mat_inverse(mgl_cam.mat[0], u.inv_view);
+        memcpy(u.prev_view, mgl_cam.mat[2], 64);
+        memcpy(u.prev_proj, mgl_cam.mat[3], 64);
+        for (int i = 0; i < 3; i++)
+            u.cam_delta[i] = mgl_cam.pos[0][i] - mgl_cam.pos[1][i];
+        u.size[0] = (float)w;
+        u.size[1] = (float)h;
+        u.rough_ch = (uint32_t)in->roughness_ch;
+        u.spec_ch = (uint32_t)in->specular_ch;
+        u.have_motion = in->motion != NULL;
+        u.have_spec = in->specular != NULL;
+        static float my, flipy;
+        if (!my) {
+            my = getenv("MCMETAL_DN_MY") && atoi(getenv("MCMETAL_DN_MY")) < 0 ? -1.0f : 1.0f;
+            flipy = getenv("MCMETAL_DN_FLIPY") && atoi(getenv("MCMETAL_DN_FLIPY")) == 0 ? 1.0f : -1.0f;
+        }
+        u.my = my;
+
+        MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
+        id<MTLTexture> outs[6] = {dn.col, dn.nrm, dn.alb, dn.spec, dn.rough, dn.mv};
+        for (int i = 0; i < 6; i++) {
+            rp.colorAttachments[i].texture = outs[i];
+            rp.colorAttachments[i].loadAction = MTLLoadActionDontCare;
+            rp.colorAttachments[i].storeAction = MTLStoreActionStore;
+        }
+        rp.depthAttachment.texture = dn.dep;
+        rp.depthAttachment.loadAction = MTLLoadActionDontCare;
+        rp.depthAttachment.storeAction = MTLStoreActionStore;
+        id<MTLRenderCommandEncoder> e = [current_cb() renderCommandEncoderWithDescriptor:rp];
+        [e setRenderPipelineState:dn.gather];
+        [e setDepthStencilState:dn.ds];
+        mglb_texture *src[7] = {in->color, in->depth, in->normal, in->albedo, in->roughness,
+                                in->specular ? in->specular : in->roughness, in->motion ? in->motion : in->roughness};
+        for (int i = 0; i < 7; i++)
+            [e setFragmentTexture:OBJ(id<MTLTexture>, src[i]->mtl) atIndex:(NSUInteger)i];
+        [e setFragmentBytes:&u length:sizeof u atIndex:0];
+        [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+        [e endEncoding];
+
+        id<MTLFXTemporalDenoisedScaler> fx = dn.fx;
+        fx.colorTexture = dn.col;
+        fx.depthTexture = dn.dep;
+        fx.motionTexture = dn.mv;
+        fx.normalTexture = dn.nrm;
+        fx.diffuseAlbedoTexture = dn.alb;
+        fx.specularAlbedoTexture = dn.spec;
+        fx.roughnessTexture = dn.rough;
+        fx.outputTexture = dn.out;
+        fx.jitterOffsetX = 0;
+        fx.jitterOffsetY = 0;
+        fx.motionVectorScaleX = 1;
+        fx.motionVectorScaleY = 1;
+        fx.depthReversed = NO;
+        /* Metal's clip space for GL-row textures: z from [-w, w] to [0, w], y negated (rows run the other way) */
+        const float *p = mgl_cam.mat[1];
+        float clip[16];
+        for (int c = 0; c < 4; c++) {
+            clip[c * 4 + 0] = p[c * 4 + 0];
+            clip[c * 4 + 1] = flipy * p[c * 4 + 1];
+            clip[c * 4 + 2] = 0.5f * (p[c * 4 + 2] + p[c * 4 + 3]);
+            clip[c * 4 + 3] = p[c * 4 + 3];
+        }
+        simd_float4x4 view, proj;
+        memcpy(&view, mgl_cam.mat[0], sizeof view);
+        memcpy(&proj, clip, sizeof proj);
+        fx.worldToViewMatrix = view;
+        fx.viewToClipMatrix = proj;
+        fx.shouldResetHistory = dn.last_frame + 1 != frames_presented && dn.last_frame != frames_presented;
+        dn.last_frame = frames_presented;
+        [fx encodeToCommandBuffer:current_cb()];
+
+        rp = [MTLRenderPassDescriptor renderPassDescriptor];
+        rp.colorAttachments[0].texture = OBJ(id<MTLTexture>, ot->mtl);
+        rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+        rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+        e = [current_cb() renderCommandEncoderWithDescriptor:rp];
+        [e setRenderPipelineState:put];
+        [e setFragmentTexture:dn.out atIndex:0];
+        [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+        [e endEncoding];
+        tex_dirty(ot);
+        if (!dn.logged++)
+            mgl_log("denoiser: first frame denoised by MetalFX (%dx%d, motion from %s)", w, h,
+                    in->motion ? "the pack" : "depth and the camera");
+        return 1;
+    }
+#endif
+    static int noted;
+    if (!noted++)
+        mgl_log("denoiser: this build or macOS has no MetalFX denoiser (macOS 26 SDK); the pack's own pass runs");
+    return 0;
+}
+
 void mglb_window_size(int *w, int *h)
 {
     *w = current ? current->w : 0;
@@ -6803,6 +7658,9 @@ static void profile_frame(unsigned long draws)
             f * 1000.0 / ((double)(t - prof.start_ns) * 1e-6), ms, (double)prof.wait_ns * 1e-6 / f,
             (double)atomic_load(&prof_gpu_ns) * 1e-6 / f, prof.draws / f, prof.passes / f, prof.reopened / f, prof.dontcare / f,
             prof.blits / f, prof.computes / f, prof.cbs / f, prof.finishes / f, 100.0 * prof.skipped_presents / f);
+    if (sl_checks)
+        mgl_log("profile: smart load: %lu coverage checks, %lu draws found not to cover their target",
+                sl_checks, sl_partial);
     if (prof.sh_draws)
         mgl_log("profile: shadow-sized viewports (without geometry shaders) %.0f draws, %.0fk triangles per frame",
                 prof.sh_draws / f, prof.sh_tris / f * 1e-3);
@@ -7273,6 +8131,9 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
         present_stats_report();
     fg_timing_report();
     frame_draws = frame_sections = frame_dispatches = frame_probes = 0;
+    pthread_mutex_lock(&sl_lock); /* MGL_SMART_LOAD: coverage checks are good for 120 frames */
+    sl_frame++;
+    pthread_mutex_unlock(&sl_lock);
     pipe_frame_end();
     /* keep at most ~2 frames in flight: wait for the frame before last (by frame, not command buffer, since an
        interpolated frame commits several) */
