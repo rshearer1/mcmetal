@@ -70,6 +70,7 @@
 #define DH_SHADOW_STEPS 16 // [8 12 16 24]
 #define LAMP_FOG // torches, lanterns and glowing blocks light up the air round them: a soft glow in fog, rain and dusty rooms (needs coloured light)
 #define LAMP_FOG_STRENGTH 1.0 // [0.5 1.0 1.5 2.0 3.0]
+#define INDOOR_DUST 0.3 // [0.0 0.3 0.6 1.0] how much thicker the air gets indoors (sunbeams and lamp glow in a room); 1.0 was the old dusty look, rooms read hazy and grey
 #define VOLUMETRIC_MIST // morning mist near the ground that the sun's beams light up (with Light Shafts)
 #define MIST_AMOUNT 1.0 // [0.0 0.5 1.0 1.5 2.0 3.0]
 #define LIGHT_SHAFTS_RATE 4 // [2 4] light shafts traced for 1 in this many pixels each frame (the rest keep their average; shafts are soft, 4 is enough)
