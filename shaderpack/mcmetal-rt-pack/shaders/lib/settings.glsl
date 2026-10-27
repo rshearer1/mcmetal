@@ -62,7 +62,7 @@
 #define LIGHT_SHAFTS_STRENGTH 1.0 // [0.25 0.5 0.75 1.0 1.5 2.0 3.0]
 #define LIGHT_SHAFTS_STEPS 6 // [4 6 8 12 16]
 #define LIGHT_SHAFTS_SCALE 0.5
-//#define SHAFT_BUDGET // fewer light-shaft rays where the view ray is short (rooms, close walls): one step every few blocks instead of the full count
+#define SHAFT_BUDGET // fewer light-shaft rays where the view ray is short (rooms, close walls): one step every few blocks instead of the full count
 #define SHAFT_STEP_LENGTH 4.0 // [2.0 3.0 4.0 6.0 8.0] with the above: blocks of air per light-shaft step
 //#define FOG_GRID // light shafts: whether the sun reaches each half-block of air is traced once per cell and shared, not per pixel
 #define FOG_GRID_FRAMES 8 // [4 8 16 32] how many frames a cell keeps its sun ray before tracing again
