@@ -534,6 +534,7 @@ static id<MTLBlitCommandEncoder> blit_encoder_at(int line)
    cleared images can still take them as load actions (images the clear only loads keep whatever the blit wrote).
    One that does touch them replays the clears first. */
 static void tex_dirty(mglb_texture *t);
+static void tex_used(mglb_texture *t);
 static id<MTLBlitCommandEncoder> blit_encoder_for_at(int line, mglb_texture *a, mglb_texture *b)
 {
     int touches = (a && pending_clear_clears(a)) || (b && pending_clear_clears(b));
@@ -544,10 +545,8 @@ static id<MTLBlitCommandEncoder> blit_encoder_for_at(int line, mglb_texture *a, 
     keep_clears = 0;
     tex_dirty(a); /* the copy source too: cheaper than telling the caller's direction apart */
     tex_dirty(b);
-    if (a)
-        a->used_cb = cb_serial;
-    if (b)
-        b->used_cb = cb_serial;
+    tex_used(a);
+    tex_used(b);
     return e;
 }
 #define blit_encoder_for(a, b) blit_encoder_for_at(__LINE__, a, b)
@@ -1090,6 +1089,7 @@ static void tex_drop_views(mglb_texture *t)
     }
 }
 static void tex_dirty(mglb_texture *t) { if (t) t->clean = 0; }
+static void tex_used(mglb_texture *t) { if (t) t->used_cb = cb_serial; }
 static void target_dirty(const mgl_target *t)
 {
     for (int a = 0; a < MGL_MAX_ATTACHMENTS; a++)
