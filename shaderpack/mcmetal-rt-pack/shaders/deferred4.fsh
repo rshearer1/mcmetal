@@ -38,7 +38,7 @@ float mcm_trace(vec3 origin, vec3 dir, float tmax);
   #endif
 #endif
 
-uniform sampler2D colortex0, colortex1, colortex2, colortex3, colortex4, colortex5, colortex7, colortex10, depthtex0;
+uniform sampler2D colortex0, colortex1, colortex2, colortex3, colortex4, colortex5, colortex6, colortex7, colortex10, depthtex0;
 
 // the sun shadow (colortex5: rgb shadow, a distance), cleaned of the grain left by one ray per pixel and frame:
 // a 3x3 blur over pixels at the same distance facing the same way, so shadow edges between objects stay sharp
@@ -461,6 +461,14 @@ void main() {
             col = mix(col, refl, f * m.b);
         }
 #endif
+        // faint glowing blocks (fluorescent maples) keep their colour: at night the eye opens up so far that their pale
+        // texture plus its glow and the grove's light would reach white. Held to a bright pastel at the current
+        // exposure (composite3.fsh's, from last frame)
+        if (mat == MAT_EMISSIVE_DIM) {
+            float e = texelFetch(colortex6, ivec2(0), 0).r * EXPOSURE;
+            float top = max(col.r, max(col.g, col.b)) * e;
+            if (top > 0.6) col *= 0.6 / top;
+        }
 #if DEBUG_VIEW == 1
         col = sh * max(dot(n, lightDir), 0.0);
 #elif DEBUG_VIEW == 2
