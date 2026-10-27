@@ -117,6 +117,7 @@ int mglb_cull_run(const mgl_cull_pass *p, const mgl_cull_draw *dr, int n, mglb_b
 
 void mglb_window_size(int *w, int *h) { *w = 1280; *h = 720; }
 int mglb_upscaled_read(unsigned char **px, int *w, int *h) { (void)px; (void)w; (void)h; return 0; }
+int mglb_madeup_read(unsigned char **px, int *w, int *h) { (void)px; (void)w; (void)h; return 0; }
 void mglb_tu_jitter(const mgl_target *t, float out[2]) { (void)t; out[0] = out[1] = 0; }
 int mglb_denoise(const mglb_denoise_in *in) { (void)in; return 0; }
 uint64_t mglb_fence(void) { return ++fence_counter; }

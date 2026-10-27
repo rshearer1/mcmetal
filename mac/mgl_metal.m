@@ -6727,27 +6727,31 @@ static void update_size(mgl_ctx *c)
 
 static id<MTLTexture> upscaled; /* last MetalFX output, for test screenshots */
 
-/* RGBA8 copy of the last upscaled frame (GL row order, like window_color), for MGL_SHOT_DIR; 0 when none. */
-int mglb_upscaled_read(unsigned char **px, int *w, int *h)
+/* RGBA8 copy of a frame texture (GL row order, like window_color), for MGL_SHOT_DIR. */
+static int read_rgba8(id<MTLTexture> tex, unsigned char **px, int *w, int *h)
 {
-    if (!upscaled)
-        return 0;
-    *w = (int)upscaled.width;
-    *h = (int)upscaled.height;
+    *w = (int)tex.width;
+    *h = (int)tex.height;
     size_t row = (size_t)*w * 4;
     mglb_buffer *stage = mglb_buffer_new(row * (size_t)*h);
     if (!stage || !(*px = malloc(row * (size_t)*h))) {
         mglb_buffer_release(stage);
         return 0;
     }
-    [blit_encoder() copyFromTexture:upscaled sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
-                         sourceSize:MTLSizeMake(upscaled.width, upscaled.height, 1) toBuffer:OBJ(id<MTLBuffer>, stage->mtl)
+    [blit_encoder() copyFromTexture:tex sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
+                         sourceSize:MTLSizeMake(tex.width, tex.height, 1) toBuffer:OBJ(id<MTLBuffer>, stage->mtl)
                   destinationOffset:0 destinationBytesPerRow:row destinationBytesPerImage:row * (size_t)*h];
     use_buffer(stage);
     mglb_finish();
     memcpy(*px, stage->ptr, row * (size_t)*h);
     mglb_buffer_release(stage);
     return 1;
+}
+
+/* The last upscaled frame; 0 when none. */
+int mglb_upscaled_read(unsigned char **px, int *w, int *h)
+{
+    return upscaled ? read_rgba8(upscaled, px, w, h) : 0;
 }
 
 /* The upscaled frame, the right way down for the present blit. NULL when off or MetalFX can't. */
@@ -6802,8 +6806,13 @@ static id<MTLTexture> upscale(mgl_ctx *c, id<MTLTexture> in, NSUInteger ow, NSUI
    (no HUD) and depth (fg_snapshot); MetalFX gets that and the finished frame with the HUD ("composited UI") and
    keeps the HUD from smearing. A frame without that clear (menus, loading) is shown as is and resets MetalFX.
    Each swap then presents the made-up frame, then the real one half a frame later: about half a frame more
-   input lag. MCMETAL_FG_FLIP=1 flips the motion's Y for MetalFX, MCMETAL_FG_NEG=1 its sign (conventions to check
-   on a real Mac). */
+   input lag. MCMETAL_FG_FLIP=1 flips the motion's Y for MetalFX, MCMETAL_FG_NEG=1 its sign (the defaults were
+   checked on an M3, 10-22: negated smears).
+   Real frames are paced at a rate whose double divides the screen's refresh (120 Hz: 60, 30, 20, 15 or 12 real,
+   shown as twice that) and interpolation pauses itself when real frames alone would show as many (fg_decide);
+   both need VSync on. Packs give only camera motion (ours too: deferred4's colortex7 is the same reprojection),
+   so mobs, particles and water are left to MetalFX's picture matching. Needs a shader pack: without one Iris hands
+   us no camera. MGL_SHOT_DIR saves the made-up frames as shot-NNN-mid.png; MGL_PRESENT_STATS logs input lag. */
 #if defined(__MAC_26_0) && __MAC_OS_X_VERSION_MAX_ALLOWED >= __MAC_26_0
 #define MGL_HAVE_FRAMEGEN 1
 #endif
@@ -6840,6 +6849,8 @@ static struct {
     uint64_t snap_frame;       /* frames_presented when the last snapshot was taken */
     int have_prev;             /* the previous frame had a snapshot too */
     float view[16], proj[16];  /* camera at the snapshot, for MetalFX */
+    float cam[3];              /* cameraPosition at the snapshot */
+    uint64_t out_frame;        /* frames_presented + 1 of the swap that last made a frame into out */
     id<MTLRenderPipelineState> mv_pipe;
     id fi;                     /* id<MTLFXFrameInterpolator> */
     int failed, reset;         /* failed: the interpolator */
@@ -7016,6 +7027,7 @@ static void fg_snapshot(const mgl_target *t)
         u.flip = flip ? -1.0f : 1.0f;
         memcpy(fg.view, mgl_cam.mat[0], 64);
         memcpy(fg.proj, mgl_cam.mat[1], 64);
+        memcpy(fg.cam, mgl_cam.pos[0], sizeof fg.cam);
 
         MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
         rp.colorAttachments[0].texture = fg.motion;
@@ -7078,15 +7090,51 @@ static id<MTLTexture> fg_interpolate(double frame_s)
         fi.aspectRatio = p[5] / p[0];
         fi.nearPlane = p[14] / (p[10] - 1.0f);
         fi.farPlane = p[14] / (p[10] + 1.0f);
+        /* The camera matrices (never set before 10-27, so MetalFX had zeros): world to view = gbufferModelView
+           after moving the world by -cameraPosition (Iris's view is camera-relative, so without that the "world"
+           would move with the player and the two frames' cameras would differ only by turning); view to clip in
+           Metal's clip space for GL-row textures (y negated, z from [-w, w] to [0, w]), as the denoiser gets it.
+           MCMETAL_FG_MATRICES=0 leaves them out, for an A/B. */
+        static int matrices = -1;
+        if (matrices < 0)
+            matrices = !getenv("MCMETAL_FG_MATRICES") || atoi(getenv("MCMETAL_FG_MATRICES")) != 0;
+        if (matrices) {
+            float view[16], clip[16];
+            memcpy(view, fg.view, sizeof view);
+            for (int r = 0; r < 4; r++)
+                view[12 + r] = fg.view[r] * -fg.cam[0] + fg.view[4 + r] * -fg.cam[1] + fg.view[8 + r] * -fg.cam[2] +
+                               fg.view[12 + r];
+            for (int c = 0; c < 4; c++) {
+                clip[c * 4 + 0] = p[c * 4 + 0];
+                clip[c * 4 + 1] = -p[c * 4 + 1];
+                clip[c * 4 + 2] = 0.5f * (p[c * 4 + 2] + p[c * 4 + 3]);
+                clip[c * 4 + 3] = p[c * 4 + 3];
+            }
+            simd_float4x4 v, cm;
+            memcpy(&v, view, sizeof v);
+            memcpy(&cm, clip, sizeof cm);
+            fi.worldToViewMatrix = v;
+            fi.viewToClipMatrix = cm;
+        }
         fi.shouldResetHistory = fg.reset;
         fg.reset = 0;
         [fi encodeToCommandBuffer:current_cb()];
+        fg.out_frame = frames_presented + 1;
         return fg.out;
     }
 #else
     (void)frame_s;
 #endif
     return nil;
+}
+
+/* RGBA8 copy of the last made-up frame (GL row order, render size, before any upscaling), for MGL_SHOT_DIR: the
+   frame between the two real ones before this one. 0 when the last swap made none. */
+int mglb_madeup_read(unsigned char **px, int *w, int *h)
+{
+    if (!fg.out || fg.out_frame != frames_presented)
+        return 0;
+    return read_rgba8(fg.out, px, w, h);
 }
 
 /* MetalFX must not blend across a pause in interpolation */
@@ -7850,6 +7898,49 @@ static void watch_drawable(id<CAMetalDrawable> drawable)
     }];
 }
 
+/* MGL_PRESENT_STATS (or MGL_PROFILE): input lag, as the time from the start of a frame (the end of the swap before
+   it, when the game goes on to read the mouse and keys for the next frame) to its GPU work being done and to the
+   real frame reaching the screen (presentedTime; a window kept behind others never gets one, so then only the
+   first). With frame interpolation the real frame waits for the made-up one, so that is where its extra lag shows. */
+static _Atomic uint64_t lat_ns[2], lat_n[2];
+
+static void watch_latency(id<CAMetalDrawable> drawable, uint64_t begin_ns)
+{
+    static int on = -1;
+    if (on < 0)
+        on = opt_profile > 0 || opt("MGL_PRESENT_STATS");
+    if (!on || !begin_ns)
+        return;
+    [current_cb() addCompletedHandler:^(id<MTLCommandBuffer> done) {
+      uint64_t e = (uint64_t)(done.GPUEndTime * 1e9);
+      if (e > begin_ns && e - begin_ns < 1000000000ull) {
+          atomic_fetch_add(&lat_ns[0], e - begin_ns);
+          atomic_fetch_add(&lat_n[0], 1);
+      }
+    }];
+    [drawable addPresentedHandler:^(id<MTLDrawable> d) {
+      uint64_t w = (uint64_t)(d.presentedTime * 1e9);
+      if (w > begin_ns && w - begin_ns < 1000000000ull) {
+          atomic_fetch_add(&lat_ns[1], w - begin_ns);
+          atomic_fetch_add(&lat_n[1], 1);
+      }
+    }];
+}
+
+static void latency_report(void)
+{
+    uint64_t n0 = atomic_exchange(&lat_n[0], 0), s0 = atomic_exchange(&lat_ns[0], 0);
+    uint64_t n1 = atomic_exchange(&lat_n[1], 0), s1 = atomic_exchange(&lat_ns[1], 0);
+    if (!n0)
+        return;
+    if (n1)
+        mgl_log("input lag: frame start to GPU done %.1f ms, to the screen %.1f ms (%llu real frames)", s0 * 1e-6 / n0,
+                s1 * 1e-6 / n1, (unsigned long long)n0);
+    else
+        mgl_log("input lag: frame start to GPU done %.1f ms (%llu real frames; time on screen not reported, window "
+                "hidden?)", s0 * 1e-6 / n0, (unsigned long long)n0);
+}
+
 /* Draw a frame (GL row order) into the drawable the right way up, through MetalFX's upscaler when that's on. */
 static void draw_to_drawable(mgl_ctx *c, id<MTLTexture> src, id<CAMetalDrawable> drawable)
 {
@@ -7992,6 +8083,8 @@ static void mem_report(void)
 
 MGL_EXPORT void mgl_glfw_swap(void *ctx)
 {
+    static uint64_t frame_begin_ns; /* end of the last swap: where this frame started */
+    uint64_t begin_ns = frame_begin_ns;
     frame_times_tick();
     uint64_t sw_start = sw_last = now_ns();
     mgl_ctx *c = ctx;
@@ -8044,6 +8137,10 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
                (on 120 Hz: 60 or 30 real, shown as 120 or 60), each shown frame for exactly half a real one.
                Not from the measured frame time: the GPU time per frame grows when presents wait, so that would
                slow the game down step by step (measured: SEUS fell to 10-12 fps). */
+            static int warned_vsync;
+            if (!c->vsync && !warned_vsync++)
+                mgl_log("frame interpolation: VSync is off, so made-up frames may tear and it can't pause itself when "
+                        "real frames alone would be smoother; turn VSync on in Video Settings");
             int fps = choose_paced_fps(c, 2);
             if (fps != c->paced_fps) {
                 c->paced_fps = fps;
@@ -8074,13 +8171,16 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
                 pace_wait_ns += now_ns() - t_d2;
                 if (drawable) {
                     watch_drawable(drawable);
+                    watch_latency(drawable, begin_ns);
                     draw_to_drawable(c, OBJ(id<MTLTexture>, mgl->window_color->mtl), drawable);
                     [current_cb() presentDrawable:drawable afterMinimumDuration:half];
                     fg_time_stage(FG_SHOW_REAL);
                 }
             }
-        } else
+        } else {
+            watch_latency(drawable, begin_ns);
             draw_to_drawable(c, OBJ(id<MTLTexture>, mgl->window_color->mtl), drawable);
+        }
         uint64_t t = now_ns(), gpu = atomic_load(&pace_gpu_ns);
         if (c->last_swap_ns) {
             double cpu = (double)(t - c->last_swap_ns - (pace_wait_ns - c->last_wait_ns)) * 1e-6;
@@ -8127,8 +8227,15 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
                 frame_probes ? [NSString stringWithFormat:@", %lu probed draws", frame_probes].UTF8String : "");
     if (opt_profile > 0)
         profile_frame(frame_draws);
-    if (opt_profile > 0 || opt("MGL_PRESENT_STATS"))
+    if (opt_profile > 0 || opt("MGL_PRESENT_STATS")) {
+        static uint64_t lat_last;
+        uint64_t lt = now_ns();
+        if (lt - lat_last >= 1000000000ull) {
+            lat_last = lt;
+            latency_report();
+        }
         present_stats_report();
+    }
     fg_timing_report();
     frame_draws = frame_sections = frame_dispatches = frame_probes = 0;
     pthread_mutex_lock(&sl_lock); /* MGL_SMART_LOAD: coverage checks are good for 120 frames */
@@ -8145,4 +8252,5 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
         mglb_fence_wait(before_last, 100000000ull);
     sw_mark(SW_FENCE);
     sw_report(sw_start);
+    frame_begin_ns = now_ns();
 }
