@@ -5,7 +5,7 @@
 #define SHARP_LIGHT_SHADOWS // block light casts crisp shadows (rays aim at the light's centre); off = soft shadows
 #define COLORED_LIGHT_STRENGTH 1.0 // [0.5 0.7 0.85 1.0 1.2 1.5 2.0]
 #define LIGHT_SLOTS 4 // [2 4 6 8] how many of the nearest light blocks each pixel considers (more = slower)
-//#define LIGHT_RESTIR // coloured light picks carry over between frames (ReSTIR): with many lights, each pixel settles on the ones it can see
+#define LIGHT_RESTIR // coloured light picks carry over between frames (ReSTIR): with many lights, each pixel settles on the ones it can see
 #define RT_MODE 1 // [0 1 2] 0 = shadow map only, 1 = hardware ray tracing when mcmetal provides it, 2 = always ray tracing
 #if RT_MODE == 2 || (RT_MODE == 1 && defined MCMETAL_RT)
     #define USE_RT
@@ -31,7 +31,7 @@
 #endif
 #define GI_COARSE_RAYS // bounce light rays see leaves and plants beyond 2 blocks as solid (no alpha test: faster in forests; needs mcmetal from 10-25 or newer)
 #define LIGHT_CACHE // light bounces more than once: ray hits that are on screen reuse the bounce light already gathered there (brighter, more even rooms; no extra rays)
-//#define WORLD_CACHE // the bounce light is also kept per block face in the world, so light keeps bouncing off things behind you and round corners
+#define WORLD_CACHE // the bounce light is also kept per block face in the world, so light keeps bouncing off things behind you and round corners
 #define DENOISER // two extra filter rounds that clean the GI's grain but keep its light and shadow edges (a-trous, like SVGF)
 #define GI_FILTER 9 // [9 25] taps in the GI blur/upscale (9: 6% less GPU on the M3, no visible difference)
 #define GI_HALF_RES 1 // [0 1] trace GI and AO for every 2x2 pixels (about half the cost), then upscale
@@ -55,7 +55,7 @@
 #define COLORED_SHADOWS // sunlight through stained glass (and water) takes its colour
 #define RT_REFLECTIONS // ray-traced reflections on water and glass
 #define RT_REFLECT_DISTANCE 128.0 // [32.0 64.0 128.0 256.0]
-//#define REFLECTION_DENOISE // glossy traced reflections average over frames (rougher = longer), so they are smooth instead of grainy
+#define REFLECTION_DENOISE // glossy traced reflections average over frames (rougher = longer), so they are smooth instead of grainy
 #define WATER_REFLECT_HALF // open water's reflections traced at half resolution, half the pixels each frame, averaged over frames (much faster)
 
 #define LIGHT_SHAFTS // ray-traced light shafts (god rays) where sunlight comes through gaps
@@ -104,7 +104,7 @@
 #define AUTO_PBR // blocks without PBR maps still look their part: ores glint, metal blocks shine, gems and polished stone are glossy (also modded blocks)
 #define AUTO_PBR_STRENGTH 1.0 // [0.5 0.75 1.0]
 #define ROUGH_REFLECTIONS_STRENGTH 1.0 // [0.0 0.5 1.0 1.5 2.0] the soft sheen of rough and satin PBR blocks (stone, wood, brick): a blurred reflection of their surroundings
-//#define GLOSSY_RT // satin PBR blocks close by trace one short ray for their sheen, so it shows the torch or wall really there
+#define GLOSSY_RT // satin PBR blocks close by trace one short ray for their sheen, so it shows the torch or wall really there
 #define GLOSSY_RT_DISTANCE 24.0 // [12.0 16.0 24.0 32.0 48.0]
 #define BLOOM // soft glow around the sun, lights and other bright things
 #define BLOOM_STRENGTH 1.0 // [0.25 0.5 0.75 1.0 1.5 2.0 3.0]
@@ -152,7 +152,7 @@ const float drynessHalfLife = 400.0;
 #define WATER_DEPTH_COLOR // shallow water is clear, deep water turns blue-green and dark (light absorbed by depth)
 #define WATER_DEPTH_COLOR_STRENGTH 1.0 // [0.5 1.0 1.5 2.0]
 #define WATER_FOAM // a thin moving line of foam where water meets the shore
-//#define WATER_REFRACTION // traced refraction: the view bends where it enters water, so the bottom looks nearer and moves with the waves
+#define WATER_REFRACTION // traced refraction: the view bends where it enters water, so the bottom looks nearer and moves with the waves
 #define WAVE_HEIGHT 1.0 // [0.0 0.5 1.0 1.5 2.0 3.0]
 #define WAVE_SPEED 1.0 // [0.5 1.0 1.5 2.0]
 
