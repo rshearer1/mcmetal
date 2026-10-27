@@ -319,6 +319,8 @@ void main() {
         // GI brings the sky light and the bounced light, so the lightmap's sky guess is left out
         // the held item isn't in the ray scene's history: it gets the plain sky light instead
         vec3 gi = handLike(mat) ? skyAmb * (nl.w * nl.w) * (0.7 + 0.3 * n.y) : filteredGI(n, length(p));
+        // a canopy of glowing leaves is mostly lit by itself, bounce after bounce off pale leaves: it blazed white at night
+        if (mat == MAT_EMISSIVE_DIM) gi *= 0.35;
         vec3 envLight = gi;   // what a rough surface sees all round (for its blurred reflection below)
   #ifdef LABPBR
         // the GI is traced for the block's face: let the normal map shade it too (light comes mostly from above

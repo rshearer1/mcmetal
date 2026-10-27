@@ -111,6 +111,12 @@ void main() {
     }
 #endif
     mat = MATERIAL;
+#if !defined TERRAIN && MATERIAL == MAT_NONE
+    // a program standing in for another (Iris falls back to textured/basic ones): First-person Model's body and what it
+    // holds arrive like that. The render stage still says what they are
+    if (renderStage == MC_RENDER_STAGE_ENTITIES) mat = MAT_ENTITY;
+    else if (renderStage == MC_RENDER_STAGE_HAND_SOLID || renderStage == MC_RENDER_STAGE_HAND_TRANSLUCENT) mat = MAT_HAND;
+#endif
 #if defined BLOCK_ENTITIES && defined END_PORTAL_STARS
     if (blockEntityId == 10300) mat = MAT_LIT;   // the starfield glows by itself (lib/portal.glsl)
 #endif

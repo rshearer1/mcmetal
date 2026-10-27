@@ -13,7 +13,7 @@ HEAD, BODY = unc(head), unc(body)
 # mcmetal's light list (mcm_lights_near): stub it until core/mgl_program.c supplies it, so the pack side compiles
 if "mcm_lights_near" not in BODY:
     BODY += "\nint mcm_lights_near(vec3 p, int slot, out vec3 pos, out int blockId) { pos = vec3(0.0); blockId = 0; return -1; }\n"
-IRIS = "#define MC_VERSION 12101\n#define MC_GL_VERSION 450\n#define IRIS_FEATURE_SSBO\n#define MC_RENDER_STAGE_STARS 3\n#define MC_RENDER_STAGE_SUNSET 2\n"
+IRIS = "#define MC_VERSION 12101\n#define MC_GL_VERSION 450\n#define IRIS_FEATURE_SSBO\n#define MC_RENDER_STAGE_STARS 3\n#define MC_RENDER_STAGE_SUNSET 2\n#define MC_RENDER_STAGE_ENTITIES 11\n#define MC_RENDER_STAGE_HAND_SOLID 16\n#define MC_RENDER_STAGE_HAND_TRANSLUCENT 23\n"
 
 def expand(path, seen):
     out = []
