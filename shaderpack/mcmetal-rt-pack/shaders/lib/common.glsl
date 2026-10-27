@@ -14,11 +14,12 @@ const float PI = 3.14159265359;
 #define MAT_GLASS   10   // glass and stained glass: refraction in gbuffers_water (lib/gbuffer.glsl)
 #define MAT_DH       9   // Distant Horizons terrain (far LODs): no rays, lit from the lightmap in deferred4.fsh
 #define MAT_BODY    12   // your own body in first person (First-person Model): lit like the held item (lib/gbuffer.glsl)
+#define MAT_HAND_LIT 13   // the held item, lit already in gbuffers_hand (FORWARD): deferred keeps its colour
 #define MAT_EMISSIVE_DIM 11   // faint light blocks (light level 6 or less, e.g. fluorescent maple): their bright texels glow softly
 
 // the held item, and your own body in first person (First-person Model): both move with the camera and sit closer than
 // anything in the world, so they get the plain lightmap light instead of the traced light and its history
-bool handLike(int mat) { return mat == MAT_HAND || mat == MAT_BODY; }
+bool handLike(int mat) { return mat == MAT_HAND || mat == MAT_BODY || mat == MAT_HAND_LIT; }
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 vec3 toLinear(vec3 c) { return c * c * (c * 0.2 + 0.8); }     // cheap fit of the sRGB curve

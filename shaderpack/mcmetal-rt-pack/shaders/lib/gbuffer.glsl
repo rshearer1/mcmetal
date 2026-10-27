@@ -9,16 +9,14 @@
 //   NO_TEXTURE      gbuffers_basic and the like: vertex colour only
 //   MATERIAL        material id when TERRAIN doesn't decide it (default MAT_NONE)
 //   TRACE_SHADOW    FORWARD non-terrain programs that still cast a shadow ray (translucent entities, held glass)
-//   KEEP_MATERIAL   FORWARD programs that may run before deferred (clouds): also mark the pixel already lit
+//   KEEP_MATERIAL   FORWARD programs that may run before deferred (clouds, the held item): also mark the pixel already lit
 //   BLOCK_ENTITIES  gbuffers_block: chests, signs, End portals (blockEntityId from block.properties)
 #include "/lib/settings.glsl"
 #include "/lib/common.glsl"
 #include "/lib/uniforms.glsl"
 #include "/lib/lightcolor.glsl"
 #include "/lib/style.glsl"
-//   LATE_LIT        OPAQUE programs Iris may also run after the deferred passes (the hand pass's second half): lit
-//                   right here then, like FORWARD
-#if (defined FORWARD && !defined UNLIT) || (defined LATE_LIT && defined FSH)
+#if defined FORWARD && !defined UNLIT
     #include "/lib/sky.glsl"
     #include "/lib/lighting.glsl"
 #endif
@@ -379,18 +377,6 @@ void main() {
     // depth buffer can't be trusted there)
     int outMat = mat == MAT_ENTITY && ownBody() ? MAT_BODY : mat;
     outMaterial = vec4(float(outMat) / 255.0, ao, puddle, spec.a);
-  #ifdef LATE_LIT
-    // First-person Model draws your body (and what it holds) in the hand pass's second half, after the lighting has
-    // already run: what's written now lands straight on the lit picture. So light it here, like the held item
-    if (renderStage == MC_RENDER_STAGE_HAND_TRANSLUCENT) {
-        vec3 sc, sa;
-        lightColors(sc, sa);
-        vec3 la = toLinear(c.rgb);
-        vec3 lsh = vec3(smoothstep(0.85, 0.97, lmcoord.y));
-        outAlbedo = vec4(la * surfaceLight(playerPos, nm, vec2(lmcoord.x * 0.6, lmcoord.y), ao, MAT_HAND, lightDirection(),
-                                           sc, sa, lsh), 1.0);
-    }
-  #endif
   #if DEBUG_VIEW == 9
     // which program and render stage drew this pixel (deferred4.fsh shows it as is): r the program's material / 16,
     // g Iris's render stage / 32, b the tag the pixel ends up with / 16
@@ -489,7 +475,7 @@ void main() {
     #endif
   #endif
   #ifdef KEEP_MATERIAL
-    outMaterial = vec4(float(MAT_LIT) / 255.0, 1.0, 0.0, 0.0);
+    outMaterial = vec4(float(MATERIAL == MAT_HAND ? MAT_HAND_LIT : MAT_LIT) / 255.0, 1.0, 0.0, 0.0);
   #endif
 #endif
 }
