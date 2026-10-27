@@ -50,5 +50,6 @@ void main() {
     imageStore(halfAlbedo, hp, vec4(albedo, 1.0));
     imageStore(halfRough, hp, vec4(1.0));
     // colorimgN: write one of Iris's own colour buffers from compute; composite1.fsh checks it (blue square)
-    imageStore(colorimg5, full, vec4(0.0, 0.25, 1.0, 1.0));
+    for (int i = 0; i < 4; i++) // the 2x2 full-size pixels this thread stands for
+        imageStore(colorimg5, full + ivec2(i & 1, i >> 1), vec4(0.0, 0.25, 1.0, 1.0));
 }
