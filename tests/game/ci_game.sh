@@ -3,6 +3,7 @@
 #   bash tests/game/ci_game.sh WORK OUT [phases...]   phases: title world complementary sound sound-off sound-apple water water-shaders night night-act showcase showcase-mac showcase-plain world-f3 rt-demo showcase-rain lightlist lightlist-off lightlist-PACK lightlist-off-PACK nether nether-shaders dh dh-shaders dh-PACK ours ours-noon ours-fp ours-down ours-sunset ours-dawn ours-night ours-rain ours-gl ours-storm ours-nether ours-end ours-portal ours-aurora ours-cave ours-snow ours-shadow ours-ao ours-gi ours-gi-fine ours-pan ours-room ours-room-gi ours-room-off ours-lights ours-pool-night ours-low ours-ultra ours-glass ours-glass-night ours-glass-off ours-caustics ours-caustics-mask ours-water ours-water-full ours-underwater ours-vista ours-flare ours-vista-STYLE-TIME ours-season-SEASON[-STYLE]
 #   pbr-VIEW[+RP] (material gallery for resource packs: VIEW ours comp comp-pom comp-ipbr plain, RP as GAME_RP)
 #   menu menu-noif menu-shaders creative creative-shaders creative-scroll particles ab-menu ab-menu-noif ab-menu-shaders ab-creative ab-creative-shaders ab-particles (JEI, ImmediatelyFast, Particle Rain)
+#   effects effects-off effects-shaders effects-PACK ab-effects[-...] (water effect mods: Wakes, Particular, ...)
 #   pack-NAME packnight-NAME packshadow-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
 #   herd-NAME (the pack over a busy farm: 240 mobs and 64 chests, for entity costs; ab-herd-NAME for A/B)
 #   glcount-pack-NAME (the pack on Apple's OpenGL, draws counted by tools/glcount.c)
@@ -24,11 +25,15 @@ G=$WORK/game
 mkdir -p "$G/config" "$G/saves"
 cp "$SRC/tests/game/options.txt" "$G/options.txt"
 # GAME_ENV goes to the game process; a PACK_OPTS=A=false,B=2 in it (commas: GAME_ENV is split on spaces) sets the
-# pack's options instead, so a manual run's "env" input can switch pack options for every phase
+# pack's options instead, so a manual run's "env" input can switch pack options for every phase (GAME_VSYNC=true too)
 if [ -n "${GAME_ENV:-}" ]; then
     rest=""
     for kv in $GAME_ENV; do
-        case $kv in PACK_OPTS=*) PACK_OPTS="${PACK_OPTS:-} $(printf '%s' "${kv#PACK_OPTS=}" | tr ',' ' ')" ;; *) rest="$rest $kv" ;; esac
+        case $kv in
+            PACK_OPTS=*) PACK_OPTS="${PACK_OPTS:-} $(printf '%s' "${kv#PACK_OPTS=}" | tr ',' ' ')" ;;
+            GAME_VSYNC=*) GAME_VSYNC=${kv#GAME_VSYNC=} ;;
+            *) rest="$rest $kv" ;;
+        esac
     done
     GAME_ENV=${rest# }
 fi
@@ -378,6 +383,7 @@ scene() { # time [weather [stage]]: copy the test datapack into the world; it bu
     [ "${3:-scene}" = cave ] && echo 'tp @s ~ ~ ~ -90 5' > "$f/look.mcfunction" # into the cave, from its far end
     [ "${3:-scene}" = portal ] && echo 'tp @s ~ ~ ~ -90 40' > "$f/look.mcfunction" # down at the End portal in front
     [ "${3:-scene}" = snow ] && echo 'tp @s ~ ~1 ~ -90 15' > "$f/look.mcfunction" # over the snowy clearing
+    [ "${3:-scene}" = effects ] && echo 'tp @s ~ ~ ~ -90 18' > "$f/look.mcfunction" # across the lake at the waterfalls
     # GAME_LOOK="yaw pitch" turns the player where the scene put them; "x y z yaw pitch" also moves them there
     if [ -n "${GAME_LOOK:-}" ]; then
         if [ "$(wc -w <<< "$GAME_LOOK")" -ge 5 ]; then echo "tp @s $GAME_LOOK" > "$f/look.mcfunction"
@@ -491,6 +497,46 @@ gui_phase() { # kind (menu, menu-noif, menu-shaders, creative, creative-shaders,
         run_phase "$out" 240 metal false "$@" ;;
     esac
     rm -f "$G/mods/mcm-jei.jar" "$G/mods/mcm-immediatelyfast.jar" "$G/mods/mcm-particlerain.jar"
+}
+
+# Water effects with the effect mods Hearth & Hex ships (same versions), fetched at run time and removed after:
+#   effects          the effects stage (lake, five waterfalls, four boats crossing, salmon and squid) in rain, with
+#                    Wakes, Particular, Particle Rain, Visuality, Make Bubbles Pop and ImmediatelyFast, no shaders
+#   effects-shaders  the same with Complementary
+#   effects-off[-...] the same scene with none of the effect mods (ImmediatelyFast stays): their cost is the difference
+#   effects-PACK     the same with a pack from PACKS ("ours": our RT pack)
+#   ab-effects...    new, old (GAME_AB_OFF's env), new in one job
+# MGL_PROFILE=1 in the env counts draws and render passes per frame, and the passes reopened after an upload
+WAKES="https://cdn.modrinth.com/data/E0SdeAoH/versions/Z3Ic8n5N/wakes-1.21.1-NeoForge-1.4.1.jar|e55b63465e733b0faee50c9c336b82a5bca857a8"
+PARTICULAR="https://cdn.modrinth.com/data/pYFUU6cq/versions/WyRBAcBf/particular-1.21.1-NeoForge-1.5.7.jar|d6d33e8233481ad8fc6f8c351f52783ed431a800"
+VISUALITY="https://cdn.modrinth.com/data/z13R7Et1/versions/kOdevgPm/visuality-forge-3.0.0.jar|9786f023733a302b582b7349336e1ab47e93823e"
+BUBBLES="https://cdn.modrinth.com/data/gPCdW0Wr/versions/OkGl4Kh9/make_bubbles_pop-0.4.0-beta.2-neoforge-mc1.21-1.21.1.jar|905fb3f92c4608b021a2d6bc9c2fdcf552ab9829"
+EFFECT_MODS="mcm-immediatelyfast.jar mcm-particlerain.jar mcm-wakes.jar mcm-particular.jar mcm-visuality.jar mcm-bubbles.jar"
+effects_phase() { # effects[-off][-shaders|-PACK] out-name [VAR=value ...]
+    local kind=$1 out=$2 shaders=false file= url=- sha off=; shift 2
+    case $kind in effects-off*) off=1 kind=effects${kind#effects-off} ;; esac # effects-off-shaders: effects-shaders, no mods
+    (cd "$G/mods" && rm -f $EFFECT_MODS)
+    fetch_mod "$IMMEDIATELYFAST" mcm-immediatelyfast.jar || return
+    if [ -z "$off" ]; then
+        fetch_mod "$PARTICLE_RAIN" mcm-particlerain.jar && fetch_mod "$WAKES" mcm-wakes.jar && fetch_mod "$PARTICULAR" mcm-particular.jar \
+            && fetch_mod "$VISUALITY" mcm-visuality.jar && fetch_mod "$BUBBLES" mcm-bubbles.jar || return
+    fi
+    case $kind in
+    effects) ;;
+    effects-shaders) shaders=true ;;
+    effects-ours) shaders=true file=mcmetal-rt-pack ;;
+    effects-*)
+        shaders=true
+        IFS='|' read -r _ file url sha <<< "$(grep "^${kind#effects-}|" <<< "$PACKS")"
+        [ -n "$file" ] || { echo "unknown pack ${kind#effects-}"; return; }
+        if [ "$url" != - ] && ! python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import bare_mc; bare_mc.fetch(*sys.argv[2:])' \
+            "$SRC/tools" "$url" "$G/shaderpacks/$file" "$sha"; then echo "could not download $file"; return; fi ;;
+    esac
+    scene noon rain effects
+    PACK=${file:-${PACK:-}} run_phase "$out" 240 metal $shaders "$@"
+    (cd "$G/mods" && rm -f $EFFECT_MODS)
+    [ "$url" != - ] && rm -rf "$G/shaderpacks/$file"
+    return 0
 }
 
 # packnight-NAME turns each pack's coloured block light on (all ship with it off except Solas and RV)
@@ -774,6 +820,12 @@ for p in $PHASES; do
         gui_phase "$inner" "$p-new1"
         gui_phase "$inner" "$p-old" ${GAME_AB_OFF:-}
         gui_phase "$inner" "$p-new2" ;;
+    effects|effects-*) effects_phase "$p" "$p" ;;
+    ab-effects|ab-effects-*)
+        inner=${p#ab-}
+        effects_phase "$inner" "$p-new1"
+        effects_phase "$inner" "$p-old" ${GAME_AB_OFF:-}
+        effects_phase "$inner" "$p-new2" ;;
     ab-*) # A/B in one job (separate jobs run on machines up to ~30% apart): ab-pack-NAME runs the pack with this
           # change (new), with GAME_AB_OFF's env (old, e.g. MGL_TEX_COMPRESS=0), then new again; compare in fps.txt
         inner=${p#ab-}
