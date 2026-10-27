@@ -13,6 +13,14 @@ const float PI = 3.14159265359;
 #define MAT_LIT      8   // already lit (clouds etc.): deferred keeps the colour as it is
 #define MAT_GLASS   10   // glass and stained glass: refraction in gbuffers_water (lib/gbuffer.glsl)
 #define MAT_DH       9   // Distant Horizons terrain (far LODs): no rays, lit from the lightmap in deferred4.fsh
+#define MAT_EMISSIVE_DIM 11   // faint light blocks (light level 6 or less, e.g. fluorescent maple): their bright texels glow softly
+
+// your own body in first person (First-person Model): mcmetal puts it in the ray scene (your shadow on the ground),
+// so a ray starting on the body would hit the body itself and paint it black. Rays from it start this far along
+// instead, past the body. Only entity pixels in the body's column round the eye count (a mob beside you doesn't)
+float ownBodySkip(vec3 p, int mat) {
+    return mat == MAT_ENTITY && dot(p.xz, p.xz) < 0.36 && p.y > -1.9 && p.y < 0.3 ? 0.7 : 0.0;
+}
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 vec3 toLinear(vec3 c) { return c * c * (c * 0.2 + 0.8); }     // cheap fit of the sRGB curve

@@ -123,6 +123,9 @@ void main() {
         float litMist = 0.0, skyMist = 0.0, od = 0.0;
         float jitter = ign(valid ? rayPixel(gl_FragCoord.xy, LIGHT_SHAFTS_RATE) : gl_FragCoord.xy, frameCounter);
         float lit = 0.0;
+        // how far each step looks for something in the sun's way: 128 blocks with a high sun; a low sun's rays skim
+        // the land and cost the most (RT-W15: dawn's shafts took 7 ms), and the haze hides far shading then, so 48
+        float sunReach = mix(48.0, 128.0, smoothstep(0.15, 0.5, lightDir.y));
         for (int i = 0; i < steps; i++) {
             float t = (float(i) + jitter) * stepLen;
             // air further away is seen through more air (the haze in composite1.fsh adds the rest)
@@ -139,7 +142,7 @@ void main() {
             float sv = airSunVis(dir * t, lightDir);
             lit += through * sv; litMist += through * md * sv;
   #else
-            if (mcm_trace(dir * t, lightDir, 128.0) < 0.0) { lit += through; litMist += through * md; }   // (what's further off barely shades the air you see)
+            if (mcm_trace(dir * t, lightDir, sunReach) < 0.0) { lit += through; litMist += through * md; }   // (what's further off barely shades the air you see)
   #endif
         }
         // a beam in shade (sun through a roof hole or a gap in the trees) stands out the way it does in real dusty

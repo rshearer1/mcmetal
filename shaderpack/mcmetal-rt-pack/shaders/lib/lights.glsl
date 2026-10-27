@@ -3,34 +3,7 @@
 // traces a shadow ray to a random point inside it. Averaged over frames with the GI (deferred.fsh) that is every
 // nearby light, each with its own colour and soft shadow. Fragment shaders only. Needs settings, common, uniforms.
 
-#include "/lib/lights_modded.glsl"
-
-// the light's colour (linear) and vanilla light level, by block id
-vec3 lightColorOf(int id, out float level) {
-    level = 15.0;
-    switch (id) {
-    case 10100: level = 14.0; return vec3(1.00, 0.55, 0.22);   // torch, lantern, campfire, candles, furnaces
-    case 10101: level = 10.0; return vec3(0.25, 0.75, 1.00);   // soul torch, soul lantern, soul campfire
-    case 10102: level = 7.0;  return vec3(1.00, 0.10, 0.03);   // redstone torch
-    case 10103: level = 14.0; return vec3(1.00, 0.92, 0.88);   // end rod
-    case 10104:               return vec3(1.00, 0.68, 0.35);   // redstone lamp
-    case 10105:               return vec3(0.60, 0.90, 1.00);   // beacon, conduit
-    case 10106: level = 10.0; return vec3(0.55, 0.20, 1.00);   // crying obsidian, respawn anchor
-    case 10107: level = 5.0;  return vec3(0.70, 0.35, 1.00);   // amethyst cluster
-    case 10108: level = 9.0;  return vec3(0.45, 1.00, 0.70);   // sea pickles
-    case 10109: level = 7.0;  return vec3(1.00, 0.75, 0.45);   // enchanting table, brewing stand
-    case 10200:               return vec3(1.00, 0.40, 0.10);   // lava, fire
-    case 10201: level = 10.0; return vec3(0.25, 0.75, 1.00);   // soul fire
-    case 10202:               return vec3(1.00, 0.75, 0.42);   // glowstone
-    case 10203:               return vec3(0.70, 0.90, 1.00);   // sea lantern
-    case 10204:               return vec3(1.00, 0.55, 0.28);   // shroomlight
-    case 10205:               return vec3(1.00, 0.82, 0.40);   // ochre froglight
-    case 10206:               return vec3(0.55, 1.00, 0.45);   // verdant froglight
-    case 10207:               return vec3(1.00, 0.55, 1.00);   // pearlescent froglight
-    case 10208: level = 3.0;  return vec3(1.00, 0.30, 0.08);   // magma block
-    }
-    return moddedLightColor(id, level);                          // modded lights (block.properties' modded part)
-}
+#include "/lib/lightcolor.glsl"
 
 #ifdef USE_LIGHTS
 // supplied by mcmetal: the slot-th light block near p (block centre in player space, its block id), or -1
@@ -48,7 +21,10 @@ vec3 lightFrom(vec3 p, vec3 n, int mat, vec3 lp, int id, out vec3 dir, out float
     dir = d / max(dist, 1e-4);
     float ndl = mat == MAT_FOLIAGE ? 0.6 : max(dot(n, dir), 0.0);
     float fade = clamp(1.0 - dist / level, 0.0, 1.0);
-    return c * (level / 15.0) * ndl * fade * fade * 4.0 / (0.25 * dist * dist + 1.0);
+    // mobs and your own body can stand closer to a light than any block face: lit as if 1.5 blocks away at most, so
+    // skin beside lava or a lamp is warm, not blown out
+    float dd = mat == MAT_ENTITY ? max(dist, 1.5) : dist;
+    return c * (level / 15.0) * ndl * fade * fade * 4.0 / (0.25 * dd * dd + 1.0);
 }
 
 // one sample of all nearby lights: pick a light in proportion to its unshadowed light, trace its shadow, divide by
@@ -83,16 +59,18 @@ vec3 coloredBlockLight(vec3 p, vec3 n, int mat, float u1, float u2, float u3) {
     vec3 dir; float dist;
     vec3 l = lightFrom(p, n, mat, target, ids[pick], dir, dist);
     vec3 o = mat == MAT_FOLIAGE ? p + dir * 0.06 : p + n * 0.02 + dir * 0.01;
+    float sk = ownBodySkip(p, mat);
+    o += dir * sk;
     // stop short of the light block itself (a full block's faces are 0.5 from its centre, corners up to 0.87)
 #ifdef COLORED_LIGHT_GLASS
     // torch light through stained glass (and water) takes its colour too
     vec3 transmit = vec3(1.0);
-    if (dist > 0.9 && mcm_trace_tinted(o, dir, dist - 0.9, transmit) > 0.0) return vec3(0.0);
+    if (dist > 0.9 + sk && mcm_trace_tinted(o, dir, dist - 0.9 - sk, transmit) > 0.0) return vec3(0.0);
     // the filter mcmetal gives back is pale (the glass texture is half see-through): deepen its colour, keep its
     // brightness, so the floor behind red glass is clearly red
     l *= max(mix(vec3(luma(transmit)), transmit, 3.0), vec3(0.0));
 #else
-    if (dist > 0.9 && mcm_trace(o, dir, dist - 0.9) > 0.0) return vec3(0.0);
+    if (dist > 0.9 + sk && mcm_trace(o, dir, dist - 0.9 - sk) > 0.0) return vec3(0.0);
 #endif
     return l * (total / w[pick]) * COLORED_LIGHT_STRENGTH * STYLE_BLOCK_TINT;
 }
@@ -183,12 +161,14 @@ vec3 coloredBlockLightReSTIR(vec3 p, vec3 n, int mat, float u1, float u2, float 
     vec3 dir; float dist;
     vec3 l = lightFrom(p, n, mat, target, yId, dir, dist);
     vec3 o = mat == MAT_FOLIAGE ? p + dir * 0.06 : p + n * 0.02 + dir * 0.01;
+    float sk = ownBodySkip(p, mat);
+    o += dir * sk;
   #ifdef COLORED_LIGHT_GLASS
     vec3 transmit = vec3(1.0);
-    bool blocked = dist > 0.9 && mcm_trace_tinted(o, dir, dist - 0.9, transmit) > 0.0;
+    bool blocked = dist > 0.9 + sk && mcm_trace_tinted(o, dir, dist - 0.9 - sk, transmit) > 0.0;
     l *= max(mix(vec3(luma(transmit)), transmit, 3.0), vec3(0.0));
   #else
-    bool blocked = dist > 0.9 && mcm_trace(o, dir, dist - 0.9) > 0.0;
+    bool blocked = dist > 0.9 + sk && mcm_trace(o, dir, dist - 0.9 - sk) > 0.0;
   #endif
     if (ci >= 0) lrCells[ci] = uvec2(lrPackPos(yPos), packHalf2x16(vec2(blocked ? 0.0 : W, min(M, 20.0))));
     if (blocked) return vec3(0.0);
