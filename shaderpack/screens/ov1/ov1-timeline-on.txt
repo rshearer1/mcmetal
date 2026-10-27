@@ -1,0 +1,969 @@
+[mcmetal] profile: GPU overlap per frame: passes 0.07 ms summed, 0.06 ms with any pass running, 0.09 ms first start to last end (5% of pass time hidden by overlap); 0 of 1 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 2.89 ms summed, 2.84 ms with any pass running, 2.84 ms first start to last end (2% of pass time hidden by overlap); 0 of 1 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 4.63 ms summed, 4.53 ms with any pass running, 4.54 ms first start to last end (2% of pass time hidden by overlap); 0 of 1 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 3.06 ms summed, 2.94 ms with any pass running, 3.14 ms first start to last end (4% of pass time hidden by overlap); 0 of 1 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 14.04 ms summed, 13.27 ms with any pass running, 16.54 ms first start to last end (5% of pass time hidden by overlap); 1 of 2 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 25.74 ms summed, 24.32 ms with any pass running, 24.36 ms first start to last end (6% of pass time hidden by overlap); 1 of 2 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 77.21 ms summed, 22.02 ms with any pass running, 22.17 ms first start to last end (71% of pass time hidden by overlap); 1 of 8 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 80.68 ms summed, 23.60 ms with any pass running, 23.92 ms first start to last end (71% of pass time hidden by overlap); 1 of 8 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 2148.82 ms summed, 297.67 ms with any pass running, 317.29 ms first start to last end (86% of pass time hidden by overlap); 12 of 54 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 1904.50 ms summed, 305.12 ms with any pass running, 313.10 ms first start to last end (84% of pass time hidden by overlap); 11 of 54 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 1870.33 ms summed, 330.48 ms with any pass running, 334.04 ms first start to last end (82% of pass time hidden by overlap); 11 of 53 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 1940.82 ms summed, 363.78 ms with any pass running, 364.98 ms first start to last end (81% of pass time hidden by overlap); 11 of 53 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 1980.35 ms summed, 411.08 ms with any pass running, 416.08 ms first start to last end (79% of pass time hidden by overlap); 11 of 55 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 1790.19 ms summed, 430.62 ms with any pass running, 433.29 ms first start to last end (76% of pass time hidden by overlap); 11 of 55 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 1688.49 ms summed, 431.94 ms with any pass running, 436.22 ms first start to last end (74% of pass time hidden by overlap); 11 of 55 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 1651.89 ms summed, 438.26 ms with any pass running, 440.82 ms first start to last end (73% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 1840.62 ms summed, 457.67 ms with any pass running, 460.20 ms first start to last end (75% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 1996.98 ms summed, 476.30 ms with any pass running, 478.54 ms first start to last end (76% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 2067.96 ms summed, 481.52 ms with any pass running, 482.15 ms first start to last end (77% of pass time hidden by overlap); 10 of 53 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 2008.29 ms summed, 473.48 ms with any pass running, 474.13 ms first start to last end (76% of pass time hidden by overlap); 10 of 52 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 2029.02 ms summed, 474.34 ms with any pass running, 475.30 ms first start to last end (77% of pass time hidden by overlap); 10 of 52 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 1926.23 ms summed, 464.36 ms with any pass running, 467.57 ms first start to last end (76% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 1751.95 ms summed, 450.15 ms with any pass running, 453.08 ms first start to last end (74% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 1641.11 ms summed, 439.28 ms with any pass running, 442.31 ms first start to last end (73% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 1662.65 ms summed, 440.39 ms with any pass running, 442.25 ms first start to last end (74% of pass time hidden by overlap); 10 of 53 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 1847.51 ms summed, 459.80 ms with any pass running, 462.34 ms first start to last end (75% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 2017.74 ms summed, 478.05 ms with any pass running, 480.41 ms first start to last end (76% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 2068.07 ms summed, 480.95 ms with any pass running, 481.58 ms first start to last end (77% of pass time hidden by overlap); 10 of 53 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 2016.19 ms summed, 474.14 ms with any pass running, 474.79 ms first start to last end (76% of pass time hidden by overlap); 10 of 52 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 2012.72 ms summed, 474.08 ms with any pass running, 475.26 ms first start to last end (76% of pass time hidden by overlap); 10 of 53 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 1914.69 ms summed, 463.42 ms with any pass running, 466.40 ms first start to last end (76% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 1734.24 ms summed, 448.76 ms with any pass running, 451.82 ms first start to last end (74% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 1643.36 ms summed, 438.39 ms with any pass running, 441.37 ms first start to last end (73% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 1666.43 ms summed, 441.58 ms with any pass running, 443.53 ms first start to last end (74% of pass time hidden by overlap); 10 of 53 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 1846.90 ms summed, 461.12 ms with any pass running, 463.67 ms first start to last end (75% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile: GPU overlap per frame: passes 1734.03 ms summed, 412.02 ms with any pass running, 414.10 ms first start to last end (76% of pass time hidden by overlap); 9 of 47 pass boundaries serial
+
+[mcmetal] profile:   serial   176 of   176, up to 94.55 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   205 of   578, up to 7.03 ms/frame: GL program 209 > blits
+[mcmetal] profile:   serial    88 of    88, up to 5.47 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    87 of    88, up to 5.40 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    88 of    88, up to 1.10 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    88 of    88, up to 0.92 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    88 of    88, up to 0.48 ms/frame: GL program 357 > blits
+[mcmetal] profile:   serial    88 of    88, up to 0.37 ms/frame: GL program 288 > blits
+[mcmetal] profile:   serial     2 of    88, up to 0.16 ms/frame: GL program 315 > GL program 357
+[mcmetal] profile:   serial     4 of    88, up to 0.04 ms/frame: GL program 225 > geometry-shader compute
+[mcmetal] profile: GPU overlap per frame: passes 1734.03 ms summed, 412.02 ms with any pass running, 414.10 ms first start to last end (76% of pass time hidden by overlap); 9 of 47 pass boundaries serial
+[mcmetal] profile:   serial   146 of   146, up to 81.34 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   239 of   564, up to 6.87 ms/frame: GL program 208 > GL program 209
+[mcmetal] profile:   serial    73 of    73, up to 4.87 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    72 of    73, up to 4.69 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    73 of    73, up to 0.96 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    73 of    73, up to 0.86 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    73 of    73, up to 0.32 ms/frame: GL program 288 > blits
+[mcmetal] profile:   serial    45 of    45, up to 0.25 ms/frame: GL program 357 > blits
+[mcmetal] profile:   serial     3 of    73, up to 0.04 ms/frame: GL program 225 > geometry-shader compute
+
+[mcmetal] profile: pass timeline, one command buffer (68 passes; ms from its first pass start, '|' = started after the pass before it had ended):
+[mcmetal] profile:     7    3.220    3.825  0.604   pass 1280x720
+[mcmetal] profile:     8    3.366    4.285  0.918   pass 1280x720
+[mcmetal] profile:    13    5.198    6.547  1.349   GL program 225
+[mcmetal] profile:    14    0.000   59.429 59.429   geometry-shader compute
+[mcmetal] profile:    15   59.660  177.842 118.182 | pass 4096x4096
+[mcmetal] profile:    16  177.882  183.264  5.382 | blits
+[mcmetal] profile:    17  183.293  190.254  6.960 | geometry-shader compute
+[mcmetal] profile:    18  190.587  204.344 13.757 | pass 4096x4096
+[mcmetal] profile:    19  202.227  208.736  6.509   pass 2048x2048
+[mcmetal] profile:    20  202.606  209.929  7.323   pass 1024x1024
+[mcmetal] profile:    21  202.800  210.410  7.609   pass 512x512
+[mcmetal] profile:    22  202.953  210.734  7.781   pass 256x256
+[mcmetal] profile:    23  203.132  211.050  7.918   pass 128x128
+[mcmetal] profile:    24  203.299  211.316  8.017   pass 64x64
+[mcmetal] profile:    25  203.457  211.599  8.142   pass 32x32
+[mcmetal] profile:    26  203.613  211.868  8.255   pass 16x16
+[mcmetal] profile:    27  203.774  212.111  8.337   pass 8x8
+[mcmetal] profile:    28  203.913  212.372  8.458   pass 4x4
+[mcmetal] profile:    29  204.049  212.597  8.549   pass 2x2
+[mcmetal] profile:    30  204.184  212.840  8.656   pass 1x1
+[mcmetal] profile:    31  204.316  213.413  9.097   GL program 225
+[mcmetal] profile:    32  190.274  190.754  0.479   blits
+[mcmetal] profile:    33  204.969  218.979 14.010 | GL program 454
+[mcmetal] profile:    35  215.151  219.384  4.233   GL program 315
+[mcmetal] profile:    36  215.554  219.606  4.052   GL program 357
+[mcmetal] profile:    37  219.630  220.104  0.474 | blits
+[mcmetal] profile:    38  215.851  220.564  4.714   GL program 288
+[mcmetal] profile:    39  220.576  220.938  0.361 | blits
+[mcmetal] profile:    40  216.274  296.297 80.023   GL program 16
+[mcmetal] profile:    41  216.738  301.894 85.156   GL program 17
+[mcmetal] profile:    42  216.986  304.997 88.010   GL program 18
+[mcmetal] profile:    43  217.196  307.571 90.375   GL program 19
+[mcmetal] profile:    44  217.521  310.800 93.280   GL program 20
+[mcmetal] profile:    45  217.740  313.821 96.082   GL program 21
+[mcmetal] profile:    46  218.993  316.422 97.429   GL program 22
+[mcmetal] profile:    47  219.399  319.269 99.870   GL program 23
+[mcmetal] profile:    48  296.307  321.913 25.606   GL program 24
+[mcmetal] profile:    49  301.901  324.753 22.852   GL program 25
+[mcmetal] profile:    50  305.005  348.566 43.561   GL program 200
+[mcmetal] profile:    51  307.911  353.859 45.948   GL program 460
+[mcmetal] profile:    52  313.238  354.135 40.898   GL program 315
+[mcmetal] profile:    53  313.835  370.325 56.490   GL program 201
+[mcmetal] profile:    54  316.438  372.972 56.535   GL program 202
+[mcmetal] profile:    55  319.285  375.660 56.375   GL program 203
+[mcmetal] profile:    56  321.929  378.264 56.335   GL program 204
+[mcmetal] profile:    57  324.769  383.420 58.651   GL program 205
+[mcmetal] profile:    58  383.424  383.825  0.401 | blits
+[mcmetal] profile:    59  325.080  385.691 60.611   GL program 206
+[mcmetal] profile:    60  325.981  392.097 66.116   GL program 207
+[mcmetal] profile:    61  326.495  393.882 67.387   GL program 208
+[mcmetal] profile:    62  326.693  396.533 69.840   GL program 209
+[mcmetal] profile:    63  296.318  299.922  3.604   blits
+[mcmetal] profile:    64  327.023  397.328 70.306 | GL program 46
+[mcmetal] profile:    65  327.453  397.899 70.446   GL program 43
+[mcmetal] profile:    66  327.760  398.300 70.540   GL program 43
+[mcmetal] profile:    67  398.323  398.727  0.405 | blits
+[mcmetal] pipelines: 12 new in 5.0 s (0 ms average build), 0 still building; the render thread waited 2 ms for them and skipped 0 draws
+[mcmetal] profile: 97 fps; per frame: cpu 10.33 ms (waiting 2.46), gpu 10.31 ms; 82 draws, 59.5 passes (1.0 reopened, 0.0 images not loaded), 6.7 blit + 2.0 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 8.1 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1315 draws (1315 with the compute made for their vertex format), 951k input triangles, 436.3 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1303 computed, 12 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 85 buffers rewritten, 1188 uniforms changed, 115 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 1893 MB held (5 MB pooled), 0.1 new Metal buffers (0.41 MB) per frame, 48 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.6 glCopyBufferSubData (0.32 MB, 0.03 ms), 6.0 GPU copies (0.28 MB, 0.0 CPU waits for one), 38 glBufferData (1.10 MB); 0.0 texture views made, 44.0 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 8.92 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 543 calls sent, 634 repeats left out (54%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 71.2 fenced encoders, 427.4 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 1.98e+09 units per frame (46 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:     7.8%   2.0x  pass 4096x4096
+[mcmetal] profile:     6.7%   2.2x  GL program 43
+[mcmetal] profile:     4.7%   1.0x  GL program 23
+[mcmetal] profile:     4.5%   1.0x  GL program 22
+[mcmetal] profile:     4.5%   1.0x  GL program 21
+[mcmetal] profile:     4.3%   1.0x  GL program 20
+[mcmetal] profile:     4.2%   1.0x  GL program 19
+[mcmetal] profile:     4.1%   1.0x  GL program 18
+[mcmetal] profile:     4.0%   2.0x  geometry-shader compute
+[mcmetal] profile:     4.0%   1.0x  GL program 17
+[mcmetal] profile:     3.7%   1.0x  GL program 16
+[mcmetal] profile:     3.1%   1.0x  GL program 208
+[mcmetal] profile: GPU overlap per frame: passes 1980.35 ms summed, 411.08 ms with any pass running, 416.08 ms first start to last end (79% of pass time hidden by overlap); 11 of 55 pass boundaries serial
+[mcmetal] profile:   serial   194 of   194, up to 79.41 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   216 of   794, up to 5.81 ms/frame: GL program 207 > GL program 208
+[mcmetal] profile:   serial    97 of    97, up to 5.77 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    72 of    97, up to 4.05 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    97 of    97, up to 1.07 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    97 of    97, up to 0.87 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    97 of    97, up to 0.50 ms/frame: GL program 357 > blits
+[mcmetal] profile:   serial    97 of    97, up to 0.50 ms/frame: GL program 288 > blits
+[mcmetal] profile:   serial    50 of    50, up to 0.15 ms/frame: blits > GL program 454
+[mcmetal] profile:   serial    12 of    97, up to 0.13 ms/frame: GL program 225 > geometry-shader compute
+[mcmetal] input lag: frame start to GPU done 30.4 ms (97 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 97.0 shown fps, on screen 10.31 ms avg, 0.35 ms spread, 11.08 ms worst, 0.0% judder, 0 dropped
+[mcmetal] profile: 93 fps; per frame: cpu 10.76 ms (waiting 2.62), gpu 10.73 ms; 84 draws, 59.5 passes (1.0 reopened, 0.0 images not loaded), 6.7 blit + 2.0 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 8.6 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1507 draws (1507 with the compute made for their vertex format), 1074k input triangles, 492.9 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1495 computed, 12 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 56 buffers rewritten, 1342 uniforms changed, 153 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 2003 MB held (5 MB pooled), 0.1 new Metal buffers (0.14 MB) per frame, 51 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.1 glCopyBufferSubData (0.00 MB, 0.00 ms), 4.9 GPU copies (0.18 MB, 0.0 CPU waits for one), 37 glBufferData (0.84 MB); 0.0 texture views made, 43.1 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 8.04 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 544 calls sent, 661 repeats left out (55%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 71.2 fenced encoders, 427.9 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 1.79e+09 units per frame (46 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:     9.6%   2.0x  pass 4096x4096
+[mcmetal] profile:     5.4%   2.3x  GL program 43
+[mcmetal] profile:     5.2%   1.0x  GL program 23
+[mcmetal] profile:     5.1%   1.0x  GL program 22
+[mcmetal] profile:     5.0%   1.0x  GL program 21
+[mcmetal] profile:     4.9%   2.0x  geometry-shader compute
+[mcmetal] profile:     4.9%   1.0x  GL program 20
+[mcmetal] profile:     4.7%   1.0x  GL program 19
+[mcmetal] profile:     4.6%   1.0x  GL program 18
+[mcmetal] profile:     4.4%   1.0x  GL program 17
+[mcmetal] profile:     4.2%   1.0x  GL program 16
+[mcmetal] profile:     2.5%   1.0x  GL program 209
+[mcmetal] profile: GPU overlap per frame: passes 1790.19 ms summed, 430.62 ms with any pass running, 433.29 ms first start to last end (76% of pass time hidden by overlap); 11 of 55 pass boundaries serial
+[mcmetal] profile:   serial   188 of   188, up to 87.97 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   211 of   775, up to 6.34 ms/frame: GL program 207 > GL program 208
+[mcmetal] profile:   serial    94 of    94, up to 5.71 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    85 of    94, up to 4.98 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    94 of    94, up to 1.11 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    94 of    94, up to 1.03 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    94 of    94, up to 0.47 ms/frame: GL program 357 > blits
+[mcmetal] profile:   serial    94 of    94, up to 0.37 ms/frame: GL program 288 > blits
+[mcmetal] profile:   serial    45 of    45, up to 0.12 ms/frame: blits > GL program 454
+[mcmetal] profile:   serial     2 of    94, up to 0.02 ms/frame: GL program 225 > geometry-shader compute
+[mcmetal] input lag: frame start to GPU done 31.8 ms (94 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 93.2 shown fps, on screen 10.73 ms avg, 0.23 ms spread, 11.44 ms worst, 0.0% judder, 0 dropped
+[mcmetal] GPU chunk culling: last 2000 passes: 27997 regions prepared, 11159 drawn from culled commands, 3034 drawn normally, 759448 section draws, 0 passes refused, 0 bad section tables; geometry-shader regions culled on the CPU: 15052, keeping 414813 of 423279 sections
+[mcmetal] profile: 93 fps; per frame: cpu 10.80 ms (waiting 2.50), gpu 10.80 ms; 87 draws, 59.5 passes (1.0 reopened, 0.0 images not loaded), 6.7 blit + 2.0 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 8.0 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1617 draws (1617 with the compute made for their vertex format), 1141k input triangles, 523.6 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1605 computed, 12 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 37 buffers rewritten, 1434 uniforms changed, 172 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 2026 MB held (5 MB pooled), 0.2 new Metal buffers (0.25 MB) per frame, 51 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.3 glCopyBufferSubData (0.16 MB, 0.01 ms), 2.6 GPU copies (0.08 MB, 0.0 CPU waits for one), 41 glBufferData (1.09 MB); 0.0 texture views made, 42.7 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 9.04 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 547 calls sent, 727 repeats left out (57%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 71.2 fenced encoders, 426.7 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 1.69e+09 units per frame (46 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:    10.8%   2.0x  pass 4096x4096
+[mcmetal] profile:     5.6%   2.0x  geometry-shader compute
+[mcmetal] profile:     5.6%   1.0x  GL program 23
+[mcmetal] profile:     5.5%   1.0x  GL program 22
+[mcmetal] profile:     5.4%   1.0x  GL program 21
+[mcmetal] profile:     5.2%   1.0x  GL program 20
+[mcmetal] profile:     5.1%   1.0x  GL program 19
+[mcmetal] profile:     4.9%   1.0x  GL program 18
+[mcmetal] profile:     4.8%   1.0x  GL program 17
+[mcmetal] profile:     4.5%   1.0x  GL program 16
+[mcmetal] profile:     4.0%   1.9x  GL program 43
+[mcmetal] profile:     2.3%   1.0x  GL program 200
+[mcmetal] profile: GPU overlap per frame: passes 1688.49 ms summed, 431.94 ms with any pass running, 436.22 ms first start to last end (74% of pass time hidden by overlap); 11 of 55 pass boundaries serial
+[mcmetal] profile:   serial   186 of   186, up to 95.05 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   253 of   688, up to 6.09 ms/frame: GL program 208 > GL program 209
+[mcmetal] profile:   serial    93 of    93, up to 5.70 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    78 of    93, up to 4.58 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    93 of    93, up to 1.19 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    93 of    93, up to 1.10 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    93 of    93, up to 0.48 ms/frame: GL program 357 > blits
+[mcmetal] profile:   serial    93 of    93, up to 0.47 ms/frame: GL program 288 > blits
+[mcmetal] profile:   serial     7 of    93, up to 0.08 ms/frame: GL program 225 > geometry-shader compute
+[mcmetal] profile:   serial     1 of    93, up to 0.07 ms/frame: GL program 315 > GL program 357
+[mcmetal] input lag: frame start to GPU done 31.9 ms (93 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 92.6 shown fps, on screen 10.80 ms avg, 0.23 ms spread, 11.56 ms worst, 0.0% judder, 0 dropped
+[mcmetal] profile: 92 fps; per frame: cpu 10.90 ms (waiting 2.62), gpu 10.92 ms; 78 draws, 59.2 passes (1.0 reopened, 0.0 images not loaded), 6.4 blit + 2.0 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 7.6 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1649 draws (1649 with the compute made for their vertex format), 1159k input triangles, 531.5 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1637 computed, 12 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 14 buffers rewritten, 1466 uniforms changed, 171 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 2026 MB held (6 MB pooled), 0.1 new Metal buffers (0.01 MB) per frame, 51 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.0 glCopyBufferSubData (0.00 MB, 0.00 ms), 0.4 GPU copies (0.03 MB, 0.0 CPU waits for one), 37 glBufferData (1.04 MB); 0.0 texture views made, 39.0 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 8.02 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 522 calls sent, 645 repeats left out (55%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 70.6 fenced encoders, 421.8 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 1.65e+09 units per frame (47 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:    11.1%   2.0x  pass 4096x4096
+[mcmetal] profile:     5.7%   2.0x  geometry-shader compute
+[mcmetal] profile:     5.7%   1.0x  GL program 23
+[mcmetal] profile:     5.6%   1.0x  GL program 22
+[mcmetal] profile:     5.5%   1.0x  GL program 21
+[mcmetal] profile:     5.3%   1.0x  GL program 20
+[mcmetal] profile:     5.2%   1.0x  GL program 19
+[mcmetal] profile:     5.0%   1.0x  GL program 18
+[mcmetal] profile:     4.8%   1.0x  GL program 17
+[mcmetal] profile:     4.5%   1.0x  GL program 16
+[mcmetal] profile:     2.7%   1.3x  GL program 43
+[mcmetal] profile:     2.3%   1.0x  GL program 200
+[mcmetal] profile: GPU overlap per frame: passes 1651.89 ms summed, 438.26 ms with any pass running, 440.82 ms first start to last end (73% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile:   serial   184 of   184, up to 94.72 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   219 of   725, up to 6.66 ms/frame: GL program 208 > GL program 209
+[mcmetal] profile:   serial    92 of    92, up to 5.49 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    88 of    92, up to 5.22 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    92 of    92, up to 1.16 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    92 of    92, up to 1.13 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    92 of    92, up to 0.47 ms/frame: GL program 357 > blits
+[mcmetal] profile:   serial    92 of    92, up to 0.40 ms/frame: GL program 288 > blits
+[mcmetal] profile:   serial     2 of    92, up to 0.02 ms/frame: GL program 225 > geometry-shader compute
+[mcmetal] input lag: frame start to GPU done 32.3 ms (92 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 91.6 shown fps, on screen 10.92 ms avg, 0.17 ms spread, 11.41 ms worst, 0.0% judder, 0 dropped
+[mcmetal] profile: 87 fps; per frame: cpu 11.45 ms (waiting 2.79), gpu 11.38 ms; 74 draws, 59.3 passes (1.0 reopened, 0.0 images not loaded), 6.4 blit + 2.0 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 8.6 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1649 draws (1649 with the compute made for their vertex format), 1159k input triangles, 531.5 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1637 computed, 12 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 13 buffers rewritten, 1465 uniforms changed, 172 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 2026 MB held (6 MB pooled), 0.1 new Metal buffers (0.00 MB) per frame, 51 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.0 glCopyBufferSubData (0.00 MB, 0.00 ms), 0.3 GPU copies (0.02 MB, 0.0 CPU waits for one), 38 glBufferData (1.07 MB); 0.0 texture views made, 39.8 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 8.02 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 520 calls sent, 591 repeats left out (53%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 70.6 fenced encoders, 420.3 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 1.84e+09 units per frame (47 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:    10.0%   2.0x  pass 4096x4096
+[mcmetal] profile:     5.2%   2.0x  geometry-shader compute
+[mcmetal] profile:     5.1%   1.0x  GL program 23
+[mcmetal] profile:     5.0%   1.0x  GL program 22
+[mcmetal] profile:     4.9%   1.0x  GL program 21
+[mcmetal] profile:     4.7%   1.0x  GL program 20
+[mcmetal] profile:     4.6%   1.0x  GL program 19
+[mcmetal] profile:     4.5%   1.0x  GL program 18
+[mcmetal] profile:     4.3%   1.0x  GL program 17
+[mcmetal] profile:     4.0%   1.0x  GL program 16
+[mcmetal] profile:     3.4%   1.3x  GL program 43
+[mcmetal] profile:     2.9%   1.0x  GL program 209
+[mcmetal] profile: GPU overlap per frame: passes 1840.62 ms summed, 457.67 ms with any pass running, 460.20 ms first start to last end (75% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile:   serial   176 of   176, up to 95.08 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   211 of   732, up to 6.69 ms/frame: GL program 209 > blits
+[mcmetal] profile:   serial    88 of    88, up to 5.59 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    82 of    88, up to 5.16 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    88 of    88, up to 1.11 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    88 of    88, up to 0.92 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    88 of    88, up to 0.48 ms/frame: GL program 357 > blits
+[mcmetal] profile:   serial    88 of    88, up to 0.38 ms/frame: GL program 288 > blits
+[mcmetal] profile:   serial     1 of    77, up to 0.05 ms/frame: GL program 225 > GL program 454
+[mcmetal] profile:   serial     2 of    88, up to 0.02 ms/frame: GL program 225 > geometry-shader compute
+[mcmetal] input lag: frame start to GPU done 33.3 ms (88 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 87.4 shown fps, on screen 11.44 ms avg, 0.60 ms spread, 16.54 ms worst, 2.3% judder, 0 dropped
+[mcmetal] profile: 85 fps; per frame: cpu 11.82 ms (waiting 3.50), gpu 11.82 ms; 75 draws, 59.3 passes (1.4 reopened, 0.0 images not loaded), 6.4 blit + 2.0 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 8.3 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1651 draws (1651 with the compute made for their vertex format), 1159k input triangles, 531.8 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1639 computed, 12 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 10 buffers rewritten, 1466 uniforms changed, 173 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 2058 MB held (6 MB pooled), 0.0 new Metal buffers (0.00 MB) per frame, 52 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.0 glCopyBufferSubData (0.00 MB, 0.00 ms), 0.7 GPU copies (0.03 MB, 0.0 CPU waits for one), 36 glBufferData (0.93 MB); 0.0 texture views made, 39.8 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 7.18 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 523 calls sent, 602 repeats left out (54%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 70.6 fenced encoders, 423.6 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 2e+09 units per frame (46 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:     9.1%   2.0x  pass 4096x4096
+[mcmetal] profile:     4.8%   2.0x  geometry-shader compute
+[mcmetal] profile:     4.7%   1.0x  GL program 23
+[mcmetal] profile:     4.5%   1.0x  GL program 22
+[mcmetal] profile:     4.4%   1.0x  GL program 21
+[mcmetal] profile:     4.3%   1.0x  GL program 20
+[mcmetal] profile:     4.2%   1.0x  GL program 19
+[mcmetal] profile:     4.0%   1.0x  GL program 18
+[mcmetal] profile:     4.0%   1.3x  GL program 43
+[mcmetal] profile:     3.9%   1.0x  GL program 17
+[mcmetal] profile:     3.6%   1.0x  GL program 16
+[mcmetal] profile:     3.3%   1.0x  GL program 208
+[mcmetal] profile: GPU overlap per frame: passes 1996.98 ms summed, 476.30 ms with any pass running, 478.54 ms first start to last end (76% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile:   serial   170 of   170, up to 95.03 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   230 of   547, up to 5.73 ms/frame: GL program 208 > GL program 209
+[mcmetal] profile:   serial    85 of    85, up to 5.47 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    84 of    85, up to 5.39 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    85 of    85, up to 1.11 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    85 of    85, up to 0.92 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    85 of    85, up to 0.37 ms/frame: GL program 288 > blits
+[mcmetal] profile:   serial    57 of    57, up to 0.32 ms/frame: GL program 357 > blits
+[mcmetal] input lag: frame start to GPU done 35.0 ms (85 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 84.6 shown fps, on screen 11.82 ms avg, 0.21 ms spread, 12.44 ms worst, 0.0% judder, 0 dropped
+[mcmetal] GPU chunk culling: last 2000 passes: 29020 regions prepared, 10143 drawn from culled commands, 1414 drawn normally, 818440 section draws, 0 passes refused, 0 bad section tables; geometry-shader regions culled on the CPU: 16834, keeping 538350 of 546864 sections
+[mcmetal] presented frame 1201 (1280x720), 61 pipelines; this frame: 76 draws (1223 terrain sections), 0 dispatches
+[mcmetal] profile: 84 fps; per frame: cpu 11.90 ms (waiting 3.84), gpu 11.90 ms; 76 draws, 58.7 passes (2.0 reopened, 0.0 images not loaded), 6.3 blit + 2.0 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 8.7 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1651 draws (1651 with the compute made for their vertex format), 1159k input triangles, 531.8 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1639 computed, 12 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 11 buffers rewritten, 1468 uniforms changed, 171 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 2058 MB held (6 MB pooled), 0.0 new Metal buffers (0.00 MB) per frame, 52 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.0 glCopyBufferSubData (0.00 MB, 0.00 ms), 0.6 GPU copies (0.03 MB, 0.0 CPU waits for one), 30 glBufferData (0.79 MB); 0.0 texture views made, 38.3 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 5.13 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 517 calls sent, 608 repeats left out (54%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 70.0 fenced encoders, 421.1 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 2.07e+09 units per frame (45 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:     8.8%   2.0x  pass 4096x4096
+[mcmetal] profile:     4.6%   2.0x  geometry-shader compute
+[mcmetal] profile:     4.5%   1.0x  GL program 23
+[mcmetal] profile:     4.4%   1.0x  GL program 22
+[mcmetal] profile:     4.3%   1.0x  GL program 21
+[mcmetal] profile:     4.2%   1.0x  GL program 20
+[mcmetal] profile:     4.0%   1.0x  GL program 19
+[mcmetal] profile:     4.0%   1.3x  GL program 43
+[mcmetal] profile:     3.9%   1.0x  GL program 18
+[mcmetal] profile:     3.8%   1.0x  GL program 17
+[mcmetal] profile:     3.5%   1.0x  GL program 16
+[mcmetal] profile:     3.5%   1.0x  GL program 209
+[mcmetal] profile: GPU overlap per frame: passes 2067.96 ms summed, 481.52 ms with any pass running, 482.15 ms first start to last end (77% of pass time hidden by overlap); 10 of 53 pass boundaries serial
+[mcmetal] profile:   serial   170 of   170, up to 95.01 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   193 of   497, up to 5.80 ms/frame: GL program 208 > GL program 209
+[mcmetal] profile:   serial    85 of    85, up to 5.45 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    84 of    85, up to 5.39 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    85 of    85, up to 1.12 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    85 of    85, up to 0.88 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    85 of    85, up to 0.47 ms/frame: GL program 315 > blits
+[mcmetal] profile:   serial    85 of    85, up to 0.37 ms/frame: GL program 288 > blits
+[mcmetal] profile:   serial    10 of    21, up to 0.06 ms/frame: blits > pass 1280x720
+[mcmetal] input lag: frame start to GPU done 35.3 ms (85 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 84.0 shown fps, on screen 11.90 ms avg, 0.17 ms spread, 12.36 ms worst, 0.0% judder, 0 dropped
+[mcmetal] profile: 85 fps; per frame: cpu 11.71 ms (waiting 3.69), gpu 11.70 ms; 73 draws, 58.0 passes (2.0 reopened, 0.0 images not loaded), 6.3 blit + 2.0 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 9.3 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1651 draws (1651 with the compute made for their vertex format), 1159k input triangles, 531.9 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1639 computed, 12 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 5 buffers rewritten, 1470 uniforms changed, 169 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 2058 MB held (6 MB pooled), 0.1 new Metal buffers (0.00 MB) per frame, 52 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.0 glCopyBufferSubData (0.00 MB, 0.00 ms), 0.6 GPU copies (0.02 MB, 0.0 CPU waits for one), 31 glBufferData (0.76 MB); 0.0 texture views made, 38.3 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 5.74 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 507 calls sent, 577 repeats left out (53%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 69.3 fenced encoders, 416.1 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 2.01e+09 units per frame (45 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:     9.1%   2.0x  pass 4096x4096
+[mcmetal] profile:     4.7%   2.0x  geometry-shader compute
+[mcmetal] profile:     4.6%   1.0x  GL program 23
+[mcmetal] profile:     4.5%   1.0x  GL program 22
+[mcmetal] profile:     4.4%   1.0x  GL program 21
+[mcmetal] profile:     4.3%   1.0x  GL program 20
+[mcmetal] profile:     4.1%   1.0x  GL program 19
+[mcmetal] profile:     4.0%   1.0x  GL program 18
+[mcmetal] profile:     4.0%   1.3x  GL program 43
+[mcmetal] profile:     3.9%   1.0x  GL program 17
+[mcmetal] profile:     3.6%   1.0x  GL program 16
+[mcmetal] profile:     3.5%   1.0x  GL program 207
+[mcmetal] profile: GPU overlap per frame: passes 2008.29 ms summed, 473.48 ms with any pass running, 474.13 ms first start to last end (76% of pass time hidden by overlap); 10 of 52 pass boundaries serial
+[mcmetal] profile:   serial   172 of   172, up to 94.45 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   200 of   476, up to 6.83 ms/frame: GL program 209 > blits
+[mcmetal] profile:   serial    86 of    86, up to 5.46 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    86 of    86, up to 5.46 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    86 of    86, up to 1.13 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    86 of    86, up to 0.94 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    86 of    86, up to 0.46 ms/frame: GL program 315 > blits
+[mcmetal] profile:   serial    86 of    86, up to 0.37 ms/frame: GL program 288 > blits
+[mcmetal] input lag: frame start to GPU done 34.7 ms (86 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 85.4 shown fps, on screen 11.71 ms avg, 0.15 ms spread, 12.03 ms worst, 0.0% judder, 0 dropped
+[mcmetal] profile: 85 fps; per frame: cpu 11.75 ms (waiting 3.76), gpu 11.73 ms; 77 draws, 58.2 passes (1.8 reopened, 0.0 images not loaded), 6.4 blit + 2.0 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 9.4 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1651 draws (1651 with the compute made for their vertex format), 1159k input triangles, 531.9 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1639 computed, 12 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 1 buffers rewritten, 1470 uniforms changed, 169 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 2058 MB held (6 MB pooled), 0.0 new Metal buffers (0.00 MB) per frame, 52 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.0 glCopyBufferSubData (0.00 MB, 0.00 ms), 0.9 GPU copies (0.04 MB, 0.0 CPU waits for one), 31 glBufferData (0.72 MB); 0.0 texture views made, 38.7 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 6.02 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 511 calls sent, 631 repeats left out (55%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 69.5 fenced encoders, 416.7 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 2.03e+09 units per frame (46 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:     9.0%   2.0x  pass 4096x4096
+[mcmetal] profile:     4.7%   2.0x  geometry-shader compute
+[mcmetal] profile:     4.5%   1.0x  GL program 23
+[mcmetal] profile:     4.4%   1.0x  GL program 22
+[mcmetal] profile:     4.3%   1.0x  GL program 21
+[mcmetal] profile:     4.2%   1.0x  GL program 20
+[mcmetal] profile:     4.0%   1.0x  GL program 19
+[mcmetal] profile:     4.0%   1.3x  GL program 43
+[mcmetal] profile:     3.9%   1.0x  GL program 18
+[mcmetal] profile:     3.8%   1.0x  GL program 17
+[mcmetal] profile:     3.6%   1.0x  GL program 209
+[mcmetal] profile:     3.6%   1.0x  GL program 207
+[mcmetal] profile: GPU overlap per frame: passes 2029.02 ms summed, 474.34 ms with any pass running, 475.30 ms first start to last end (77% of pass time hidden by overlap); 10 of 52 pass boundaries serial
+[mcmetal] profile:   serial   172 of   172, up to 94.44 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   209 of   567, up to 7.50 ms/frame: GL program 209 > blits
+[mcmetal] profile:   serial    86 of    86, up to 5.59 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    86 of    86, up to 5.53 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    86 of    86, up to 1.14 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    86 of    86, up to 1.01 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    76 of    76, up to 0.41 ms/frame: GL program 315 > blits
+[mcmetal] profile:   serial    86 of    86, up to 0.37 ms/frame: GL program 288 > blits
+[mcmetal] profile:   serial    13 of    13, up to 0.05 ms/frame: blits > GL program 454
+[mcmetal] profile:   serial     1 of    86, up to 0.01 ms/frame: GL program 225 > geometry-shader compute
+[mcmetal] input lag: frame start to GPU done 34.8 ms (86 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 85.2 shown fps, on screen 11.74 ms avg, 0.17 ms spread, 12.23 ms worst, 0.0% judder, 0 dropped
+[mcmetal] profile: 86 fps; per frame: cpu 11.57 ms (waiting 3.57), gpu 11.56 ms; 77 draws, 59.6 passes (1.0 reopened, 0.0 images not loaded), 6.3 blit + 2.0 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 9.3 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1651 draws (1651 with the compute made for their vertex format), 1159k input triangles, 531.8 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1639 computed, 12 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 9 buffers rewritten, 1470 uniforms changed, 169 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 2058 MB held (6 MB pooled), 0.0 new Metal buffers (0.00 MB) per frame, 52 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.0 glCopyBufferSubData (0.00 MB, 0.00 ms), 0.6 GPU copies (0.02 MB, 0.0 CPU waits for one), 30 glBufferData (0.70 MB); 0.0 texture views made, 40.0 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 5.85 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 522 calls sent, 609 repeats left out (54%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 71.0 fenced encoders, 424.9 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 1.93e+09 units per frame (46 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:     9.5%   2.0x  pass 4096x4096
+[mcmetal] profile:     4.9%   2.0x  geometry-shader compute
+[mcmetal] profile:     4.8%   1.0x  GL program 23
+[mcmetal] profile:     4.7%   1.0x  GL program 22
+[mcmetal] profile:     4.6%   1.0x  GL program 21
+[mcmetal] profile:     4.5%   1.0x  GL program 20
+[mcmetal] profile:     4.3%   1.0x  GL program 19
+[mcmetal] profile:     4.2%   1.0x  GL program 18
+[mcmetal] profile:     4.1%   1.0x  GL program 17
+[mcmetal] profile:     3.8%   1.0x  GL program 16
+[mcmetal] profile:     3.5%   1.3x  GL program 43
+[mcmetal] profile:     3.0%   1.0x  GL program 209
+[mcmetal] profile: GPU overlap per frame: passes 1926.23 ms summed, 464.36 ms with any pass running, 467.57 ms first start to last end (76% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile:   serial   174 of   174, up to 95.19 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   208 of   529, up to 6.33 ms/frame: GL program 208 > GL program 209
+[mcmetal] profile:   serial    87 of    87, up to 5.54 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    81 of    87, up to 5.09 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    87 of    87, up to 1.09 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    87 of    87, up to 0.85 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    87 of    87, up to 0.47 ms/frame: GL program 357 > blits
+[mcmetal] profile:   serial    87 of    87, up to 0.40 ms/frame: GL program 288 > blits
+[mcmetal] profile:   serial     1 of    87, up to 0.01 ms/frame: GL program 225 > geometry-shader compute
+[mcmetal] input lag: frame start to GPU done 34.3 ms (87 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 86.5 shown fps, on screen 11.56 ms avg, 0.24 ms spread, 12.07 ms worst, 0.0% judder, 0 dropped
+[mcmetal] GPU chunk culling: last 2000 passes: 30259 regions prepared, 11444 drawn from culled commands, 1488 drawn normally, 917062 section draws, 0 passes refused, 0 bad section tables; geometry-shader regions culled on the CPU: 16965, keeping 543147 of 551734 sections
+[mcmetal] profile: 89 fps; per frame: cpu 11.19 ms (waiting 3.24), gpu 11.21 ms; 80 draws, 59.6 passes (1.0 reopened, 0.0 images not loaded), 6.3 blit + 2.0 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 8.3 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1651 draws (1651 with the compute made for their vertex format), 1159k input triangles, 531.8 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1639 computed, 12 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 6 buffers rewritten, 1472 uniforms changed, 167 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 2058 MB held (6 MB pooled), 0.0 new Metal buffers (0.00 MB) per frame, 52 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.0 glCopyBufferSubData (0.00 MB, 0.00 ms), 0.7 GPU copies (0.03 MB, 0.0 CPU waits for one), 30 glBufferData (0.71 MB); 0.0 texture views made, 39.2 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 5.07 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 524 calls sent, 650 repeats left out (55%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 70.9 fenced encoders, 424.5 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 1.75e+09 units per frame (46 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:    10.4%   2.0x  pass 4096x4096
+[mcmetal] profile:     5.4%   1.0x  GL program 23
+[mcmetal] profile:     5.4%   2.0x  geometry-shader compute
+[mcmetal] profile:     5.3%   1.0x  GL program 22
+[mcmetal] profile:     5.2%   1.0x  GL program 21
+[mcmetal] profile:     5.0%   1.0x  GL program 20
+[mcmetal] profile:     4.9%   1.0x  GL program 19
+[mcmetal] profile:     4.7%   1.0x  GL program 18
+[mcmetal] profile:     4.6%   1.0x  GL program 17
+[mcmetal] profile:     4.3%   1.0x  GL program 16
+[mcmetal] profile:     3.0%   1.3x  GL program 43
+[mcmetal] profile:     2.5%   1.0x  GL program 209
+[mcmetal] profile: GPU overlap per frame: passes 1751.95 ms summed, 450.15 ms with any pass running, 453.08 ms first start to last end (74% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile:   serial   180 of   180, up to 94.06 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   213 of   540, up to 7.07 ms/frame: GL program 208 > GL program 209
+[mcmetal] profile:   serial    90 of    90, up to 5.47 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    89 of    90, up to 5.40 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    90 of    90, up to 1.11 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    90 of    90, up to 1.08 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    90 of    90, up to 0.47 ms/frame: GL program 357 > blits
+[mcmetal] profile:   serial    90 of    90, up to 0.37 ms/frame: GL program 288 > blits
+[mcmetal] profile:   serial     3 of    90, up to 0.03 ms/frame: GL program 225 > geometry-shader compute
+[mcmetal] input lag: frame start to GPU done 33.2 ms (90 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 89.2 shown fps, on screen 11.21 ms avg, 0.25 ms spread, 11.80 ms worst, 0.0% judder, 0 dropped
+[mcmetal] profile: 91 fps; per frame: cpu 10.96 ms (waiting 3.00), gpu 10.95 ms; 83 draws, 59.5 passes (1.0 reopened, 0.0 images not loaded), 6.2 blit + 2.0 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 8.2 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1651 draws (1651 with the compute made for their vertex format), 1159k input triangles, 531.8 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1639 computed, 12 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 2 buffers rewritten, 1472 uniforms changed, 167 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 2058 MB held (6 MB pooled), 0.0 new Metal buffers (0.00 MB) per frame, 52 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.0 glCopyBufferSubData (0.00 MB, 0.00 ms), 0.0 GPU copies (0.00 MB, 0.0 CPU waits for one), 35 glBufferData (0.86 MB); 0.0 texture views made, 39.3 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 7.21 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 530 calls sent, 703 repeats left out (57%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 70.8 fenced encoders, 424.0 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 1.64e+09 units per frame (47 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:    11.1%   2.0x  pass 4096x4096
+[mcmetal] profile:     5.8%   2.0x  geometry-shader compute
+[mcmetal] profile:     5.7%   1.0x  GL program 23
+[mcmetal] profile:     5.6%   1.0x  GL program 22
+[mcmetal] profile:     5.5%   1.0x  GL program 21
+[mcmetal] profile:     5.3%   1.0x  GL program 20
+[mcmetal] profile:     5.2%   1.0x  GL program 19
+[mcmetal] profile:     5.0%   1.0x  GL program 18
+[mcmetal] profile:     4.8%   1.0x  GL program 17
+[mcmetal] profile:     4.5%   1.0x  GL program 16
+[mcmetal] profile:     2.6%   1.3x  GL program 43
+[mcmetal] profile:     2.4%   1.0x  GL program 200
+[mcmetal] profile: GPU overlap per frame: passes 1641.11 ms summed, 439.28 ms with any pass running, 442.31 ms first start to last end (73% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile:   serial   184 of   184, up to 95.34 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   208 of   676, up to 6.23 ms/frame: GL program 208 > GL program 209
+[mcmetal] profile:   serial    92 of    92, up to 5.49 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    90 of    92, up to 5.34 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    92 of    92, up to 1.22 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    92 of    92, up to 1.11 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    92 of    92, up to 0.47 ms/frame: GL program 357 > blits
+[mcmetal] profile:   serial    92 of    92, up to 0.37 ms/frame: GL program 288 > blits
+[mcmetal] input lag: frame start to GPU done 32.4 ms (92 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 91.3 shown fps, on screen 10.96 ms avg, 0.20 ms spread, 11.52 ms worst, 0.0% judder, 0 dropped
+[mcmetal] profile: 91 fps; per frame: cpu 10.95 ms (waiting 2.89), gpu 10.95 ms; 77 draws, 59.2 passes (1.0 reopened, 0.0 images not loaded), 6.2 blit + 2.0 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 7.6 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1651 draws (1651 with the compute made for their vertex format), 1159k input triangles, 531.8 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1639 computed, 12 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 3 buffers rewritten, 1472 uniforms changed, 167 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 2058 MB held (6 MB pooled), 0.0 new Metal buffers (0.00 MB) per frame, 52 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.0 glCopyBufferSubData (0.00 MB, 0.00 ms), 0.0 GPU copies (0.00 MB, 0.0 CPU waits for one), 38 glBufferData (1.05 MB); 0.0 texture views made, 39.3 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 8.00 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 522 calls sent, 637 repeats left out (55%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 70.4 fenced encoders, 421.0 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 1.66e+09 units per frame (47 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:    11.0%   2.0x  pass 4096x4096
+[mcmetal] profile:     5.7%   2.0x  geometry-shader compute
+[mcmetal] profile:     5.6%   1.0x  GL program 23
+[mcmetal] profile:     5.5%   1.0x  GL program 22
+[mcmetal] profile:     5.4%   1.0x  GL program 21
+[mcmetal] profile:     5.3%   1.0x  GL program 20
+[mcmetal] profile:     5.1%   1.0x  GL program 19
+[mcmetal] profile:     4.9%   1.0x  GL program 18
+[mcmetal] profile:     4.8%   1.0x  GL program 17
+[mcmetal] profile:     4.5%   1.0x  GL program 16
+[mcmetal] profile:     2.8%   1.3x  GL program 43
+[mcmetal] profile:     2.3%   1.0x  GL program 209
+[mcmetal] profile: GPU overlap per frame: passes 1662.65 ms summed, 440.39 ms with any pass running, 442.25 ms first start to last end (74% of pass time hidden by overlap); 10 of 53 pass boundaries serial
+[mcmetal] profile:   serial   184 of   184, up to 94.88 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   198 of   719, up to 6.64 ms/frame: GL program 207 > GL program 208
+[mcmetal] profile:   serial    92 of    92, up to 5.49 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    89 of    92, up to 5.28 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    92 of    92, up to 1.13 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    92 of    92, up to 1.13 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    92 of    92, up to 0.47 ms/frame: GL program 357 > blits
+[mcmetal] profile:   serial    92 of    92, up to 0.37 ms/frame: GL program 288 > blits
+[mcmetal] profile:   serial    10 of    20, up to 0.08 ms/frame: blits > pass 1280x720
+[mcmetal] profile:   serial     1 of    50, up to 0.08 ms/frame: GL program 315 > GL program 357
+[mcmetal] input lag: frame start to GPU done 32.4 ms (92 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 91.3 shown fps, on screen 10.95 ms avg, 0.23 ms spread, 11.55 ms worst, 0.0% judder, 0 dropped
+[mcmetal] presented frame 1801 (1280x720), 61 pipelines; this frame: 64 draws (798 terrain sections), 0 dispatches
+[mcmetal] GPU chunk culling: last 2000 passes: 30285 regions prepared, 11279 drawn from culled commands, 1190 drawn normally, 869177 section draws, 0 passes refused, 0 bad section tables; geometry-shader regions culled on the CPU: 16946, keeping 542273 of 550931 sections
+[mcmetal] profile: 87 fps; per frame: cpu 11.43 ms (waiting 3.38), gpu 11.43 ms; 75 draws, 59.4 passes (1.0 reopened, 0.0 images not loaded), 6.3 blit + 2.0 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 8.8 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1651 draws (1651 with the compute made for their vertex format), 1159k input triangles, 531.9 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1639 computed, 12 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 15 buffers rewritten, 1472 uniforms changed, 167 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 2058 MB held (6 MB pooled), 0.0 new Metal buffers (0.00 MB) per frame, 52 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.0 glCopyBufferSubData (0.00 MB, 0.00 ms), 0.3 GPU copies (0.02 MB, 0.0 CPU waits for one), 38 glBufferData (1.07 MB); 0.0 texture views made, 39.9 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 8.00 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 522 calls sent, 602 repeats left out (54%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 70.7 fenced encoders, 422.8 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 1.85e+09 units per frame (46 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:     9.9%   2.0x  pass 4096x4096
+[mcmetal] profile:     5.1%   2.0x  geometry-shader compute
+[mcmetal] profile:     5.0%   1.0x  GL program 23
+[mcmetal] profile:     4.9%   1.0x  GL program 22
+[mcmetal] profile:     4.8%   1.0x  GL program 21
+[mcmetal] profile:     4.7%   1.0x  GL program 20
+[mcmetal] profile:     4.5%   1.0x  GL program 19
+[mcmetal] profile:     4.4%   1.0x  GL program 18
+[mcmetal] profile:     4.2%   1.0x  GL program 17
+[mcmetal] profile:     4.0%   1.0x  GL program 16
+[mcmetal] profile:     3.5%   1.3x  GL program 43
+[mcmetal] profile:     2.9%   1.0x  GL program 209
+[mcmetal] profile: GPU overlap per frame: passes 1847.51 ms summed, 459.80 ms with any pass running, 462.34 ms first start to last end (75% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile:   serial   176 of   176, up to 94.67 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   197 of   634, up to 6.65 ms/frame: GL program 208 > GL program 209
+[mcmetal] profile:   serial    88 of    88, up to 5.86 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    84 of    88, up to 5.43 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    88 of    88, up to 1.10 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    88 of    88, up to 0.94 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    88 of    88, up to 0.48 ms/frame: GL program 357 > blits
+[mcmetal] profile:   serial    88 of    88, up to 0.40 ms/frame: GL program 288 > blits
+[mcmetal] profile:   serial    11 of    21, up to 0.07 ms/frame: blits > pass 1280x720
+[mcmetal] profile:   serial     1 of    88, up to 0.03 ms/frame: blits > GL program 16
+[mcmetal] input lag: frame start to GPU done 33.8 ms (88 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 87.5 shown fps, on screen 11.43 ms avg, 0.23 ms spread, 12.13 ms worst, 0.0% judder, 0 dropped
+[mcmetal] profile: 84 fps; per frame: cpu 11.86 ms (waiting 3.69), gpu 11.86 ms; 75 draws, 59.2 passes (1.4 reopened, 0.0 images not loaded), 6.3 blit + 2.0 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 8.1 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1652 draws (1652 with the compute made for their vertex format), 1160k input triangles, 532.0 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1640 computed, 12 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 15 buffers rewritten, 1476 uniforms changed, 164 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 2058 MB held (6 MB pooled), 0.0 new Metal buffers (0.00 MB) per frame, 52 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.0 glCopyBufferSubData (0.00 MB, 0.00 ms), 0.5 GPU copies (0.02 MB, 0.0 CPU waits for one), 35 glBufferData (0.92 MB); 0.0 texture views made, 39.7 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 7.02 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 522 calls sent, 595 repeats left out (53%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 70.5 fenced encoders, 423.3 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 2.02e+09 units per frame (46 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:     9.1%   2.0x  pass 4096x4096
+[mcmetal] profile:     4.7%   2.0x  geometry-shader compute
+[mcmetal] profile:     4.6%   1.0x  GL program 23
+[mcmetal] profile:     4.5%   1.0x  GL program 22
+[mcmetal] profile:     4.4%   1.0x  GL program 21
+[mcmetal] profile:     4.3%   1.0x  GL program 20
+[mcmetal] profile:     4.1%   1.0x  GL program 19
+[mcmetal] profile:     4.0%   1.0x  GL program 18
+[mcmetal] profile:     3.9%   1.3x  GL program 43
+[mcmetal] profile:     3.9%   1.0x  GL program 17
+[mcmetal] profile:     3.6%   1.0x  GL program 16
+[mcmetal] profile:     3.4%   1.0x  GL program 209
+[mcmetal] profile: GPU overlap per frame: passes 2017.74 ms summed, 478.05 ms with any pass running, 480.41 ms first start to last end (76% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile:   serial   170 of   170, up to 94.82 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   236 of   549, up to 7.43 ms/frame: GL program 208 > GL program 209
+[mcmetal] profile:   serial    85 of    85, up to 5.49 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    82 of    85, up to 5.27 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    85 of    85, up to 1.10 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    85 of    85, up to 0.91 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    85 of    85, up to 0.37 ms/frame: GL program 288 > blits
+[mcmetal] profile:   serial    51 of    51, up to 0.28 ms/frame: GL program 357 > blits
+[mcmetal] input lag: frame start to GPU done 35.1 ms (85 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 84.3 shown fps, on screen 11.87 ms avg, 0.22 ms spread, 12.47 ms worst, 0.0% judder, 0 dropped
+[mcmetal] profile: 84 fps; per frame: cpu 11.91 ms (waiting 4.05), gpu 11.89 ms; 76 draws, 58.7 passes (2.0 reopened, 0.0 images not loaded), 6.3 blit + 2.0 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 9.5 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1651 draws (1651 with the compute made for their vertex format), 1159k input triangles, 531.9 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1639 computed, 12 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 11 buffers rewritten, 1478 uniforms changed, 162 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 2058 MB held (6 MB pooled), 0.0 new Metal buffers (0.00 MB) per frame, 52 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.0 glCopyBufferSubData (0.00 MB, 0.00 ms), 0.5 GPU copies (0.02 MB, 0.0 CPU waits for one), 30 glBufferData (0.78 MB); 0.0 texture views made, 38.2 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 5.05 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 517 calls sent, 611 repeats left out (54%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 70.0 fenced encoders, 421.2 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 2.07e+09 units per frame (45 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:     8.8%   2.0x  pass 4096x4096
+[mcmetal] profile:     4.6%   2.0x  geometry-shader compute
+[mcmetal] profile:     4.5%   1.0x  GL program 23
+[mcmetal] profile:     4.4%   1.0x  GL program 22
+[mcmetal] profile:     4.3%   1.0x  GL program 21
+[mcmetal] profile:     4.2%   1.0x  GL program 20
+[mcmetal] profile:     4.1%   1.3x  GL program 43
+[mcmetal] profile:     4.0%   1.0x  GL program 19
+[mcmetal] profile:     3.9%   1.0x  GL program 18
+[mcmetal] profile:     3.8%   1.0x  GL program 17
+[mcmetal] profile:     3.5%   1.0x  GL program 16
+[mcmetal] profile:     3.5%   1.0x  GL program 209
+[mcmetal] profile: GPU overlap per frame: passes 2068.07 ms summed, 480.95 ms with any pass running, 481.58 ms first start to last end (77% of pass time hidden by overlap); 10 of 53 pass boundaries serial
+[mcmetal] profile:   serial   170 of   170, up to 94.49 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   201 of   430, up to 7.72 ms/frame: GL program 209 > blits
+[mcmetal] profile:   serial    85 of    85, up to 5.63 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    85 of    85, up to 5.59 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    85 of    85, up to 1.16 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    85 of    85, up to 0.89 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    85 of    85, up to 0.47 ms/frame: GL program 315 > blits
+[mcmetal] profile:   serial    85 of    85, up to 0.37 ms/frame: GL program 288 > blits
+[mcmetal] input lag: frame start to GPU done 35.3 ms (85 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 84.1 shown fps, on screen 11.89 ms avg, 0.16 ms spread, 12.31 ms worst, 0.0% judder, 0 dropped
+[mcmetal] profile: 85 fps; per frame: cpu 11.71 ms (waiting 3.83), gpu 11.72 ms; 73 draws, 58.1 passes (2.0 reopened, 0.0 images not loaded), 6.3 blit + 2.0 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 9.4 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1651 draws (1651 with the compute made for their vertex format), 1159k input triangles, 531.9 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1639 computed, 12 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 1 buffers rewritten, 1478 uniforms changed, 161 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 2058 MB held (6 MB pooled), 0.0 new Metal buffers (0.00 MB) per frame, 52 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.0 glCopyBufferSubData (0.00 MB, 0.00 ms), 0.4 GPU copies (0.01 MB, 0.0 CPU waits for one), 31 glBufferData (0.76 MB); 0.0 texture views made, 38.5 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 5.81 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 509 calls sent, 579 repeats left out (53%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 69.4 fenced encoders, 416.7 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 2.02e+09 units per frame (45 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:     9.0%   2.0x  pass 4096x4096
+[mcmetal] profile:     4.7%   2.0x  geometry-shader compute
+[mcmetal] profile:     4.6%   1.0x  GL program 23
+[mcmetal] profile:     4.5%   1.0x  GL program 22
+[mcmetal] profile:     4.4%   1.0x  GL program 21
+[mcmetal] profile:     4.3%   1.0x  GL program 20
+[mcmetal] profile:     4.1%   1.0x  GL program 19
+[mcmetal] profile:     4.1%   1.3x  GL program 43
+[mcmetal] profile:     4.0%   1.0x  GL program 18
+[mcmetal] profile:     3.9%   1.0x  GL program 17
+[mcmetal] profile:     3.6%   1.0x  GL program 16
+[mcmetal] profile:     3.5%   1.0x  GL program 207
+[mcmetal] profile: GPU overlap per frame: passes 2016.19 ms summed, 474.14 ms with any pass running, 474.79 ms first start to last end (76% of pass time hidden by overlap); 10 of 52 pass boundaries serial
+[mcmetal] profile:   serial   172 of   172, up to 94.81 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   203 of   474, up to 7.71 ms/frame: GL program 209 > blits
+[mcmetal] profile:   serial    86 of    86, up to 5.46 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    86 of    86, up to 5.46 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    86 of    86, up to 1.15 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    86 of    86, up to 1.10 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    86 of    86, up to 0.46 ms/frame: GL program 315 > blits
+[mcmetal] profile:   serial    86 of    86, up to 0.37 ms/frame: GL program 288 > blits
+[mcmetal] input lag: frame start to GPU done 34.8 ms (86 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 85.3 shown fps, on screen 11.73 ms avg, 0.16 ms spread, 12.16 ms worst, 0.0% judder, 0 dropped
+[mcmetal] GPU chunk culling: last 2000 passes: 29473 regions prepared, 10736 drawn from culled commands, 1504 drawn normally, 879681 section draws, 0 passes refused, 0 bad section tables; geometry-shader regions culled on the CPU: 16922, keeping 542188 of 550691 sections
+[mcmetal] profile: 85 fps; per frame: cpu 11.73 ms (waiting 3.96), gpu 11.73 ms; 77 draws, 58.3 passes (1.8 reopened, 0.0 images not loaded), 6.3 blit + 2.0 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 9.2 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1651 draws (1651 with the compute made for their vertex format), 1159k input triangles, 531.9 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1639 computed, 12 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 1 buffers rewritten, 1478 uniforms changed, 161 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 2058 MB held (6 MB pooled), 0.0 new Metal buffers (0.00 MB) per frame, 52 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.0 glCopyBufferSubData (0.00 MB, 0.00 ms), 0.7 GPU copies (0.03 MB, 0.0 CPU waits for one), 30 glBufferData (0.72 MB); 0.0 texture views made, 38.8 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 6.00 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 512 calls sent, 629 repeats left out (55%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 69.6 fenced encoders, 417.4 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 2.01e+09 units per frame (46 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:     9.0%   2.0x  pass 4096x4096
+[mcmetal] profile:     4.7%   2.0x  geometry-shader compute
+[mcmetal] profile:     4.5%   1.0x  GL program 23
+[mcmetal] profile:     4.4%   1.0x  GL program 22
+[mcmetal] profile:     4.3%   1.0x  GL program 21
+[mcmetal] profile:     4.2%   1.0x  GL program 20
+[mcmetal] profile:     4.1%   1.3x  GL program 43
+[mcmetal] profile:     4.1%   1.0x  GL program 19
+[mcmetal] profile:     3.9%   1.0x  GL program 18
+[mcmetal] profile:     3.8%   1.0x  GL program 17
+[mcmetal] profile:     3.6%   1.0x  GL program 16
+[mcmetal] profile:     3.5%   1.0x  GL program 209
+[mcmetal] profile: GPU overlap per frame: passes 2012.72 ms summed, 474.08 ms with any pass running, 475.26 ms first start to last end (76% of pass time hidden by overlap); 10 of 53 pass boundaries serial
+[mcmetal] profile:   serial   172 of   172, up to 94.63 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   221 of   450, up to 6.55 ms/frame: blits > GL program 46
+[mcmetal] profile:   serial    86 of    86, up to 5.45 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    86 of    86, up to 5.45 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    86 of    86, up to 1.13 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    86 of    86, up to 1.05 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    70 of    70, up to 0.38 ms/frame: GL program 315 > blits
+[mcmetal] profile:   serial    86 of    86, up to 0.37 ms/frame: GL program 288 > blits
+[mcmetal] input lag: frame start to GPU done 34.8 ms (86 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 85.2 shown fps, on screen 11.73 ms avg, 0.17 ms spread, 12.26 ms worst, 0.0% judder, 0 dropped
+[mcmetal] profile: 87 fps; per frame: cpu 11.54 ms (waiting 3.75), gpu 11.53 ms; 77 draws, 59.6 passes (1.0 reopened, 0.0 images not loaded), 6.3 blit + 2.0 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 9.2 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1651 draws (1651 with the compute made for their vertex format), 1159k input triangles, 531.8 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1639 computed, 12 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 3 buffers rewritten, 1477 uniforms changed, 162 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 2058 MB held (6 MB pooled), 0.0 new Metal buffers (0.00 MB) per frame, 52 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.0 glCopyBufferSubData (0.00 MB, 0.00 ms), 0.6 GPU copies (0.03 MB, 0.0 CPU waits for one), 30 glBufferData (0.69 MB); 0.0 texture views made, 39.9 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 5.77 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 521 calls sent, 608 repeats left out (54%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 70.9 fenced encoders, 424.8 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 1.91e+09 units per frame (46 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:     9.6%   2.0x  pass 4096x4096
+[mcmetal] profile:     5.0%   2.0x  geometry-shader compute
+[mcmetal] profile:     4.8%   1.0x  GL program 23
+[mcmetal] profile:     4.7%   1.0x  GL program 22
+[mcmetal] profile:     4.7%   1.0x  GL program 21
+[mcmetal] profile:     4.5%   1.0x  GL program 20
+[mcmetal] profile:     4.4%   1.0x  GL program 19
+[mcmetal] profile:     4.2%   1.0x  GL program 18
+[mcmetal] profile:     4.1%   1.0x  GL program 17
+[mcmetal] profile:     3.8%   1.0x  GL program 16
+[mcmetal] profile:     3.5%   1.3x  GL program 43
+[mcmetal] profile:     3.0%   1.0x  GL program 209
+[mcmetal] profile: GPU overlap per frame: passes 1914.69 ms summed, 463.42 ms with any pass running, 466.40 ms first start to last end (76% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile:   serial   174 of   174, up to 95.16 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   193 of   588, up to 6.82 ms/frame: GL program 207 > GL program 208
+[mcmetal] profile:   serial    87 of    87, up to 5.52 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    82 of    87, up to 5.14 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    87 of    87, up to 1.10 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    87 of    87, up to 0.86 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    87 of    87, up to 0.47 ms/frame: GL program 357 > blits
+[mcmetal] profile:   serial    87 of    87, up to 0.37 ms/frame: GL program 288 > blits
+[mcmetal] profile:   serial     1 of    87, up to 0.08 ms/frame: GL program 315 > GL program 357
+[mcmetal] profile:   serial    10 of    20, up to 0.07 ms/frame: blits > pass 1280x720
+[mcmetal] input lag: frame start to GPU done 34.1 ms (87 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 86.7 shown fps, on screen 11.53 ms avg, 0.22 ms spread, 12.13 ms worst, 0.0% judder, 0 dropped
+[mcmetal] profile: 90 fps; per frame: cpu 11.17 ms (waiting 3.32), gpu 11.18 ms; 80 draws, 59.6 passes (1.0 reopened, 0.0 images not loaded), 6.3 blit + 2.0 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 8.2 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1651 draws (1651 with the compute made for their vertex format), 1159k input triangles, 531.9 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1639 computed, 12 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 11 buffers rewritten, 1476 uniforms changed, 163 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 2058 MB held (6 MB pooled), 0.0 new Metal buffers (0.00 MB) per frame, 52 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.0 glCopyBufferSubData (0.00 MB, 0.00 ms), 0.3 GPU copies (0.02 MB, 0.0 CPU waits for one), 30 glBufferData (0.72 MB); 0.0 texture views made, 39.0 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 5.13 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 524 calls sent, 654 repeats left out (55%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 70.9 fenced encoders, 424.4 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 1.73e+09 units per frame (47 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:    10.6%   2.0x  pass 4096x4096
+[mcmetal] profile:     5.4%   2.0x  geometry-shader compute
+[mcmetal] profile:     5.4%   1.0x  GL program 23
+[mcmetal] profile:     5.3%   1.0x  GL program 22
+[mcmetal] profile:     5.2%   1.0x  GL program 21
+[mcmetal] profile:     5.0%   1.0x  GL program 20
+[mcmetal] profile:     4.9%   1.0x  GL program 19
+[mcmetal] profile:     4.7%   1.0x  GL program 18
+[mcmetal] profile:     4.6%   1.0x  GL program 17
+[mcmetal] profile:     4.3%   1.0x  GL program 16
+[mcmetal] profile:     2.9%   1.3x  GL program 43
+[mcmetal] profile:     2.5%   1.0x  GL program 209
+[mcmetal] profile: GPU overlap per frame: passes 1734.24 ms summed, 448.76 ms with any pass running, 451.82 ms first start to last end (74% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile:   serial   180 of   180, up to 94.28 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   202 of   644, up to 6.88 ms/frame: GL program 207 > GL program 208
+[mcmetal] profile:   serial    90 of    90, up to 5.62 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    87 of    90, up to 5.35 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    90 of    90, up to 1.10 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    90 of    90, up to 1.08 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    90 of    90, up to 0.47 ms/frame: GL program 357 > blits
+[mcmetal] profile:   serial    90 of    90, up to 0.37 ms/frame: GL program 288 > blits
+[mcmetal] profile:   serial    10 of    21, up to 0.06 ms/frame: blits > pass 1280x720
+[mcmetal] profile:   serial     1 of    90, up to 0.01 ms/frame: GL program 225 > geometry-shader compute
+[mcmetal] input lag: frame start to GPU done 33.1 ms (90 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 89.4 shown fps, on screen 11.18 ms avg, 0.28 ms spread, 11.99 ms worst, 0.0% judder, 0 dropped
+[mcmetal] presented frame 2401 (1280x720), 61 pipelines; this frame: 82 draws (1338 terrain sections), 0 dispatches
+[mcmetal] profile: 91 fps; per frame: cpu 10.94 ms (waiting 2.81), gpu 10.93 ms; 83 draws, 59.5 passes (1.0 reopened, 0.0 images not loaded), 6.3 blit + 2.0 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 8.0 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1651 draws (1651 with the compute made for their vertex format), 1159k input triangles, 531.9 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1639 computed, 12 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 5 buffers rewritten, 1476 uniforms changed, 163 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 2058 MB held (6 MB pooled), 0.0 new Metal buffers (0.00 MB) per frame, 52 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.0 glCopyBufferSubData (0.00 MB, 0.00 ms), 0.1 GPU copies (0.00 MB, 0.0 CPU waits for one), 36 glBufferData (0.87 MB); 0.0 texture views made, 39.9 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 7.33 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 532 calls sent, 709 repeats left out (57%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 70.8 fenced encoders, 423.4 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 1.64e+09 units per frame (47 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:    11.1%   2.0x  pass 4096x4096
+[mcmetal] profile:     5.8%   2.0x  geometry-shader compute
+[mcmetal] profile:     5.7%   1.0x  GL program 23
+[mcmetal] profile:     5.6%   1.0x  GL program 22
+[mcmetal] profile:     5.5%   1.0x  GL program 21
+[mcmetal] profile:     5.3%   1.0x  GL program 20
+[mcmetal] profile:     5.2%   1.0x  GL program 19
+[mcmetal] profile:     5.0%   1.0x  GL program 18
+[mcmetal] profile:     4.8%   1.0x  GL program 17
+[mcmetal] profile:     4.5%   1.0x  GL program 16
+[mcmetal] profile:     2.6%   1.3x  GL program 43
+[mcmetal] profile:     2.3%   1.0x  GL program 200
+[mcmetal] profile: GPU overlap per frame: passes 1643.36 ms summed, 438.39 ms with any pass running, 441.37 ms first start to last end (73% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile:   serial   184 of   184, up to 95.39 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   212 of   678, up to 6.04 ms/frame: GL program 208 > GL program 209
+[mcmetal] profile:   serial    92 of    92, up to 5.51 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    88 of    92, up to 5.22 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    92 of    92, up to 1.18 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    92 of    92, up to 1.10 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    92 of    92, up to 0.47 ms/frame: GL program 357 > blits
+[mcmetal] profile:   serial    92 of    92, up to 0.37 ms/frame: GL program 288 > blits
+[mcmetal] profile:   serial     1 of    92, up to 0.01 ms/frame: GL program 225 > geometry-shader compute
+[mcmetal] profile:   serial     1 of    92, up to 0.01 ms/frame: pass 1280x720 > pass 1280x720
+[mcmetal] input lag: frame start to GPU done 32.0 ms (92 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 91.4 shown fps, on screen 10.94 ms avg, 0.19 ms spread, 11.54 ms worst, 0.0% judder, 0 dropped
+[mcmetal] GPU chunk culling: last 2000 passes: 31243 regions prepared, 12354 drawn from culled commands, 1333 drawn normally, 925078 section draws, 0 passes refused, 0 bad section tables; geometry-shader regions culled on the CPU: 16968, keeping 542708 of 551379 sections
+[mcmetal] profile: 91 fps; per frame: cpu 11.00 ms (waiting 3.13), gpu 10.98 ms; 76 draws, 59.1 passes (1.0 reopened, 0.0 images not loaded), 6.3 blit + 2.0 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 7.6 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1651 draws (1651 with the compute made for their vertex format), 1159k input triangles, 531.9 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1639 computed, 12 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 7 buffers rewritten, 1478 uniforms changed, 161 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 2058 MB held (6 MB pooled), 0.0 new Metal buffers (0.00 MB) per frame, 52 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.0 glCopyBufferSubData (0.00 MB, 0.00 ms), 0.1 GPU copies (0.00 MB, 0.0 CPU waits for one), 38 glBufferData (1.06 MB); 0.0 texture views made, 39.3 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 8.00 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 520 calls sent, 626 repeats left out (55%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 70.4 fenced encoders, 420.6 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 1.67e+09 units per frame (47 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:    11.0%   2.0x  pass 4096x4096
+[mcmetal] profile:     5.7%   2.0x  geometry-shader compute
+[mcmetal] profile:     5.6%   1.0x  GL program 23
+[mcmetal] profile:     5.5%   1.0x  GL program 22
+[mcmetal] profile:     5.4%   1.0x  GL program 21
+[mcmetal] profile:     5.2%   1.0x  GL program 20
+[mcmetal] profile:     5.1%   1.0x  GL program 19
+[mcmetal] profile:     4.9%   1.0x  GL program 18
+[mcmetal] profile:     4.7%   1.0x  GL program 17
+[mcmetal] profile:     4.4%   1.0x  GL program 16
+[mcmetal] profile:     2.8%   1.3x  GL program 43
+[mcmetal] profile:     2.4%   1.0x  GL program 209
+[mcmetal] profile: GPU overlap per frame: passes 1666.43 ms summed, 441.58 ms with any pass running, 443.53 ms first start to last end (74% of pass time hidden by overlap); 10 of 53 pass boundaries serial
+[mcmetal] profile:   serial   184 of   184, up to 94.58 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   212 of   636, up to 6.73 ms/frame: GL program 208 > GL program 209
+[mcmetal] profile:   serial    92 of    92, up to 5.59 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    89 of    92, up to 5.35 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    92 of    92, up to 1.14 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    92 of    92, up to 1.13 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    92 of    92, up to 0.47 ms/frame: GL program 357 > blits
+[mcmetal] profile:   serial    92 of    92, up to 0.37 ms/frame: GL program 288 > blits
+[mcmetal] profile:   serial     1 of    92, up to 0.01 ms/frame: GL program 225 > geometry-shader compute
+[mcmetal] input lag: frame start to GPU done 32.5 ms (92 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 91.1 shown fps, on screen 10.98 ms avg, 0.21 ms spread, 11.54 ms worst, 0.0% judder, 0 dropped
+[mcmetal] profile: 87 fps; per frame: cpu 11.46 ms (waiting 3.61), gpu 11.47 ms; 76 draws, 59.5 passes (1.0 reopened, 0.0 images not loaded), 6.3 blit + 2.0 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 8.7 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1651 draws (1651 with the compute made for their vertex format), 1159k input triangles, 531.9 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1639 computed, 12 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 8 buffers rewritten, 1478 uniforms changed, 161 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 2058 MB held (6 MB pooled), 0.0 new Metal buffers (0.00 MB) per frame, 52 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.0 glCopyBufferSubData (0.00 MB, 0.00 ms), 0.2 GPU copies (0.01 MB, 0.0 CPU waits for one), 38 glBufferData (1.06 MB); 0.0 texture views made, 40.0 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 8.00 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 524 calls sent, 614 repeats left out (54%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 70.8 fenced encoders, 423.4 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 1.85e+09 units per frame (46 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:     9.9%   2.0x  pass 4096x4096
+[mcmetal] profile:     5.1%   2.0x  geometry-shader compute
+[mcmetal] profile:     5.0%   1.0x  GL program 23
+[mcmetal] profile:     4.9%   1.0x  GL program 22
+[mcmetal] profile:     4.8%   1.0x  GL program 21
+[mcmetal] profile:     4.6%   1.0x  GL program 20
+[mcmetal] profile:     4.5%   1.0x  GL program 19
+[mcmetal] profile:     4.4%   1.0x  GL program 18
+[mcmetal] profile:     4.2%   1.0x  GL program 17
+[mcmetal] profile:     3.9%   1.0x  GL program 16
+[mcmetal] profile:     3.5%   1.3x  GL program 43
+[mcmetal] profile:     2.9%   1.0x  GL program 209
+[mcmetal] profile: GPU overlap per frame: passes 1846.90 ms summed, 461.12 ms with any pass running, 463.67 ms first start to last end (75% of pass time hidden by overlap); 10 of 54 pass boundaries serial
+[mcmetal] profile:   serial   176 of   176, up to 94.55 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   205 of   578, up to 7.03 ms/frame: GL program 209 > blits
+[mcmetal] profile:   serial    88 of    88, up to 5.47 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    87 of    88, up to 5.40 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    88 of    88, up to 1.10 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    88 of    88, up to 0.92 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    88 of    88, up to 0.48 ms/frame: GL program 357 > blits
+[mcmetal] profile:   serial    88 of    88, up to 0.37 ms/frame: GL program 288 > blits
+[mcmetal] profile:   serial     2 of    88, up to 0.16 ms/frame: GL program 315 > GL program 357
+[mcmetal] profile:   serial     4 of    88, up to 0.04 ms/frame: GL program 225 > geometry-shader compute
+[mcmetal] input lag: frame start to GPU done 33.9 ms (88 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 87.2 shown fps, on screen 11.47 ms avg, 0.21 ms spread, 11.92 ms worst, 0.0% judder, 0 dropped
+[mcmetal] profile: 85 fps; per frame: cpu 11.80 ms (waiting 4.54), gpu 10.27 ms; 64 draws, 50.2 passes (1.2 reopened, 0.0 images not loaded), 5.4 blit + 1.6 compute encoders, 1.0 command buffers, 0.00 finishes; 0% presents skipped
+[mcmetal] profile: 6.7 texture uploads per frame, 0.2 of them moved ahead of an open pass
+[mcmetal] profile: geometry shaders 1360 draws (1360 with the compute made for their vertex format), 955k input triangles, 438.1 MB of records per frame
+[mcmetal] profile: geometry-shader cache per frame: 0 reused, 0 stored, 1350 computed, 10 not cacheable, 0 cache full; 0 MB held in 0 slabs
+[mcmetal] profile: geometry-shader cache misses per frame: 14 buffers rewritten, 1217 uniforms changed, 133 draws not drawn the frame before; uniform ranges hashed: 4
+[mcmetal] profile: buffers 2058 MB held (6 MB pooled), 0.0 new Metal buffers (0.00 MB) per frame, 52 of 128 transient chunks, 0.0 one-off transient buffers and 0.0 waits for a chunk per frame
+[mcmetal] profile: cpu buffer traffic per frame: 0.0 renames (0.00 MB copied, 0.00 ms), 0.0 glCopyBufferSubData (0.00 MB, 0.00 ms), 0.4 GPU copies (0.01 MB, 0.0 CPU waits for one), 32 glBufferData (0.76 MB); 0.0 texture views made, 34.5 pipeline lookups, 0.0 big uniform blocks; 4 textures remade for image/view use
+[mcmetal] profile: buffer renames per frame: 0.0 left the old bytes behind (0.0 of those copied over later), 6.39 index buffers scanned for their highest vertex
+[mcmetal] profile: render-encoder state per frame: 441 calls sent, 497 repeats left out (53%)
+[mcmetal] profile: overlap (MGL_OVERLAP) per frame: 60.3 fenced encoders, 355.9 fence waits, 2.00 barriers
+[mcmetal] profile: GPU pass time 1.73e+09 units per frame (53 kinds, tick ratio 41.67); largest shares:
+[mcmetal] profile:     9.0%   1.7x  pass 4096x4096
+[mcmetal] profile:     4.7%   1.7x  geometry-shader compute
+[mcmetal] profile:     4.6%   0.9x  GL program 23
+[mcmetal] profile:     4.5%   0.9x  GL program 22
+[mcmetal] profile:     4.4%   0.9x  GL program 21
+[mcmetal] profile:     4.3%   0.9x  GL program 20
+[mcmetal] profile:     4.1%   0.9x  GL program 19
+[mcmetal] profile:     4.0%   0.9x  GL program 18
+[mcmetal] profile:     3.9%   1.2x  GL program 43
+[mcmetal] profile:     3.9%   0.9x  GL program 17
+[mcmetal] profile:     3.6%   0.9x  GL program 16
+[mcmetal] profile:     3.4%   0.9x  GL program 209
+[mcmetal] profile: GPU overlap per frame: passes 1734.03 ms summed, 412.02 ms with any pass running, 414.10 ms first start to last end (76% of pass time hidden by overlap); 9 of 47 pass boundaries serial
+[mcmetal] profile:   serial   146 of   146, up to 81.34 ms/frame: geometry-shader compute > pass 4096x4096
+[mcmetal] profile:   serial   239 of   564, up to 6.87 ms/frame: GL program 208 > GL program 209
+[mcmetal] profile:   serial    73 of    73, up to 4.87 ms/frame: pass 4096x4096 > blits
+[mcmetal] profile:   serial    72 of    73, up to 4.69 ms/frame: blits > geometry-shader compute
+[mcmetal] profile:   serial    73 of    73, up to 0.96 ms/frame: pass 1280x720 > GL program 225
+[mcmetal] profile:   serial    73 of    73, up to 0.86 ms/frame: GL program 205 > blits
+[mcmetal] profile:   serial    73 of    73, up to 0.32 ms/frame: GL program 288 > blits
+[mcmetal] profile:   serial    45 of    45, up to 0.25 ms/frame: GL program 357 > blits
+[mcmetal] profile:   serial     3 of    73, up to 0.04 ms/frame: GL program 225 > geometry-shader compute
+[mcmetal] input lag: frame start to GPU done 31.5 ms (87 real frames; time on screen not reported, window hidden?)
+[mcmetal] present stats (estimated): 86.7 shown fps, on screen 11.54 ms avg, 2.38 ms spread, 30.15 ms worst, 2.3% judder, 0 dropped
