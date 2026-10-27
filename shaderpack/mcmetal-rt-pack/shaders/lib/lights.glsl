@@ -26,6 +26,8 @@ vec3 lightFrom(vec3 p, vec3 n, int mat, vec3 lp, int id, out vec3 dir, out float
     float dd = mat == MAT_ENTITY ? max(dist, 1.5) : dist;
     // faint lights (glowing leaves and logs: a whole tree of them) at half strength, or a grove lights itself up
     float strength = level / 15.0 * (level <= 6.0 ? 0.5 : 1.0);
+    // and glowing leaves barely light each other: a canopy of them adds up to a white blaze at night's exposure
+    if (level <= 6.0 && mat == MAT_EMISSIVE_DIM) strength *= 0.15;
     return c * strength * ndl * fade * fade * 4.0 / (0.25 * dd * dd + 1.0);
 }
 

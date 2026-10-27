@@ -9,7 +9,7 @@
 //   NO_TEXTURE      gbuffers_basic and the like: vertex colour only
 //   MATERIAL        material id when TERRAIN doesn't decide it (default MAT_NONE)
 //   TRACE_SHADOW    FORWARD non-terrain programs that still cast a shadow ray (translucent entities, held glass)
-//   KEEP_MATERIAL   FORWARD programs that may run before deferred (clouds): also mark the pixel already lit
+//   KEEP_MATERIAL   FORWARD programs that may run before deferred (clouds, the held item): also mark the pixel already lit
 //   BLOCK_ENTITIES  gbuffers_block: chests, signs, End portals (blockEntityId from block.properties)
 #include "/lib/settings.glsl"
 #include "/lib/common.glsl"
@@ -111,6 +111,12 @@ void main() {
     }
 #endif
     mat = MATERIAL;
+#if !defined TERRAIN && MATERIAL == MAT_NONE
+    // a program standing in for another (Iris falls back to textured/basic ones): First-person Model's body and what it
+    // holds arrive like that. The render stage still says what they are
+    if (renderStage == MC_RENDER_STAGE_ENTITIES) mat = MAT_ENTITY;
+    else if (renderStage == MC_RENDER_STAGE_HAND_SOLID || renderStage == MC_RENDER_STAGE_HAND_TRANSLUCENT) mat = MAT_HAND;
+#endif
 #if defined BLOCK_ENTITIES && defined END_PORTAL_STARS
     if (blockEntityId == 10300) mat = MAT_LIT;   // the starfield glows by itself (lib/portal.glsl)
 #endif
@@ -239,6 +245,18 @@ layout(location = 2) out vec4 outAdd;
 layout(location = 0) out vec4 outColor;
 #endif
 
+// your own body in first person (First-person Model) and what it holds: entity pixels in the column round the eye.
+// Tested from the vertex's own position and again from the pixel's depth (the player's batch can arrive already
+// transformed, so the first can miss)
+bool ownBody() {
+    if (mat == MAT_HAND) return true;
+    if (mat != MAT_ENTITY) return false;
+    if (dot(playerPos.xz, playerPos.xz) < 0.64 && playerPos.y > -2.0 && playerPos.y < 0.4) return true;
+    vec4 v = gbufferProjectionInverse * vec4(vec3(gl_FragCoord.xy / vec2(viewWidth, viewHeight), gl_FragCoord.z) * 2.0 - 1.0, 1.0);
+    vec3 p = mat3(gbufferModelViewInverse) * (v.xyz / v.w);
+    return dot(p.xz, p.xz) < 0.81 && p.y > -2.1 && p.y < 0.5;
+}
+
 void main() {
 #ifdef KEEP_WATER_TARGETS
     outWater = vec4(0.0);   // (written, never kept: blending with ZERO would still turn garbage into NaN)
@@ -357,8 +375,13 @@ void main() {
   #endif
     // your own body in first person: entity pixels in the column round the eye (from the vertex's own position: the
     // depth buffer can't be trusted there)
-    int outMat = mat == MAT_ENTITY && dot(playerPos.xz, playerPos.xz) < 0.64 && playerPos.y > -2.0 && playerPos.y < 0.4 ? MAT_BODY : mat;
+    int outMat = mat == MAT_ENTITY && ownBody() ? MAT_BODY : mat;
     outMaterial = vec4(float(outMat) / 255.0, ao, puddle, spec.a);
+  #if DEBUG_VIEW == 9
+    // which program and render stage drew this pixel (deferred4.fsh shows it as is): r the program's material / 16,
+    // g Iris's render stage / 32, b the tag the pixel ends up with / 16
+    outAlbedo = vec4(float(MATERIAL) / 16.0, float(renderStage) / 32.0, float(outMat) / 16.0, 1.0);
+  #endif
     outPBR = vec4(octEncode(nm), 1.0 - spec.r, spec.g);   // roughness = 1 - smoothness
 #else
     vec3 albedo = toLinear(c.rgb);
@@ -371,12 +394,17 @@ void main() {
     if (dot(n, L) > 0.0 || mat == MAT_FOLIAGE) sh = sunShadow(playerPos, n, L, mat);
     // your own body in first person: players draw here (their skin is a translucent render type), and a shadow ray
     // from it hits the body itself in the ray scene: black bands. Lit where the sky is open instead, like the held item
-    if (mat == MAT_ENTITY && dot(playerPos.xz, playerPos.xz) < 0.64 && playerPos.y > -2.0 && playerPos.y < 0.4)
-        sh = vec3(smoothstep(0.85, 0.97, lmcoord.y));
+    // (the held item too: in first person it draws here as part of the body)
+    bool body = ownBody();
+    if (body) sh = vec3(smoothstep(0.85, 0.97, lmcoord.y));
     #else
     vec3 sh = vec3(smoothstep(0.85, 0.97, lmcoord.y));   // particles, rain, clouds: lit where the sky is open
     #endif
-    vec3 col = albedo * surfaceLight(playerPos, n, lmcoord, ao, mat, L, sunCol, skyAmb, sh) + emission(albedo, mat);
+    vec2 lm = lmcoord;
+    #ifdef FORWARD_SHADOW
+    if (body) lm.x *= 0.6;   // right beside a light, skin would glow red-hot in the lightmap's full block light
+    #endif
+    vec3 col = albedo * surfaceLight(playerPos, n, lm, ao, mat, L, sunCol, skyAmb, sh) + emission(albedo, mat);
     #ifdef WATER
     bool top = false;   // open water's flat top: its rays are traced in composite.fsh instead (WATER_REFLECT_PASS)
     if (mat == MAT_WATER && n.y > 0.9) {
@@ -440,9 +468,59 @@ void main() {
     outWater = vec4(wr, clamp(refr * 8.0 + 0.5, 0.0, 1.0), float(mat == MAT_GLASS));
   #else
     outColor = vec4(col, c.a);
+    #ifndef UNLIT
+    // your own body is solid: on a full modpack it can arrive here with a faint alpha (blended away to a ghost of
+    // whatever is lit behind it)
+    if (mat == MAT_ENTITY && ownBody()) outColor.a = 1.0;
+    #endif
+    #if DEBUG_VIEW == 8 && !defined UNLIT
+    // material tags (deferred4.fsh): drawn here, so your own body shows magenta, the held item cyan, mobs yellow
+    if (mat == MAT_HAND || mat == MAT_ENTITY)
+        outColor = vec4(mat == MAT_HAND ? vec3(0.0, 1.0, 1.0) : ownBody() ? vec3(1.0, 0.0, 1.0) : vec3(1.0, 1.0, 0.0), 1.0);
+    #endif
+    #if DEBUG_VIEW == 11 && !defined UNLIT
+    // forward-drawn entities: r the texture's alpha, g the vertex colour's alpha, b 1 if taken for your own body
+    if (mat == MAT_HAND || mat == MAT_ENTITY) outColor = vec4(c.a, tint.a, float(ownBody()), 1.0);
+    #endif
   #endif
   #ifdef KEEP_MATERIAL
-    outMaterial = vec4(float(MAT_LIT) / 255.0, 1.0, 0.0, 0.0);
+    outMaterial = vec4(float(MATERIAL == MAT_HAND ? MAT_HAND_LIT : MAT_LIT) / 255.0, 1.0, 0.0, 0.0);
+  #endif
+#endif
+#if DEBUG_VIEW == 10
+    // which of our programs drew each pixel, as a flat colour (deferred4.fsh shows the G-buffer's as is; anything still
+    // textured was drawn by something else): r the program's material / 13, g its kind (1 opaque, 2 forward,
+    // +4 kept material, +8 traced shadow, +16 water, +32 terrain, +64 unlit) / 127, b always 1
+    float kind = 0.0;
+  #ifdef OPAQUE
+    kind += 1.0;
+  #endif
+  #ifdef FORWARD
+    kind += 2.0;
+  #endif
+  #ifdef KEEP_MATERIAL
+    kind += 4.0;
+  #endif
+  #ifdef TRACE_SHADOW
+    kind += 8.0;
+  #endif
+  #ifdef WATER
+    kind += 16.0;
+  #endif
+  #ifdef TERRAIN
+    kind += 32.0;
+  #endif
+  #ifdef UNLIT
+    kind += 64.0;
+  #endif
+    vec4 code = vec4(float(MATERIAL) / 13.0, kind / 127.0, 1.0, 1.0);
+  #if defined OPAQUE
+    outAlbedo = code;
+  #elif defined WATER
+    outColor = vec4(0.0, 0.0, 0.0, 1.0);
+    outAdd = vec4(code.rgb, 1.0);
+  #else
+    outColor = code;
   #endif
 #endif
 }

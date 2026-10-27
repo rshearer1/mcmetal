@@ -75,6 +75,7 @@
 #define DH_SHADOW_STEPS 16 // [8 12 16 24]
 #define LAMP_FOG // torches, lanterns and glowing blocks light up the air round them: a soft glow in fog, rain and dusty rooms (needs coloured light)
 #define LAMP_FOG_STRENGTH 1.0 // [0.5 1.0 1.5 2.0 3.0]
+#define INDOOR_DUST 0.3 // [0.0 0.3 0.6 1.0] how much thicker the air gets indoors (sunbeams and lamp glow in a room); 1.0 was the old dusty look, rooms read hazy and grey
 #define VOLUMETRIC_MIST // morning mist near the ground that the sun's beams light up (with Light Shafts)
 #define MIST_AMOUNT 1.0 // [0.0 0.5 1.0 1.5 2.0 3.0]
 #define LIGHT_SHAFTS_RATE 4 // [2 4] light shafts traced for 1 in this many pixels each frame (the rest keep their average; shafts are soft, 4 is enough)
@@ -161,7 +162,7 @@ const float drynessHalfLife = 400.0;
 #define WAVE_HEIGHT 1.0 // [0.0 0.5 1.0 1.5 2.0 3.0]
 #define WAVE_SPEED 1.0 // [0.5 1.0 1.5 2.0]
 
-#define DEBUG_VIEW 0 // [0 1 2 3 4 5 6 7] 0 off, 1 sun shadow, 2 ambient occlusion, 3 global illumination (with coloured block light), 4 normals, 5 light shafts, 6 puddle mask, 7 caustics (r pattern, g seen through water, b sunlit)
+#define DEBUG_VIEW 0 // [0 1 2 3 4 5 6 7 8 9 10 11] 0 off, 1 sun shadow, 2 ambient occlusion, 3 global illumination (with coloured block light), 4 normals, 5 light shafts, 6 puddle mask, 7 caustics (r pattern, g seen through water, b sunlit), 8 material tags, 9 program and stage codes, 10 which program drew each pixel, 11 forward entities' alpha and own-body test
 
 #define STYLE 0 // [0 1 2 3 4] the look (sky, light, mist, glow): 0 Natural, 1 Cottage, 2 Witchy, 3 Storybook, 4 Fairytale
 #define SEASONS // light, sky, clouds, mist and winter frost follow the year (Serene Seasons' calendar, lib/season.glsl)

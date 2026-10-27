@@ -41,7 +41,11 @@ for line in (here.parent.parent / "mod/resources/mcmetal/lights.tsv").read_text(
         tokens = ["%s:%s=%s" % (block, key, v) for v in vals.split(",")]
     else:
         tokens = [block]
-    groups[(color, bucket(int(level)))] += tokens
+    b = bucket(int(level))
+    # glowing leaves: a whole canopy of them. As faint lights (lib/lightcolor.glsl: level 6 or less glows softly and
+    # lights half as strongly), or a grove of bright ones blazes white at night
+    if "leaves" in block: b = min(b, 5)
+    groups[(color, b)] += tokens
 
 ids, next_id = {}, {False: 10110, True: 10209}
 for key in sorted(groups, key=lambda k: (-len(groups[k]), k)):
@@ -59,8 +63,12 @@ for key in sorted(groups, key=lambda k: ids[k]):
 props.append("# END MODDED LIGHTS")
 bp = pack / "shaders/block.properties"
 text = bp.read_text()
-text = re.sub(r"\n# BEGIN MODDED LIGHTS.*?# END MODDED LIGHTS\n", "\n", text, flags=re.S).rstrip("\n") + "\n"
-bp.write_text(text + "\n".join(props) + "\n")
+block = "\n".join(props) + "\n"
+if "# BEGIN MODDED LIGHTS" in text:   # in place: the auto materials after it keep their order
+    text = re.sub(r"# BEGIN MODDED LIGHTS.*?# END MODDED LIGHTS\n", lambda m: block, text, flags=re.S)
+else:
+    text = text.rstrip("\n") + "\n" + block
+bp.write_text(text)
 
 glsl = ["// Modded light blocks' colour and vanilla light level by block id (made by shaderpack/tools/gen_modded_lights.py",
         "// from mod/resources/mcmetal/lights.tsv; don't edit). Used by lightColorOf in lib/lights.glsl.",

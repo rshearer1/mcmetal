@@ -102,7 +102,7 @@ void main() {
         float indoors = 1.0 - float(eyeBrightnessSmooth.y) / 240.0;
         // clear air at midday, hazier with a low sun (morning, evening) and in rain
         float density = 0.005 * (LIGHT_SHAFTS_STRENGTH * STYLE_SHAFTS) * mix(1.0, 0.25, smoothstep(0.25, 0.7, lightDir.y))
-                      * (1.0 + 3.0 * rainStrength + 3.0 * indoors);
+                      * (1.0 + 3.0 * rainStrength + 3.0 * INDOOR_DUST * indoors);
         // under water: much thicker (the beams you see from below the surface), and blue-green
         if (underWater) { dist = min(dist, 32.0); density = 0.04 * (LIGHT_SHAFTS_STRENGTH * STYLE_SHAFTS); }
         // SHAFT_BUDGET: rays where the air is: a short view ray (indoors, a wall close by) gets a step every
@@ -160,7 +160,7 @@ void main() {
     // shadow ray to that light (walls cut the glow off)
     {
         float ld = min(dist, 24.0), lstep = ld / 4.0;
-        float air = 0.012 * LAMP_FOG_STRENGTH * (1.0 + 3.0 * rainStrength + 2.0 * (1.0 - float(eyeBrightnessSmooth.y) / 240.0));
+        float air = 0.012 * LAMP_FOG_STRENGTH * (1.0 + 3.0 * rainStrength + 2.0 * INDOOR_DUST * (1.0 - float(eyeBrightnessSmooth.y) / 240.0));
         float lj = ign(gl_FragCoord.xy + vec2(13.0, 71.0), frameCounter);
         for (int i = 0; i < 4; i++) {
             vec3 q = dir * ((float(i) + lj) * lstep);

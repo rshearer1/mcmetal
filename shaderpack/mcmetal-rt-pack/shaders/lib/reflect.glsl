@@ -47,7 +47,7 @@ vec3 traceRadiance(vec3 p, vec3 dir, float tmax, vec3 L, vec3 sunCol, vec3 skyAm
     int mat = materialOf(id);
     vec3 a = toLinear(ha.rgb);
 #ifdef HIT_PBR_EMISSION
-    vec3 pbrGlow = a * mcm_hit_emission() * (4.0 * EMISSIVE_STRENGTH);   // the same as deferred4's
+    vec3 pbrGlow = a * mcm_hit_emission() * ((mat == MAT_EMISSIVE_DIM ? 0.2 : 4.0) * EMISSIVE_STRENGTH);   // the same as deferred4's
 #else
     vec3 pbrGlow = vec3(0.0);
 #endif

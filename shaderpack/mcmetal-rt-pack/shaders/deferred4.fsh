@@ -38,7 +38,7 @@ float mcm_trace(vec3 origin, vec3 dir, float tmax);
   #endif
 #endif
 
-uniform sampler2D colortex0, colortex1, colortex2, colortex3, colortex4, colortex5, colortex7, colortex10, depthtex0;
+uniform sampler2D colortex0, colortex1, colortex2, colortex3, colortex4, colortex5, colortex6, colortex7, colortex10, depthtex0;
 
 // the sun shadow (colortex5: rgb shadow, a distance), cleaned of the grain left by one ray per pixel and frame:
 // a 3x3 blur over pixels at the same distance facing the same way, so shadow edges between objects stay sharp
@@ -284,7 +284,7 @@ void main() {
   #ifdef CLOUDS
         col = drawClouds(col, dir, lightDir, sunCol, skyAmb);
   #endif
-    } else if (mat == MAT_LIT) {
+    } else if (mat == MAT_LIT || mat == MAT_HAND_LIT) {
         col = albedo.rgb;
     } else {
         vec4 nl = texture(colortex1, texcoord);
@@ -311,11 +311,16 @@ void main() {
         float ao = m.g;
 #if defined USE_RT && defined RT_AO
         ao = texture(colortex3, texcoord * GI_SCALE).r * (0.6 + 0.4 * m.g);   // keep a little of the corner shading
+        // the held item and your own body have no traced AO (deferred.fsh skips them), and the half-res AO next to
+        // them is the ground in the body's shadow: black bands along every edge. Vanilla's corner shading instead
+        if (handLike(mat)) ao = m.g;
 #endif
 #if defined USE_RT && defined RT_GI
         // GI brings the sky light and the bounced light, so the lightmap's sky guess is left out
         // the held item isn't in the ray scene's history: it gets the plain sky light instead
         vec3 gi = handLike(mat) ? skyAmb * (nl.w * nl.w) * (0.7 + 0.3 * n.y) : filteredGI(n, length(p));
+        // a canopy of glowing leaves is mostly lit by itself, bounce after bounce off pale leaves: it blazed white at night
+        if (mat == MAT_EMISSIVE_DIM) gi *= 0.35;
         vec3 envLight = gi;   // what a rough surface sees all round (for its blurred reflection below)
   #ifdef LABPBR
         // the GI is traced for the block's face: let the normal map shade it too (light comes mostly from above
@@ -339,7 +344,7 @@ void main() {
   #endif
   #ifdef USE_LIGHTS
         // coloured block light (in the GI, deferred.fsh) replaces the lightmap's block light; the held light stays
-        col = a * (surfaceLight(p, nm, vec2(handLike(mat) ? nl.z : 0.0, nl.w), ao, mat, lightDir, sunCol, hasSkylight ? vec3(0.0) : skyAmb, sh) + gi)
+        col = a * (surfaceLight(p, nm, vec2(handLike(mat) ? nl.z * (mat == MAT_BODY ? 0.6 : 1.0) : 0.0, nl.w), ao, mat, lightDir, sunCol, hasSkylight ? vec3(0.0) : skyAmb, sh) + gi)
             + emission(a, mat);
   #else
         col = a * (surfaceLight(p, nm, nl.zw, ao, mat, lightDir, sunCol, hasSkylight ? vec3(0.0) : skyAmb, sh) + gi) + emission(a, mat);
@@ -364,8 +369,9 @@ void main() {
         // (only as far as they get a reflection below: a rough metal reflects its surroundings blurred, which
         // the diffuse light stands in for, instead of going black)
         if (metal) col = emission(a, mat) + (col - emission(a, mat)) * mix(1.0, 0.08, smoothstep(0.45, 0.75, smoothness));
-        // LabPBR emission (specular map alpha)
-        col += a * m.a * (4.0 * EMISSIVE_STRENGTH);
+        // LabPBR emission (specular map alpha); faint light blocks (glowing maples: a resource pack marks every texel)
+        // only as softly as their own glow, or a grove at night is a white blaze
+        col += a * m.a * ((mat == MAT_EMISSIVE_DIM ? 0.2 : 4.0) * EMISSIVE_STRENGTH);
 #ifdef LABPBR
         // shiny surfaces: the sun's highlight (GGX), and ray-traced reflections where smooth enough
         if ((smoothness > 0.01 || metal) && m.b < 0.01 && !handLike(mat)) {
@@ -455,6 +461,14 @@ void main() {
             col = mix(col, refl, f * m.b);
         }
 #endif
+        // faint glowing blocks (fluorescent maples) keep their colour: at night the eye opens up so far that their pale
+        // texture plus its glow and the grove's light would reach white. Held to a bright pastel at the current
+        // exposure (composite3.fsh's, from last frame)
+        if (mat == MAT_EMISSIVE_DIM) {
+            float e = texelFetch(colortex6, ivec2(0), 0).r * EXPOSURE;
+            float top = max(col.r, max(col.g, col.b)) * e;
+            if (top > 0.6) col *= 0.6 / top;
+        }
 #if DEBUG_VIEW == 1
         col = sh * max(dot(n, lightDir), 0.0);
 #elif DEBUG_VIEW == 2
@@ -467,5 +481,16 @@ void main() {
         col = n * 0.5 + 0.5;
 #endif
     }
+#if DEBUG_VIEW == 9 || DEBUG_VIEW == 10
+    col = texture(colortex0, texcoord).rgb;   // the program, stage and tag code lib/gbuffer.glsl wrote in place of the albedo
+#endif
+#if DEBUG_VIEW == 8
+    // the material tag each pixel carries: magenta your own body, cyan the held item, yellow mobs and players, green
+    // faint glowing blocks, orange other light blocks, white glowing blocks, blue foliage, grey the rest
+    col = mat == MAT_BODY ? vec3(1.0, 0.0, 1.0) : mat == MAT_HAND || mat == MAT_HAND_LIT ? vec3(0.0, 1.0, 1.0) : mat == MAT_ENTITY ? vec3(1.0, 1.0, 0.0)
+        : mat == MAT_EMISSIVE_DIM ? vec3(0.0, 1.0, 0.0) : mat == MAT_EMISSIVE ? vec3(1.0, 0.5, 0.0) : mat == MAT_GLOW ? vec3(1.0)
+        : mat == MAT_FOLIAGE ? vec3(0.1, 0.2, 1.0) : vec3(0.25);
+    col *= 0.3 + 0.7 * luma(texture(colortex0, texcoord).rgb);
+#endif
     outColor = vec4(col, 1.0);
 }
