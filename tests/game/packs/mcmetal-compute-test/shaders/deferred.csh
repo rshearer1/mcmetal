@@ -13,6 +13,7 @@ layout(rgba16f) uniform image2D colorimg5; // Iris's colortex5, written directly
 layout(std430, binding = 0) buffer Counter { uint ground; uint shadowed; };
 
 uniform sampler2D colortex0;
+uniform sampler2D colortex5; // read while colorimg5 is written: mcmetal logs whether it is the same buffer
 uniform sampler2D depthtex0;
 uniform mat4 gbufferProjectionInverse;
 uniform mat4 gbufferModelViewInverse;
@@ -30,6 +31,7 @@ void main() {
     vec2 uv = (vec2(full) + 1.0) / vec2(viewWidth, viewHeight);
     float depth = texelFetch(depthtex0, full, 0).r;
     vec3 albedo = texelFetch(colortex0, full, 0).rgb;
+    float prev = texelFetch(colortex5, full, 0).b;
     float lit = 1.0;
     if (depth < 1.0) {
         atomicAdd(ground, 1u);
@@ -51,5 +53,5 @@ void main() {
     imageStore(halfRough, hp, vec4(1.0));
     // colorimgN: write one of Iris's own colour buffers from compute; composite1.fsh checks it (blue square)
     for (int i = 0; i < 4; i++) // the 2x2 full-size pixels this thread stands for
-        imageStore(colorimg5, full + ivec2(i & 1, i >> 1), vec4(0.0, 0.25, 1.0, 1.0));
+        imageStore(colorimg5, full + ivec2(i & 1, i >> 1), vec4(0.0, 0.25, max(prev, 1.0), 1.0));
 }

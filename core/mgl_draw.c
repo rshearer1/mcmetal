@@ -753,6 +753,17 @@ void glDispatchCompute(GLuint gx, GLuint gy, GLuint gz)
     gather_uniforms(&d, p);
     d.uses_scene = p->x.uses_scene;
     gather_textures(&d, p, 1);
+    /* Once per program: say when a compute pass samples a texture it also writes as an image (Iris's colortexN
+       and colorimgN the same buffer), so packs know their reads in that pass can see this pass's own writes. */
+    if (!p->alias_noted) {
+        p->alias_noted = 1;
+        for (int i = 0; i < d.num_textures[MGL_COMPUTE]; i++)
+            for (int j = 0; j < d.num_textures[MGL_COMPUTE]; j++)
+                if (d.textures[MGL_COMPUTE][i].is_image && !d.textures[MGL_COMPUTE][j].is_image &&
+                    d.textures[MGL_COMPUTE][i].tex && d.textures[MGL_COMPUTE][i].tex == d.textures[MGL_COMPUTE][j].tex)
+                    mgl_log("compute: %s samples a texture it also writes as an image (texture slots %d and %d): "
+                            "the same buffer, no ping-pong", p->debug_name[0] ? p->debug_name : "a program", j, i);
+    }
     mglb_dispatch(&d, (int)gx, (int)gy, (int)gz);
 }
 

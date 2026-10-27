@@ -154,6 +154,7 @@ typedef struct mgl_program {
     int copy_fs;                /* the fragment stage outputs its one texture's sample unchanged (vanilla blit) */
     int jitter_loc;             /* mcm_jitter's location + 1 (MCMETAL_UPSCALE=2), 0 = not looked up yet, -1 = none */
     mgl_denoise_decl *denoise;  /* the pack's MCMETAL_DENOISE_PASS inputs (MCMETAL_DENOISE=1), or NULL */
+    int alias_noted;            /* glDispatchCompute checked whether it samples a texture it writes */
 } mgl_program;
 
 typedef struct mgl_query {
