@@ -1,7 +1,9 @@
 /* MCMETAL_DENOISE=1: MetalFX's denoiser (MTLFXTemporalDenoisedScaler, macOS 26, M3 and newer) in place of one of
    the pack's own passes.
 
-   A pack opts in with a full-screen pass whose fragment shader says, in #define lines (Iris keeps them):
+   A pack opts in with a full-screen pass whose fragment shader says, in #define lines or in a comment (Iris's
+   preprocessor removes #define lines from the source mcmetal gets but keeps comments, so a pack run through Iris
+   needs the comment form; the lines read the same either way, with or without "#define "):
      #define MCMETAL_DENOISE_PASS
      #define MCMETAL_DENOISE_COLOR     colortex0       noisy lit colour (linear, HDR is fine)
      #define MCMETAL_DENOISE_DEPTH     depthtex0
@@ -42,12 +44,12 @@ int mgl_denoise_on(void)
 
 mgl_denoise_decl *mgl_denoise_parse(const char *fs)
 {
-    if (!fs || !mgl_denoise_on() || !strstr(fs, "#define MCMETAL_DENOISE_PASS"))
+    if (!fs || !mgl_denoise_on() || !strstr(fs, "MCMETAL_DENOISE_PASS"))
         return NULL;
     mgl_denoise_decl *d = calloc(1, sizeof *d);
     for (int r = 0; r < DN_ROLES; r++) {
         char key[64], ch = 0;
-        snprintf(key, sizeof key, "#define MCMETAL_DENOISE_%s ", role_key[r]);
+        snprintf(key, sizeof key, "MCMETAL_DENOISE_%s ", role_key[r]);
         const char *at = strstr(fs, key);
         d->channel[r] = r == DN_ROUGHNESS ? 0 : r == DN_SPECULAR ? 1 : 0; /* LabPBR: smoothness r, F0 g */
         char line[160];
