@@ -8,6 +8,7 @@
 #import <MetalFX/MetalFX.h>
 #import <AppKit/AppKit.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 #include <ctype.h>
 #include <math.h>
 #include <stdatomic.h>
@@ -19,6 +20,7 @@
 #include <mach/mach_time.h>
 #include <pthread.h>
 #include <pthread/qos.h>
+#include <sys/time.h>
 #include "mgl_state.h"
 
 #define MGL_EXPORT __attribute__((visibility("default")))
@@ -38,6 +40,16 @@ static mgl_target renc_target;
 static id<MTLBlitCommandEncoder> benc;
 static id<MTLComputeCommandEncoder> cenc;
 static int cenc_concurrent; /* cenc lets its dispatches overlap (geometry-shader jobs only) */
+typedef struct { int slot; uint64_t id; } ov_ref; /* an encoder's fence (MGL_OVERLAP) */
+#define OV_READERS 8
+static void ov_begin(id enc, int kind, int barrier);
+static void ov_end(void);
+static void ov_end_for(id enc);
+struct mglb_texture;
+static void ov_use(id enc, struct mglb_texture *t, int write, int stages);
+static void ov_side_begin(void);
+static void ov_side_end(void);
+static int ov_enabled(void);
 
 /* Smoothness options (STEP1.md "Smoothness 2/3"), all off unless set:
    MGL_BINARY_ARCHIVE=1   keep finished GPU pipelines in MGL_CACHE_DIR/pipelines.metallib across launches
@@ -53,7 +65,8 @@ static int cenc_concurrent; /* cenc lets its dispatches overlap (geometry-shader
                           =0 turns it off. Waits on completion signals instead of polling, and presents at an even rate
                           (120/60/40/30/24/20/15 fps, 12 with interpolation, whichever the last frames' cost sustains, only rates that divide the screen's
                           refresh rate; MGL_TARGET_FPS forces one, over the power cap too: it's a test override).
-                          Only with vsync on. MGL_PRESENT_STATS=1 logs how evenly frames reach the screen.
+                          Only with vsync on. MGL_PRESENT_STATS=1 logs how evenly frames reach the screen (also
+                          estimated by a display model, for hidden test windows; MGL_SIM_DISPLAY=1, see sim_present).
                           MGL_PACE_FREE_FPS=N leaves frames that fit N fps or more unpaced (see pace_free). */
 static int opt(const char *name)
 {
@@ -73,6 +86,7 @@ static struct {
     unsigned long sh_draws, sh_tris; /* draws and triangles into square targets of 1024+ (shadow maps), as tools/glcount.c counts */
     unsigned long tex_views, pipe_lookups, big_uniforms; /* per-draw texture views made, pipeline dictionary lookups, >4 KB uniform copies */
     unsigned long rs_sets, rs_skips; /* render-encoder state calls made, and left out as repeats (MCMETAL_STATE_FILTER) */
+    unsigned long uploads, hoisted; /* texture uploads, and those moved ahead of the frame's open pass (MGL_HOIST_UPLOADS) */
     uint64_t wait_ns, start_ns, frames;
 } prof;
 static _Atomic uint64_t prof_gpu_ns;
@@ -102,6 +116,117 @@ static struct { char label[40]; double ns; unsigned long n; } pt_sum[PT_SLOTS];
 static double pt_total_ns;
 static MTLTimestamp pt_cal_cpu, pt_cal_gpu;
 static double pt_ratio = 1; /* ns per GPU tick */
+
+/* MGL_PROFILE=2 also reports how much passes overlap on the GPU: the summed pass times against the time the GPU
+   had at least one pass running (their union), and the pass-to-pass boundaries where the next pass only started
+   after the one before had ended ("serial"), by the two passes' labels. A serial boundary costs at most the
+   shorter of the two passes; that bound, summed, is what overlapping them could win. MGL_PASS_TIMELINE=N also
+   logs every pass of one command buffer (start and end, ms from its first pass) at the Nth report. */
+#define PO_SLOTS 48
+static struct { char a[40], b[40]; unsigned long n, serial; double lost_ns; } po_sum[PO_SLOTS];
+static double po_pass_ns, po_union_ns, po_span_ns;
+static unsigned long po_bounds, po_serial, po_reports;
+static int po_timeline = -1; /* MGL_PASS_TIMELINE: the report number to dump a timeline at (0 = never) */
+static int po_want_timeline; /* the next resolved command buffer is dumped */
+static void po_frame(pt_frame *f, const MTLCounterResultTimestamp *ts) /* pt_lock held */
+{
+    double st[PT_MAX], en[PT_MAX];
+    int ok[PT_MAX], order[PT_MAX], m = 0;
+    for (int i = 0; i < f->n; i++) {
+        uint64_t a = ts[2 * i].timestamp, b = ts[2 * i + 1].timestamp;
+        ok[i] = a != MTLCounterErrorValue && b != MTLCounterErrorValue && b >= a && a;
+        st[i] = (double)a * pt_ratio;
+        en[i] = (double)b * pt_ratio;
+        if (ok[i])
+            order[m++] = i;
+    }
+    if (!m)
+        return;
+    for (int i = 1; i < m; i++) /* by start time */
+        for (int j = i; j > 0 && st[order[j]] < st[order[j - 1]]; j--) {
+            int t = order[j]; order[j] = order[j - 1]; order[j - 1] = t;
+        }
+    double cur_s = st[order[0]], cur_e = en[order[0]], uni = 0, lo = st[order[0]], hi = en[order[0]];
+    for (int i = 0; i < m; i++) {
+        int k = order[i];
+        po_pass_ns += en[k] - st[k];
+        if (en[k] > hi)
+            hi = en[k];
+        if (st[k] > cur_e) {
+            uni += cur_e - cur_s;
+            cur_s = st[k];
+            cur_e = en[k];
+        } else if (en[k] > cur_e)
+            cur_e = en[k];
+    }
+    uni += cur_e - cur_s;
+    po_union_ns += uni;
+    po_span_ns += hi - lo;
+    int prev = -1; /* boundaries in encoding order */
+    for (int i = 0; i < f->n; i++) {
+        if (!ok[i])
+            continue;
+        if (prev >= 0) {
+            int serial = st[i] >= en[prev];
+            double lost = serial ? fmin(en[prev] - st[prev], en[i] - st[i]) : 0;
+            po_bounds++;
+            po_serial += serial;
+            int k = 0;
+            while (k < PO_SLOTS && po_sum[k].n && (strcmp(po_sum[k].a, f->label[prev]) || strcmp(po_sum[k].b, f->label[i])))
+                k++;
+            if (k == PO_SLOTS)
+                k = PO_SLOTS - 1;
+            if (!po_sum[k].n) {
+                snprintf(po_sum[k].a, sizeof po_sum[k].a, "%s", f->label[prev]);
+                snprintf(po_sum[k].b, sizeof po_sum[k].b, "%s", f->label[i]);
+            }
+            po_sum[k].n++;
+            po_sum[k].serial += serial;
+            po_sum[k].lost_ns += lost;
+        }
+        prev = i;
+    }
+    if (po_want_timeline && f->n >= 8) {
+        po_want_timeline = 0;
+        mgl_log("profile: pass timeline, one command buffer (%d passes; ms from its first pass start, '|' = started "
+                "after the pass before it had ended):", f->n);
+        for (int i = 0; i < f->n; i++)
+            if (ok[i])
+                mgl_log("profile:   %3d %8.3f %8.3f %6.3f %c %s", i, (st[i] - lo) * 1e-6, (en[i] - lo) * 1e-6,
+                        (en[i] - st[i]) * 1e-6, i && ok[i - 1] && st[i] >= en[i - 1] ? '|' : ' ', f->label[i]);
+    }
+}
+
+static void po_report(double frames) /* pt_lock held */
+{
+    if (po_timeline < 0) {
+        const char *e = getenv("MGL_PASS_TIMELINE");
+        po_timeline = e ? atoi(e) : 0;
+    }
+    if (po_timeline > 0 && ++po_reports == (unsigned long)po_timeline)
+        po_want_timeline = 1;
+    if (po_pass_ns <= 0)
+        return;
+    mgl_log("profile: GPU overlap per frame: passes %.2f ms summed, %.2f ms with any pass running, %.2f ms first "
+            "start to last end (%.0f%% of pass time hidden by overlap); %.0f of %.0f pass boundaries serial",
+            po_pass_ns / frames * 1e-6, po_union_ns / frames * 1e-6, po_span_ns / frames * 1e-6,
+            100.0 * (1 - po_union_ns / po_pass_ns), po_serial / frames, po_bounds / frames);
+    int order[PO_SLOTS], m = 0;
+    for (int k = 0; k < PO_SLOTS; k++)
+        if (po_sum[k].serial)
+            order[m++] = k;
+    for (int i = 1; i < m; i++)
+        for (int j = i; j > 0 && po_sum[order[j]].lost_ns > po_sum[order[j - 1]].lost_ns; j--) {
+            int t = order[j]; order[j] = order[j - 1]; order[j - 1] = t;
+        }
+    for (int i = 0; i < m && i < 10; i++)
+        mgl_log("profile:   serial %5.0f of %5.0f, up to %.2f ms/frame: %s > %s", (double)po_sum[order[i]].serial,
+                (double)po_sum[order[i]].n, po_sum[order[i]].lost_ns / frames * 1e-6, po_sum[order[i]].a,
+                po_sum[order[i]].b);
+    memset(po_sum, 0, sizeof po_sum);
+    po_pass_ns = po_union_ns = po_span_ns = 0;
+    po_bounds = po_serial = 0;
+}
 
 static void pt_begin_cb(id<MTLCommandBuffer> c)
 {
@@ -173,6 +298,8 @@ static void pt_begin_cb(id<MTLCommandBuffer> c)
               pt_sum[k].ns += ns;
               pt_sum[k].n++;
           }
+          if (ts)
+              po_frame(f, ts);
           pthread_mutex_unlock(&pt_lock);
       }
       free(f);
@@ -225,6 +352,8 @@ static void pt_report(double frames)
                 pt_sum[order[i]].n / frames, pt_sum[order[i]].label);
     memset(pt_sum, 0, sizeof pt_sum);
     pt_total_ns = 0;
+    if (pt_ok > 0)
+        po_report(frames);
     pthread_mutex_unlock(&pt_lock);
 }
 static unsigned long long frames_presented; /* for MGL_FRAME_DUMP */
@@ -444,6 +573,7 @@ static void end_compute_encoder(void)
         gs_fence_due = 0;
         gs_fence_armed = 1;
     }
+    ov_end_for(cenc);
     [cenc endEncoding];
     cenc = nil;
 }
@@ -464,19 +594,21 @@ static void end_encoders_at(int line)
         tally_line(&big, line);
     }
     int hiz_now = renc && hiz_src && renc_target.depth == hiz_src;
-    if (renc) { [renc endEncoding]; renc = nil; }
-    if (benc) { [benc endEncoding]; benc = nil; }
+    if (renc) { ov_end_for(renc); [renc endEncoding]; renc = nil; }
+    if (benc) { ov_end_for(benc); [benc endEncoding]; benc = nil; }
     end_compute_encoder();
     if (hiz_now)
         hiz_build();
 }
 #define end_encoders() end_encoders_at(__LINE__)
 
+static void commit_hoisted(void);
 static void commit(void)
 {
     gs_flush();
     end_encoders();
     pt_cur = NULL;
+    commit_hoisted(); /* before cb: their uploads must land before anything cb draws */
     if (cb) {
         [cb commit];
         last_cb = cb;
@@ -518,6 +650,7 @@ static id<MTLBlitCommandEncoder> blit_encoder_at(int line)
             benc = [c blitCommandEncoder];
         }
     }
+    ov_begin(benc, 2, 0);
     prof.blits++;
     if (flush_log_on()) {
         static line_tally opened = {"blit encoders opened"};
@@ -531,6 +664,7 @@ static id<MTLBlitCommandEncoder> blit_encoder_at(int line)
    cleared images can still take them as load actions (images the clear only loads keep whatever the blit wrote).
    One that does touch them replays the clears first. */
 static void tex_dirty(mglb_texture *t);
+static void tex_used(mglb_texture *t);
 static id<MTLBlitCommandEncoder> blit_encoder_for_at(int line, mglb_texture *a, mglb_texture *b)
 {
     int touches = (a && pending_clear_clears(a)) || (b && pending_clear_clears(b));
@@ -541,6 +675,10 @@ static id<MTLBlitCommandEncoder> blit_encoder_for_at(int line, mglb_texture *a, 
     keep_clears = 0;
     tex_dirty(a); /* the copy source too: cheaper than telling the caller's direction apart */
     tex_dirty(b);
+    tex_used(a);
+    tex_used(b);
+    ov_use(e, a, 1, 1); /* MGL_OVERLAP: a is written, b read */
+    ov_use(e, b, 0, 1);
     return e;
 }
 #define blit_encoder_for(a, b) blit_encoder_for_at(__LINE__, a, b)
@@ -575,6 +713,7 @@ static id<MTLComputeCommandEncoder> compute_encoder_kind(int concurrent)
         }
     }
     cenc_concurrent = concurrent;
+    ov_begin(cenc, 1, 0);
     if (gs_fence_armed) /* a compute encoder between a GS job and its strips: keep the chain ordered */
         [cenc waitForFence:gs_fence];
     prof.computes++;
@@ -1008,8 +1147,8 @@ static transient_t transient(size_t size)
             if (tr_chunk[i].b->last_use <= done)
                 k = i;
         if (k < 0 && tr_n < TR_MAX) {
-            if (gs_untracked < 0)
-                gs_untracked = getenv("MGL_GS_UNTRACKED") && atoi(getenv("MGL_GS_UNTRACKED")) != 0;
+            if (gs_untracked < 0) /* MGL_OVERLAP turns it on unless MGL_GS_UNTRACKED=0 */
+                gs_untracked = getenv("MGL_GS_UNTRACKED") ? atoi(getenv("MGL_GS_UNTRACKED")) != 0 : ov_enabled();
             mglb_buffer *b = gs_untracked ? tr_chunk_untracked() : mglb_buffer_new(TR_CHUNK);
             if (b) {
                 k = tr_n++;
@@ -1069,9 +1208,284 @@ struct mglb_texture {
     int swz[4];
     void *level_view[4]; /* image views of levels 1-4 */
     size_t bytes;        /* allocatedSize, for the memory report */
+    uint64_t used_cb;    /* cb_serial of the last command buffer that drew with it, drew into it or copied it */
+    /* MGL_OVERLAP: made untracked; the encoder that last wrote it and those that read it since (fence slots) */
+    int ov_untracked;
+    ov_ref ov_w, ov_r[OV_READERS];
+    int ov_nr;
 };
 static size_t tex_bytes;
 static long tex_count;
+/* ================================================================ MGL_OVERLAP: our own hazard tracking
+
+   MGL_OVERLAP=1: textures are made without Metal's hazard tracking (MTLHazardTrackingModeUntracked) and the order
+   they need comes from fences between our own encoders instead. Each encoder gets a fence it updates when it
+   ends; every texture remembers the encoder that last wrote it and the encoders that read it since. An encoder
+   that reads a texture waits for its writer, one that writes it waits for its writer and its readers. Render
+   passes wait before the fragment stage for their attachments and fragment textures, so a pass's vertex work can
+   start while an earlier pass is still shading. With Metal's tracking an encoder also waits for anything that
+   shares a resource with it; the shadow map's passes and the main view's terrain share none, and this is meant
+   to let them run side by side (Metal speed research, 10-22: SEUS walking ~75 -> 85-90 est).
+   Work we don't encode ourselves (MetalFX, frame interpolation, the present) is fenced in as a whole: everything
+   before it finishes first and everything after waits for it (ov_side_begin/ov_side_end).
+   Also turns on MGL_GS_UNTRACKED unless that is set to 0. Buffers stay tracked. */
+static int ov_on = -1;
+static int ov_enabled(void)
+{
+    if (ov_on < 0) {
+        ov_on = opt("MGL_OVERLAP");
+        if (ov_on)
+            mgl_log("overlap: untracked textures, ordered by our own fences (MGL_OVERLAP)");
+    }
+    return ov_on;
+}
+#define OV_FENCES 8192
+static __strong id<MTLFence> ov_fence[OV_FENCES];
+static uint64_t ov_fence_id[OV_FENCES], ov_fence_cb[OV_FENCES]; /* the encoder using the slot, its command buffer */
+static int ov_head, ov_count;    /* slots in use, oldest first (a ring) */
+static uint64_t ov_next_id;
+static __strong id ov_enc;       /* the open encoder that has a fence, or nil */
+static int ov_kind;              /* 0 render, 1 compute, 2 blit */
+static ov_ref ov_cur = {-1, 0};
+static ov_ref ov_bar = {-1, 0};  /* the last fenced-in barrier: every later encoder waits for it */
+#define OV_LIVE 4096
+static ov_ref ov_live[OV_LIVE];  /* encoders since the barrier: the next barrier waits for them */
+static int ov_nlive;
+static struct { int slot; int stages; } ov_waited[32]; /* this encoder's waits (no repeats) */
+static int ov_nwaited;
+static unsigned long ov_waits, ov_encoders, ov_barriers, ov_exhausted; /* MGL_PROFILE */
+
+static int ov_live_ref(ov_ref r) /* still worth waiting for */
+{
+    return r.slot >= 0 && ov_fence_id[r.slot] == r.id && ov_fence_cb[r.slot] > atomic_load(&completed_serial);
+}
+
+static int ov_alloc(void)
+{
+    uint64_t done = atomic_load(&completed_serial);
+    while (ov_count && ov_fence_cb[ov_head] <= done) { /* the oldest slots' command buffers have finished */
+        ov_head = (ov_head + 1) % OV_FENCES;
+        ov_count--;
+    }
+    if (ov_count == OV_FENCES) { /* ~8000 encoders in flight: shouldn't happen; reuse the oldest anyway */
+        if (!ov_exhausted++)
+            mgl_log("overlap: all %d fences in flight, reusing the oldest", OV_FENCES);
+        ov_head = (ov_head + 1) % OV_FENCES;
+        ov_count--;
+    }
+    int k = (ov_head + ov_count++) % OV_FENCES;
+    if (!ov_fence[k])
+        ov_fence[k] = [dev newFence];
+    ov_fence_id[k] = ++ov_next_id;
+    ov_fence_cb[k] = cb_serial;
+    return k;
+}
+
+/* stages: 1 = before the vertex stage, 2 = before the fragment stage (render encoders; others wait as a whole) */
+static void ov_wait(ov_ref r, int stages)
+{
+    if (r.slot == ov_cur.slot || !ov_live_ref(r))
+        return;
+    if (ov_kind != 0)
+        stages = 1;
+    else if (stages & 1)
+        stages = 1; /* before the vertex stage covers the fragment stage too */
+    int i = 0;
+    while (i < ov_nwaited && ov_waited[i].slot != r.slot)
+        i++;
+    if (i < ov_nwaited && (ov_waited[i].stages == 1 || ov_waited[i].stages == stages))
+        return;
+    if (ov_kind == 0)
+        [(id<MTLRenderCommandEncoder>)ov_enc waitForFence:ov_fence[r.slot]
+                                             beforeStages:stages == 1 ? MTLRenderStageVertex : MTLRenderStageFragment];
+    else if (ov_kind == 1)
+        [(id<MTLComputeCommandEncoder>)ov_enc waitForFence:ov_fence[r.slot]];
+    else
+        [(id<MTLBlitCommandEncoder>)ov_enc waitForFence:ov_fence[r.slot]];
+    ov_waits++;
+    if (i < ov_nwaited)
+        ov_waited[i].stages = 1;
+    else if (ov_nwaited < 32) {
+        ov_waited[ov_nwaited].slot = r.slot;
+        ov_waited[ov_nwaited++].stages = stages;
+    }
+}
+
+/* enc was just made in the current command buffer. A barrier waits for every encoder since the last barrier. */
+static void ov_begin(id enc, int kind, int barrier)
+{
+    if (!ov_enabled())
+        return;
+    ov_enc = enc;
+    ov_kind = kind;
+    ov_nwaited = 0;
+    int k = ov_alloc();
+    ov_cur = (ov_ref){k, ov_fence_id[k]};
+    ov_encoders++;
+    ov_wait(ov_bar, 1);
+    if (barrier) {
+        for (int i = 0; i < ov_nlive; i++)
+            ov_wait(ov_live[i], 1);
+        ov_nlive = 0;
+        ov_bar = ov_cur;
+        ov_barriers++;
+    } else if (ov_nlive < OV_LIVE) {
+        ov_live[ov_nlive++] = ov_cur;
+    } else { /* too many since the barrier: this one waits for them all and becomes the barrier */
+        for (int i = 0; i < ov_nlive; i++)
+            ov_wait(ov_live[i], 1);
+        ov_nlive = 0;
+        ov_bar = ov_cur;
+        ov_barriers++;
+    }
+}
+
+static void ov_end(void);
+static void ov_end_for(id enc) /* before enc's endEncoding */
+{
+    if (enc && enc == ov_enc)
+        ov_end();
+}
+
+/* before endEncoding */
+static void ov_end(void)
+{
+    if (!ov_enc)
+        return;
+    id<MTLFence> f = ov_fence[ov_cur.slot];
+    if (ov_kind == 0)
+        [(id<MTLRenderCommandEncoder>)ov_enc updateFence:f afterStages:MTLRenderStageFragment];
+    else if (ov_kind == 1)
+        [(id<MTLComputeCommandEncoder>)ov_enc updateFence:f];
+    else
+        [(id<MTLBlitCommandEncoder>)ov_enc updateFence:f];
+    ov_enc = nil;
+    ov_cur = (ov_ref){-1, 0};
+}
+
+/* enc (the encoder about to use t, before the commands that do) reads or writes t */
+static void ov_use(id enc, mglb_texture *t, int write, int stages)
+{
+    if (!t || !t->ov_untracked || !enc || enc != ov_enc)
+        return;
+    ov_wait(t->ov_w, stages);
+    if (write) {
+        for (int i = 0; i < t->ov_nr; i++)
+            ov_wait(t->ov_r[i], stages);
+        t->ov_w = ov_cur;
+        t->ov_nr = 0;
+        return;
+    }
+    if (t->ov_w.slot == ov_cur.slot && t->ov_w.id == ov_cur.id)
+        return; /* written here: later writers wait for this encoder anyway */
+    if (t->ov_nr && t->ov_r[t->ov_nr - 1].id == ov_cur.id)
+        return;
+    if (t->ov_nr == OV_READERS) { /* drop finished readers; if none, this one waits for the oldest and stands in for it */
+        int n = 0;
+        for (int i = 0; i < t->ov_nr; i++)
+            if (ov_live_ref(t->ov_r[i]))
+                t->ov_r[n++] = t->ov_r[i];
+        t->ov_nr = n;
+        if (n == OV_READERS) {
+            ov_wait(t->ov_r[0], 1);
+            memmove(t->ov_r, t->ov_r + 1, sizeof t->ov_r[0] * (OV_READERS - 1));
+            t->ov_nr--;
+        }
+    }
+    t->ov_r[t->ov_nr++] = ov_cur;
+}
+
+/* Work encoded without our fences (MetalFX, frame interpolation, the present): ov_side_begin before it makes
+   everything encoded so far finish first, ov_side_end after it makes everything later wait for it. A blit
+   encoder that waits for every fence, then a GPU event signalled and waited for (which holds back all later
+   work in the command buffer until everything before it has finished). */
+static id<MTLEvent> ov_event;
+static uint64_t ov_event_value;
+static id<MTLBuffer> ov_scratch;
+static void ov_join(void)
+{
+    id<MTLBlitCommandEncoder> b = [current_cb() blitCommandEncoder];
+    ov_begin(b, 2, 1);
+    [b fillBuffer:ov_scratch range:NSMakeRange(0, 4) value:0]; /* so the encoder isn't empty */
+    ov_end();
+    [b endEncoding];
+}
+static void ov_event_barrier(void)
+{
+    id<MTLCommandBuffer> c = current_cb();
+    ov_event_value++;
+    [c encodeSignalEvent:ov_event value:ov_event_value];
+    [c encodeWaitForEvent:ov_event value:ov_event_value];
+}
+static void end_encoders_at(int line);
+static int ov_side_depth;
+static void ov_side_begin(void)
+{
+    if (!ov_enabled() || ov_side_depth++)
+        return;
+    if (!ov_event) {
+        ov_event = [dev newEvent];
+        ov_scratch = [dev newBufferWithLength:16 options:MTLResourceStorageModePrivate];
+    }
+    end_encoders_at(__LINE__);
+    @autoreleasepool {
+        ov_join();
+        ov_event_barrier();
+    }
+}
+static void ov_side_end(void)
+{
+    if (!ov_enabled() || !ov_side_depth || --ov_side_depth)
+        return;
+    end_encoders_at(__LINE__);
+    @autoreleasepool {
+        ov_event_barrier();
+        ov_join();
+    }
+}
+
+/* Uploads moved into their own command buffer ahead of the frame's (MGL_HOIST_UPLOADS) go through a blit encoder
+   that stays open next to the frame's encoders, so it gets a fence of its own: it waits for the texture's earlier
+   writer and readers (all in command buffers already sent, since the frame hasn't used the texture), and the
+   frame's later uses of the texture wait for it. That command buffer is sent first, so its fence update comes
+   before their waits on the GPU. */
+static __strong id<MTLBlitCommandEncoder> ov_hoist_enc;
+static ov_ref ov_hoist = {-1, 0};
+static void ov_hoist_begin(id<MTLBlitCommandEncoder> enc)
+{
+    int k = ov_alloc();
+    ov_hoist = (ov_ref){k, ov_fence_id[k]};
+    ov_hoist_enc = enc;
+    if (ov_live_ref(ov_bar))
+        [ov_hoist_enc waitForFence:ov_fence[ov_bar.slot]];
+    if (ov_nlive < OV_LIVE)
+        ov_live[ov_nlive++] = ov_hoist;
+}
+static void ov_hoist_use(mglb_texture *t)
+{
+    if (!ov_hoist_enc || !t || !t->ov_untracked)
+        return;
+    if (ov_live_ref(t->ov_w) && t->ov_w.slot != ov_hoist.slot) {
+        [ov_hoist_enc waitForFence:ov_fence[t->ov_w.slot]];
+        ov_waits++;
+    }
+    for (int i = 0; i < t->ov_nr; i++)
+        if (ov_live_ref(t->ov_r[i])) {
+            [ov_hoist_enc waitForFence:ov_fence[t->ov_r[i].slot]];
+            ov_waits++;
+        }
+    t->ov_w = ov_hoist;
+    t->ov_nr = 0;
+}
+static void ov_hoist_end(void)
+{
+    if (!ov_hoist_enc)
+        return;
+    [ov_hoist_enc updateFence:ov_fence[ov_hoist.slot]];
+    ov_hoist_enc = nil;
+    ov_hoist = (ov_ref){-1, 0};
+}
+
 static void tex_drop_views(mglb_texture *t)
 {
     release_obj(t->swz_view);
@@ -1082,6 +1496,7 @@ static void tex_drop_views(mglb_texture *t)
     }
 }
 static void tex_dirty(mglb_texture *t) { if (t) t->clean = 0; }
+static void tex_used(mglb_texture *t) { if (t) t->used_cb = cb_serial; }
 static void target_dirty(const mgl_target *t)
 {
     for (int a = 0; a < MGL_MAX_ATTACHMENTS; a++)
@@ -1214,6 +1629,8 @@ mglb_texture *mglb_texture_new(const mglb_texture_desc *d)
         td.usage |= MTLTextureUsagePixelFormatView | (!is_depth_format(pf) && pf != MTLPixelFormatRGBA8Unorm_sRGB ? MTLTextureUsageShaderWrite : 0);
     if (pf == MTLPixelFormatR32Uint || pf == MTLPixelFormatR32Sint) /* image formats: atomics and writes from the start */
         td.usage |= MTLTextureUsageShaderAtomic | MTLTextureUsageShaderWrite; /* imageAtomic* (MSL 3.1 texture atomics) */
+    if (ov_enabled())
+        td.hazardTrackingMode = MTLHazardTrackingModeUntracked;
     id<MTLTexture> t = [dev newTextureWithDescriptor:td];
     if (!t) {
         mgl_log("texture creation failed (%dx%dx%d format %d)", d->width, d->height, d->depth, d->format);
@@ -1225,6 +1642,8 @@ mglb_texture *mglb_texture_new(const mglb_texture_desc *d)
     mt->pf = pf;
     mt->usage = td.usage;
     mt->bytes = t.allocatedSize;
+    mt->ov_untracked = ov_enabled();
+    mt->ov_w.slot = -1;
     tex_bytes += mt->bytes;
     tex_count++;
     /* A new Metal texture holds whatever its memory held before; GL drivers hand out zeroed storage, and packs
@@ -1268,6 +1687,8 @@ static void tex_need_usage(mglb_texture *t, MTLTextureUsage need)
     td.mipmapLevelCount = old.mipmapLevelCount;
     td.storageMode = MTLStorageModePrivate;
     td.usage = t->usage | need;
+    if (t->ov_untracked)
+        td.hazardTrackingMode = MTLHazardTrackingModeUntracked;
     id<MTLTexture> fresh = [dev newTextureWithDescriptor:td];
     if (!fresh) {
         mgl_log("texture usage upgrade failed (%lux%lu format %lu)", (unsigned long)old.width, (unsigned long)old.height,
@@ -1309,6 +1730,52 @@ void mglb_texture_release(mglb_texture *t)
     free(t);
 }
 
+/* Texture uploads in the middle of a render pass. A blit can't run inside a pass, so an upload there ends the pass and
+   the next draw reopens it, loading every attachment back from memory: with a shader pack that is 6-8 screen-sized
+   images per upload. Wakes uploads one ripple texture per patch of water inside Iris's translucent pass, and maps,
+   photos and paintings upload mid-frame too. If nothing in the current command buffer has used the texture yet,
+   nothing in it can see the difference between the upload happening now or before the frame: such uploads go into a
+   command buffer of their own that commit() submits just ahead of the frame's, and the pass stays open.
+   MGL_HOIST_UPLOADS=0: every upload ends the pass, as before. */
+static int opt_hoist = -1;
+static int gs_has_pending(void);
+static id<MTLCommandBuffer> hoist_cb;
+static id<MTLBlitCommandEncoder> hoist_enc;
+
+static id<MTLBlitCommandEncoder> hoisted_blit_for(mglb_texture *t)
+{
+    if (opt_hoist < 0)
+        opt_hoist = !getenv("MGL_HOIST_UPLOADS") || atoi(getenv("MGL_HOIST_UPLOADS")) != 0;
+    /* only when a pass is open (otherwise there is nothing to save), the texture is untouched in this command buffer
+       and no deferred clear of it is waiting to run in it (the clear would land after the upload); pending
+       geometry-shader draws bind their textures only when they're flushed, so they may still read it */
+    if (!opt_hoist || !cb || !renc || t->used_cb == cb_serial || pending_clear_uses(t) || gs_has_pending())
+        return nil;
+    if (!hoist_enc) {
+        @autoreleasepool {
+            hoist_cb = [queue commandBuffer];
+            hoist_enc = [hoist_cb blitCommandEncoder];
+        }
+        if (ov_enabled())
+            ov_hoist_begin(hoist_enc);
+    }
+    ov_hoist_use(t);
+    tex_dirty(t);
+    prof.hoisted++;
+    return hoist_enc;
+}
+
+static void commit_hoisted(void)
+{
+    if (!hoist_cb)
+        return;
+    ov_hoist_end();
+    [hoist_enc endEncoding];
+    [hoist_cb commit];
+    hoist_enc = nil;
+    hoist_cb = nil;
+}
+
 void mglb_texture_upload(mglb_texture *t, int level, int x, int y, int z, int w, int h, int d, const void *data,
                          size_t bytes_per_row, size_t bytes_per_image)
 {
@@ -1332,7 +1799,10 @@ void mglb_texture_upload(mglb_texture *t, int level, int x, int y, int z, int w,
         for (int yy = 0; yy < h; yy++)
             memcpy((char *)stage.ptr + (size_t)zz * img + (size_t)yy * row,
                    (const char *)data + (size_t)zz * bytes_per_image + (size_t)yy * bytes_per_row, row);
-    id<MTLBlitCommandEncoder> e = blit_encoder_for(t, NULL);
+    prof.uploads++;
+    id<MTLBlitCommandEncoder> e = hoisted_blit_for(t);
+    if (!e)
+        e = blit_encoder_for(t, NULL);
     id<MTLTexture> tex = OBJ(id<MTLTexture>, t->mtl);
     if (t->d.type == MGLT_3D) {
         [e copyFromBuffer:stage.buf sourceOffset:stage.off sourceBytesPerRow:row sourceBytesPerImage:img
@@ -1448,6 +1918,7 @@ void mglb_texture_read(mglb_texture *t, int level, int x, int y, int w, int h, v
     if (!stage)
         return;
     id<MTLBlitCommandEncoder> e = blit_encoder();
+    ov_use(e, t, 0, 1);
     [e copyFromTexture:OBJ(id<MTLTexture>, t->mtl) sourceSlice:0 sourceLevel:(NSUInteger)level
           sourceOrigin:MTLOriginMake((NSUInteger)x, (NSUInteger)y, 0) sourceSize:MTLSizeMake((NSUInteger)w, (NSUInteger)h, 1)
               toBuffer:OBJ(id<MTLBuffer>, stage->mtl) destinationOffset:0 destinationBytesPerRow:row
@@ -1467,6 +1938,7 @@ int mglb_texture_read_to_buffer(mglb_texture *t, int level, int x, int y, int w,
     if (bytes_per_row < bpt * (size_t)w || off + bytes_per_row * (size_t)(h - 1) + bpt * (size_t)w > dst->size)
         return 0;
     id<MTLBlitCommandEncoder> e = blit_encoder();
+    ov_use(e, t, 0, 1);
     [e copyFromTexture:OBJ(id<MTLTexture>, t->mtl) sourceSlice:0 sourceLevel:(NSUInteger)level
           sourceOrigin:MTLOriginMake((NSUInteger)x, (NSUInteger)y, 0) sourceSize:MTLSizeMake((NSUInteger)w, (NSUInteger)h, 1)
               toBuffer:OBJ(id<MTLBuffer>, dst->mtl) destinationOffset:off destinationBytesPerRow:bytes_per_row
@@ -1503,7 +1975,7 @@ void mglb_texture_copy(mglb_texture *src, int src_level, int sx, int sy, int sz,
         tex_need_usage(src, MTLTextureUsagePixelFormatView);
         stex = [OBJ(id<MTLTexture>, src->mtl) newTextureViewWithPixelFormat:dst->pf];
     }
-    id<MTLBlitCommandEncoder> e = blit_encoder_for(src, dst);
+    id<MTLBlitCommandEncoder> e = blit_encoder_for(dst, src);
     int s3 = src->d.type == MGLT_3D, d3 = dst->d.type == MGLT_3D;
     for (int i = 0; i < d; i++)
         [e copyFromTexture:stex sourceSlice:(NSUInteger)(s3 ? 0 : sz + i)
@@ -2552,6 +3024,8 @@ static void hiz_build(void)
         mgl_log("GPU occlusion culling: Hi-Z pyramid %dx%d, %d levels", lw, lh, levels);
     }
     id<MTLComputeCommandEncoder> enc = [current_cb() computeCommandEncoder];
+    ov_begin(enc, 1, 0);
+    ov_use(enc, src, 0, 1);
     for (int i = 0; i < hiz.levels; i++) {
         id<MTLTexture> out = hiz.view[i];
         [enc setComputePipelineState:i ? hizn_pso : hiz0_pso];
@@ -2559,6 +3033,7 @@ static void hiz_build(void)
         [enc setTexture:out atIndex:1];
         [enc dispatchThreads:MTLSizeMake(out.width, out.height, 1) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
     }
+    ov_end_for(enc);
     [enc endEncoding];
     memcpy(hiz.mvp, hiz.pending.mvp, sizeof hiz.mvp);
     memcpy(hiz.cam, hiz.pending.cam, sizeof hiz.cam);
@@ -3221,6 +3696,8 @@ static int same_target(const mgl_target *a, const mgl_target *b)
 
 static void set_attachment(MTLRenderPassAttachmentDescriptor *ad, mglb_texture *t, int level, int layer)
 {
+    current_cb(); /* the pass goes into this command buffer: cb_serial is its */
+    t->used_cb = cb_serial;
     ad.texture = OBJ(id<MTLTexture>, t->mtl);
     ad.level = (NSUInteger)level;
     if (t->d.type == MGLT_3D)
@@ -3323,6 +3800,12 @@ static id<MTLRenderCommandEncoder> begin_pass_at(int line, const mgl_target *t, 
             rp.sampleBufferAttachments[0].endOfFragmentSampleIndex = (NSUInteger)k * 2 + 1;
         }
         renc = [c renderCommandEncoderWithDescriptor:rp];
+    }
+    if (ov_enabled()) { /* MGL_OVERLAP: the attachments are written (and maybe loaded) from the fragment stage on */
+        ov_begin(renc, 0, 0);
+        for (int i = 0; i < MGL_MAX_ATTACHMENTS; i++)
+            ov_use(renc, t->tex[i], 1, 2);
+        ov_use(renc, t->depth, 1, 2);
     }
     rs_reset();
     prof.passes++;
@@ -4054,7 +4537,10 @@ static void bind_stage_resources_f(id<MTLRenderCommandEncoder> e, id<MTLComputeC
         const mgl_bound_texture *bt = &d->textures[s][i];
         if (!bt->dim)
             continue; /* slot unused by this stage */
+        ov_use(c ? (id)c : (id)e, bt->tex, bt->is_image, c || s == 0 ? 1 : 2);
         id<MTLTexture> tex = bt->tex ? OBJ(id<MTLTexture>, bt->tex->mtl) : dummy_texture(bt->dim, bt->sample_kind, bt->is_shadow);
+        if (bt->tex)
+            bt->tex->used_cb = cb_serial;
         if (bt->is_image)
             tex_dirty(bt->tex);
         if (bt->is_image && bt->tex && bt->image_level > 0) {
@@ -4306,6 +4792,7 @@ static int smart_load_covers(const mgl_draw *d)
     id<MTLCommandBuffer> cb = current_cb();
     id<MTLRenderCommandEncoder> e = [cb renderCommandEncoderWithDescriptor:rp];
     [e setLabel:@"smart load coverage check"];
+    ov_begin(e, 0, 0); /* MGL_OVERLAP: it may sample the draw's vertex textures */
     [e setRenderPipelineState:ps];
     [e setDepthStencilState:ds];
     [e setViewport:(MTLViewport){d->viewport[0], d->viewport[1], d->viewport[2], d->viewport[3], 0, 1}];
@@ -4330,6 +4817,7 @@ static int smart_load_covers(const mgl_draw *d)
         use_buffer(d->index_buf);
     } else
         [e drawPrimitives:pt vertexStart:(NSUInteger)d->first vertexCount:(NSUInteger)d->count instanceCount:1];
+    ov_end_for(e);
     [e endEncoding];
     rs_reset();
     pthread_mutex_lock(&sl_lock);
@@ -5142,6 +5630,8 @@ void mglb_draw_gs(const mgl_draw *d, int triangles, int max_vertices, int record
 /* Draw the pending geometry-shader draws in one render pass on their target. Called before anything else uses
    the GPU (any encoder, a commit, a barrier, a texture release), so GL's order is kept for everything that
    could see their results. */
+static int gs_has_pending(void) { return gs_pending.count != 0; }
+
 static void gs_flush_at(int line)
 {
     static int flushing;
@@ -5434,6 +5924,7 @@ static void rt_alpha_tiles(void)
     id<MTLComputeCommandEncoder> c = compute_encoder();
     pt_label("rt alpha map");
     [c setComputePipelineState:ps];
+    ov_use(c, t, 0, 1);
     [c setTexture:OBJ(id<MTLTexture>, t->mtl) atIndex:0];
     [c setBuffer:OBJ(id<MTLBuffer>, b->mtl) offset:0 atIndex:0];
     [c setBytes:dims length:sizeof dims atIndex:1];
@@ -5812,7 +6303,8 @@ static id<MTLAccelerationStructure> entity_as(mglb_buffer **tris_out)
     return as;
 }
 
-/* MGL_RT_REGIONS=1 (off by default; an A/B test of Apple's "fewer instances" advice): one scene instance per
+/* MGL_RT_REGIONS=0 turns it off (ON BY DEFAULT since RG1 on the M3; RT-NATIVE1: +8 fps at noon, +13 panning;
+   it began as an A/B test of Apple's "fewer instances" advice): one scene instance per
    Sodium region (one vertex buffer, 8x4x8 sections) instead of one per section, so a long ray enters far fewer
    instances. A region's structure is built from copies of its sections' positions and triangle records (two
    geometries, opaque and not, like a split section), so it stands on its own: primitive ids index the region's
@@ -5839,9 +6331,8 @@ static int rt_regions_on(void)
 {
     static int on = -1;
     if (on < 0) {
-        on = opt("MGL_RT_REGIONS");
-        if (on)
-            mgl_log("ray tracing: one scene instance per region (MGL_RT_REGIONS)");
+        on = getenv("MGL_RT_REGIONS") ? opt("MGL_RT_REGIONS") : 1; /* on unless MGL_RT_REGIONS=0 */
+        mgl_log("ray tracing: %s (MGL_RT_REGIONS=%d)", on ? "one scene instance per region" : "one scene instance per section", on);
     }
     return on;
 }
@@ -6298,6 +6789,7 @@ void mglb_blit(const mgl_target *src, int src_att, const int sr[4], const mgl_ta
         float sw = (float)(s->d.width >> src->level[src_att]), sh = (float)(s->d.height >> src->level[src_att]);
         float rect[4] = {sx0 / sw, sy0 / sh, sx1 / sw, sy1 / sh}; /* uv at the viewport's top-left and bottom-right */
         [e setVertexBytes:rect length:sizeof rect atIndex:0];
+        ov_use(e, s, 0, 2);
         [e setFragmentTexture:OBJ(id<MTLTexture>, s->mtl) atIndex:0];
         [e setFragmentSamplerState:blit_sampler(linear) atIndex:0];
         [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
@@ -6457,10 +6949,7 @@ static int power_cap_fps(void)
 static const int pace_rates[] = {120, 60, 40, 30, 24, 20, 15, 12};
 enum { PACE_N = sizeof pace_rates / sizeof pace_rates[0] };
 
-/* Which rates may be used with shown_per_frame frames on screen per real frame; returns the slowest one's index.
-   Only rates that are a whole number of the screen's refreshes (40 on a 60 Hz screen would judder) and within the
-   power cap. A screen none of them divides (e.g. 144 Hz) gets them all, as before. */
-static int pace_allowed(int shown_per_frame, int allowed[PACE_N])
+static int screen_hz(void)
 {
     static int hz;
     if (!hz) {
@@ -6469,7 +6958,15 @@ static int pace_allowed(int shown_per_frame, int allowed[PACE_N])
             hz = 60;
         mgl_log("frame pacing: screen refreshes at %d Hz", hz);
     }
-    int cap = power_cap_fps(), any = 0;
+    return hz;
+}
+
+/* Which rates may be used with shown_per_frame frames on screen per real frame; returns the slowest one's index.
+   Only rates that are a whole number of the screen's refreshes (40 on a 60 Hz screen would judder) and within the
+   power cap. A screen none of them divides (e.g. 144 Hz) gets them all, as before. */
+static int pace_allowed(int shown_per_frame, int allowed[PACE_N])
+{
+    int hz = screen_hz(), cap = power_cap_fps(), any = 0;
     for (int i = 0; i < PACE_N; i++)
         any |= allowed[i] = hz % (pace_rates[i] * shown_per_frame) == 0 && pace_rates[i] * shown_per_frame <= hz &&
                             (!cap || pace_rates[i] <= cap) && (shown_per_frame > 1 || pace_rates[i] >= 15);
@@ -6610,35 +7107,66 @@ static int pace_free(mgl_ctx *c, int fps)
    and judder = share of frames whose time on screen differs from the previous frame's by more than 2 ms.
    MGL_PRESENT_STATS=2 also logs the first 16 times on screen of each second, in ms. */
 static pthread_mutex_t pstat_lock = PTHREAD_MUTEX_INITIALIZER;
-static struct {
+typedef struct pstat_t {
     double last, sum, sum2, worst, prev_iv, seq[16];
     unsigned long n, judder, dropped;
-} pstat;
+} pstat_t;
+static pstat_t pstat, pstat_est; /* from presentedTime; estimated by the display model (see sim_present) */
+
+static void present_stat_add(pstat_t *ps, double when)
+{
+    if (when <= 0)
+        ps->dropped++;
+    else {
+        if (ps->last > 0) {
+            double iv = (when - ps->last) * 1000.0;
+            if (iv > 0 && iv < 250) {
+                if (ps->n < 16)
+                    ps->seq[ps->n] = iv;
+                ps->n++;
+                ps->sum += iv;
+                ps->sum2 += iv * iv;
+                if (iv > ps->worst)
+                    ps->worst = iv;
+                if (ps->prev_iv > 0 && fabs(iv - ps->prev_iv) > 2.0)
+                    ps->judder++;
+                ps->prev_iv = iv;
+            }
+        }
+        ps->last = when;
+    }
+}
 
 static void present_stat(double when)
 {
     pthread_mutex_lock(&pstat_lock);
-    if (when <= 0)
-        pstat.dropped++;
-    else {
-        if (pstat.last > 0) {
-            double iv = (when - pstat.last) * 1000.0;
-            if (iv > 0 && iv < 250) {
-                if (pstat.n < 16)
-                    pstat.seq[pstat.n] = iv;
-                pstat.n++;
-                pstat.sum += iv;
-                pstat.sum2 += iv * iv;
-                if (iv > pstat.worst)
-                    pstat.worst = iv;
-                if (pstat.prev_iv > 0 && fabs(iv - pstat.prev_iv) > 2.0)
-                    pstat.judder++;
-                pstat.prev_iv = iv;
-            }
-        }
-        pstat.last = when;
-    }
+    present_stat_add(&pstat, when);
     pthread_mutex_unlock(&pstat_lock);
+}
+
+static void present_stat_log(pstat_t *ps, const char *what)
+{
+    if (!ps->n)
+        return;
+    double mean = ps->sum / ps->n, var = ps->sum2 / ps->n - mean * mean;
+    mgl_log("present stats%s: %.1f shown fps, on screen %.2f ms avg, %.2f ms spread, %.2f ms worst, %.1f%% judder, %lu dropped",
+            what, 1000.0 / mean, mean, var > 0 ? sqrt(var) : 0.0, ps->worst, 100.0 * ps->judder / ps->n, ps->dropped);
+    static int seq = -1;
+    if (seq < 0) {
+        const char *e = getenv("MGL_PRESENT_STATS");
+        seq = e && atoi(e) >= 2;
+    }
+    if (seq) {
+        char line[200];
+        int k = 0;
+        for (unsigned long i = 0; i < ps->n && i < 16 && k < (int)sizeof line; i++)
+            k += snprintf(line + k, sizeof line - k, " %.1f", ps->seq[i]);
+        mgl_log("present stats%s: times on screen (ms):%s", what, line);
+    }
+    double last = ps->last, prev_iv = ps->prev_iv;
+    memset(ps, 0, sizeof *ps);
+    ps->last = last;
+    ps->prev_iv = prev_iv;
 }
 
 static void present_stats_report(void)
@@ -6651,28 +7179,102 @@ static void present_stats_report(void)
         return;
     start = t;
     pthread_mutex_lock(&pstat_lock);
-    if (pstat.n) {
-        double mean = pstat.sum / pstat.n, var = pstat.sum2 / pstat.n - mean * mean;
-        mgl_log("present stats: %.1f shown fps, on screen %.2f ms avg, %.2f ms spread, %.2f ms worst, %.1f%% judder, %lu dropped",
-                1000.0 / mean, mean, var > 0 ? sqrt(var) : 0.0, pstat.worst, 100.0 * pstat.judder / pstat.n, pstat.dropped);
-        static int seq = -1;
-        if (seq < 0) {
-            const char *e = getenv("MGL_PRESENT_STATS");
-            seq = e && atoi(e) >= 2;
-        }
-        if (seq) {
-            char line[200];
-            int k = 0;
-            for (unsigned long i = 0; i < pstat.n && i < 16 && k < (int)sizeof line; i++)
-                k += snprintf(line + k, sizeof line - k, " %.1f", pstat.seq[i]);
-            mgl_log("present stats: times on screen (ms):%s", line);
+    present_stat_log(&pstat, "");
+    present_stat_log(&pstat_est, " (estimated)");
+    pstat.dropped = 0;
+    pthread_mutex_unlock(&pstat_lock);
+}
+
+/* The display model, for test runs whose window macOS never shows (MCMETAL_BACKGROUND=behind keeps it under
+   Robert's apps, so no drawable gets a presentedTime and present stats stayed empty: DC2v). With present stats on,
+   each frame's time on screen is also worked out from its GPU end time the way a 120 Hz (the screen's rate)
+   vsynced CAMetalLayer shows frames: at the first refresh after the GPU finishes it, in order, each shown for at
+   least one refresh and at least its presentDrawable:afterMinimumDuration:. Logged as "present stats
+   (estimated)", next to the real stats when there are any, so the model can be checked against a shown window.
+   MGL_SIM_DISPLAY=1 (test option, vsync on) also makes a hidden window behave like a shown one: the game waits
+   for a free drawable as it would when the screen holds them (3 drawables: one on screen, two queued), and
+   pacing counts missed deadlines from the estimates. A covered window otherwise hands out drawables at once, so
+   pacing never holds frames back and the fps isn't what a player sees (DC2v: 78 fps paced at 60). */
+enum { SIM_RING = 16 };
+static pthread_mutex_t sim_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t sim_cond = PTHREAD_COND_INITIALIZER;
+static double sim_min[SIM_RING], sim_shown[SIM_RING]; /* per drawable: minimum duration, estimated time shown */
+static uint64_t sim_next, sim_done;                   /* drawables watched, and estimated so far */
+static double sim_prev_shown, sim_prev_min;
+static _Atomic unsigned real_shown_recent;            /* drawables with a real presentedTime lately */
+
+static int sim_display_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        on = opt("MGL_SIM_DISPLAY");
+        if (on)
+            mgl_log("present: hidden window shown through the display model (MGL_SIM_DISPLAY)");
+    }
+    return on;
+}
+
+/* Drawable `idx` finished on the GPU at `end` (host seconds) */
+static void sim_present(uint64_t idx, double end, int vsync)
+{
+    double period = 1.0 / screen_hz(), shown, iv = 0;
+    pthread_mutex_lock(&sim_lock);
+    if (!vsync)
+        shown = end;
+    else {
+        shown = ceil(end / period - 1e-6) * period;
+        if (sim_prev_shown > 0) {
+            double hold = sim_prev_min > period ? ceil(sim_prev_min / period - 0.01) * period : period;
+            if (shown < sim_prev_shown + hold - 1e-6)
+                shown = sim_prev_shown + hold;
         }
     }
-    double last = pstat.last, prev_iv = pstat.prev_iv;
-    memset(&pstat, 0, sizeof pstat);
-    pstat.last = last;
-    pstat.prev_iv = prev_iv;
+    if (sim_prev_shown > 0 && shown > sim_prev_shown)
+        iv = (shown - sim_prev_shown) * 1000.0;
+    sim_prev_shown = shown;
+    sim_prev_min = sim_min[idx % SIM_RING];
+    sim_shown[idx % SIM_RING] = shown;
+    if (idx + 1 > sim_done)
+        sim_done = idx + 1;
+    pthread_cond_broadcast(&sim_cond);
+    pthread_mutex_unlock(&sim_lock);
+    pthread_mutex_lock(&pstat_lock);
+    present_stat_add(&pstat_est, shown);
     pthread_mutex_unlock(&pstat_lock);
+    if (iv > 0 && sim_display_on() && !atomic_load(&real_shown_recent))
+        pace_presented(iv);
+}
+
+/* MGL_SIM_DISPLAY=1, window not shown: wait until the next drawable would be free on a shown window, i.e. until
+   the frame two before it is on screen (that releases the drawable of the one before that). At most 100 ms. */
+static void sim_wait_drawable(int vsync)
+{
+    if (!vsync || !sim_display_on() || atomic_load(&real_shown_recent))
+        return;
+    pthread_mutex_lock(&sim_lock);
+    if (sim_next >= 2) {
+        uint64_t need = sim_next - 2;
+        double give_up = now_ns() * 1e-9 + 0.1;
+        for (;;) {
+            double t = now_ns() * 1e-9, wake;
+            if (t >= give_up)
+                break;
+            if (sim_done > need) {
+                double shown = sim_shown[need % SIM_RING];
+                if (t >= shown)
+                    break;
+                wake = shown < give_up ? shown : give_up;
+            } else
+                wake = t + 0.001 < give_up ? t + 0.001 : give_up;
+            uint64_t ns = (uint64_t)((wake - t) * 1e9) + 1;
+            struct timeval tv;
+            gettimeofday(&tv, NULL);
+            uint64_t abs_ns = (uint64_t)tv.tv_sec * 1000000000ull + (uint64_t)tv.tv_usec * 1000ull + ns;
+            struct timespec ts = {(time_t)(abs_ns / 1000000000ull), (long)(abs_ns % 1000000000ull)};
+            pthread_cond_timedwait(&sim_cond, &sim_lock, &ts);
+        }
+    }
+    pthread_mutex_unlock(&sim_lock);
 }
 
 static mgl_ctx *current;
@@ -6727,27 +7329,31 @@ static void update_size(mgl_ctx *c)
 
 static id<MTLTexture> upscaled; /* last MetalFX output, for test screenshots */
 
-/* RGBA8 copy of the last upscaled frame (GL row order, like window_color), for MGL_SHOT_DIR; 0 when none. */
-int mglb_upscaled_read(unsigned char **px, int *w, int *h)
+/* RGBA8 copy of a frame texture (GL row order, like window_color), for MGL_SHOT_DIR. */
+static int read_rgba8(id<MTLTexture> tex, unsigned char **px, int *w, int *h)
 {
-    if (!upscaled)
-        return 0;
-    *w = (int)upscaled.width;
-    *h = (int)upscaled.height;
+    *w = (int)tex.width;
+    *h = (int)tex.height;
     size_t row = (size_t)*w * 4;
     mglb_buffer *stage = mglb_buffer_new(row * (size_t)*h);
     if (!stage || !(*px = malloc(row * (size_t)*h))) {
         mglb_buffer_release(stage);
         return 0;
     }
-    [blit_encoder() copyFromTexture:upscaled sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
-                         sourceSize:MTLSizeMake(upscaled.width, upscaled.height, 1) toBuffer:OBJ(id<MTLBuffer>, stage->mtl)
+    [blit_encoder() copyFromTexture:tex sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
+                         sourceSize:MTLSizeMake(tex.width, tex.height, 1) toBuffer:OBJ(id<MTLBuffer>, stage->mtl)
                   destinationOffset:0 destinationBytesPerRow:row destinationBytesPerImage:row * (size_t)*h];
     use_buffer(stage);
     mglb_finish();
     memcpy(*px, stage->ptr, row * (size_t)*h);
     mglb_buffer_release(stage);
     return 1;
+}
+
+/* The last upscaled frame; 0 when none. */
+int mglb_upscaled_read(unsigned char **px, int *w, int *h)
+{
+    return upscaled ? read_rgba8(upscaled, px, w, h) : 0;
 }
 
 /* The upscaled frame, the right way down for the present blit. NULL when off or MetalFX can't. */
@@ -6802,8 +7408,13 @@ static id<MTLTexture> upscale(mgl_ctx *c, id<MTLTexture> in, NSUInteger ow, NSUI
    (no HUD) and depth (fg_snapshot); MetalFX gets that and the finished frame with the HUD ("composited UI") and
    keeps the HUD from smearing. A frame without that clear (menus, loading) is shown as is and resets MetalFX.
    Each swap then presents the made-up frame, then the real one half a frame later: about half a frame more
-   input lag. MCMETAL_FG_FLIP=1 flips the motion's Y for MetalFX, MCMETAL_FG_NEG=1 its sign (conventions to check
-   on a real Mac). */
+   input lag. MCMETAL_FG_FLIP=1 flips the motion's Y for MetalFX, MCMETAL_FG_NEG=1 its sign (the defaults were
+   checked on an M3, 10-22: negated smears).
+   Real frames are paced at a rate whose double divides the screen's refresh (120 Hz: 60, 30, 20, 15 or 12 real,
+   shown as twice that) and interpolation pauses itself when real frames alone would show as many (fg_decide);
+   both need VSync on. Packs give only camera motion (ours too: deferred4's colortex7 is the same reprojection),
+   so mobs, particles and water are left to MetalFX's picture matching. Needs a shader pack: without one Iris hands
+   us no camera. MGL_SHOT_DIR saves the made-up frames as shot-NNN-mid.png; MGL_PRESENT_STATS logs input lag. */
 #if defined(__MAC_26_0) && __MAC_OS_X_VERSION_MAX_ALLOWED >= __MAC_26_0
 #define MGL_HAVE_FRAMEGEN 1
 #endif
@@ -6840,6 +7451,8 @@ static struct {
     uint64_t snap_frame;       /* frames_presented when the last snapshot was taken */
     int have_prev;             /* the previous frame had a snapshot too */
     float view[16], proj[16];  /* camera at the snapshot, for MetalFX */
+    float cam[3];              /* cameraPosition at the snapshot */
+    uint64_t out_frame;        /* frames_presented + 1 of the swap that last made a frame into out */
     id<MTLRenderPipelineState> mv_pipe;
     id fi;                     /* id<MTLFXFrameInterpolator> */
     int failed, reset;         /* failed: the interpolator */
@@ -6990,7 +7603,10 @@ static void fg_snapshot(const mgl_target *t)
         fg.depth_src = t->depth;
         end_encoders();
         id<MTLBlitCommandEncoder> b = [current_cb() blitCommandEncoder];
+        ov_begin(b, 2, 0); /* MGL_OVERLAP: reads the target's images */
+        ov_use(b, t->tex[0], 0, 1);
         [b copyFromTexture:col toTexture:fg.color[fg.cur]];
+        ov_end_for(b);
         [b endEncoding];
 
         struct {
@@ -7016,6 +7632,7 @@ static void fg_snapshot(const mgl_target *t)
         u.flip = flip ? -1.0f : 1.0f;
         memcpy(fg.view, mgl_cam.mat[0], 64);
         memcpy(fg.proj, mgl_cam.mat[1], 64);
+        memcpy(fg.cam, mgl_cam.pos[0], sizeof fg.cam);
 
         MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
         rp.colorAttachments[0].texture = fg.motion;
@@ -7034,9 +7651,12 @@ static void fg_snapshot(const mgl_target *t)
         }
         [e setRenderPipelineState:fg.mv_pipe];
         [e setDepthStencilState:always];
+        ov_begin(e, 0, 0);
+        ov_use(e, t->depth, 0, 2);
         [e setFragmentTexture:dep atIndex:0];
         [e setFragmentBytes:&u length:sizeof u atIndex:0];
         [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+        ov_end_for(e);
         [e endEncoding];
     }
 }
@@ -7058,7 +7678,10 @@ static id<MTLTexture> fg_interpolate(double frame_s)
         if (win.pixelFormat != fg.fmt || (int)win.width != fg.w || (int)win.height != fg.h)
             return nil;
         id<MTLBlitCommandEncoder> b = [current_cb() blitCommandEncoder];
+        ov_begin(b, 2, 0);
+        ov_use(b, mgl->window_color, 0, 1);
         [b copyFromTexture:win toTexture:fg.ui];
+        ov_end_for(b);
         [b endEncoding];
         id<MTLFXFrameInterpolator> fi = fg.fi;
         fi.colorTexture = fg.color[fg.cur];
@@ -7078,15 +7701,61 @@ static id<MTLTexture> fg_interpolate(double frame_s)
         fi.aspectRatio = p[5] / p[0];
         fi.nearPlane = p[14] / (p[10] - 1.0f);
         fi.farPlane = p[14] / (p[10] + 1.0f);
+        /* The camera matrices (never set before 10-27): world to view = gbufferModelView
+           after moving the world by -cameraPosition (Iris's view is camera-relative, so without that the "world"
+           would move with the player and the two frames' cameras would differ only by turning); view to clip in
+           Metal's clip space for GL-row textures (y negated, z from [-w, w] to [0, w]), as the denoiser gets it.
+           MCMETAL_FG_MATRICES=0 leaves them out, for an A/B. */
+        static int matrices = -1;
+        if (matrices < 0)
+            matrices = !getenv("MCMETAL_FG_MATRICES") || atoi(getenv("MCMETAL_FG_MATRICES")) != 0;
+        if (matrices) {
+            float view[16], clip[16];
+            memcpy(view, fg.view, sizeof view);
+            for (int r = 0; r < 4; r++)
+                view[12 + r] = fg.view[r] * -fg.cam[0] + fg.view[4 + r] * -fg.cam[1] + fg.view[8 + r] * -fg.cam[2] +
+                               fg.view[12 + r];
+            for (int c = 0; c < 4; c++) {
+                clip[c * 4 + 0] = p[c * 4 + 0];
+                clip[c * 4 + 1] = -p[c * 4 + 1];
+                clip[c * 4 + 2] = 0.5f * (p[c * 4 + 2] + p[c * 4 + 3]);
+                clip[c * 4 + 3] = p[c * 4 + 3];
+            }
+            simd_float4x4 v, cm;
+            memcpy(&v, view, sizeof v);
+            memcpy(&cm, clip, sizeof cm);
+            /* newer than the macOS 26.3 SDK (Apple's docs list them; CI's Xcode 26.3 headers don't), so set them
+               by selector where this macOS has them */
+            typedef void (*set_mat)(id, SEL, simd_float4x4);
+            SEL sv = NSSelectorFromString(@"setWorldToViewMatrix:"), sc = NSSelectorFromString(@"setViewToClipMatrix:");
+            int have = [fi respondsToSelector:sv] && [fi respondsToSelector:sc];
+            if (have) {
+                ((set_mat)objc_msgSend)(fi, sv, v);
+                ((set_mat)objc_msgSend)(fi, sc, cm);
+            }
+            static int logged;
+            if (!logged++)
+                mgl_log("frame interpolation: camera matrices %s", have ? "given to MetalFX" : "not taken by this macOS's MetalFX");
+        }
         fi.shouldResetHistory = fg.reset;
         fg.reset = 0;
         [fi encodeToCommandBuffer:current_cb()];
+        fg.out_frame = frames_presented + 1;
         return fg.out;
     }
 #else
     (void)frame_s;
 #endif
     return nil;
+}
+
+/* RGBA8 copy of the last made-up frame (GL row order, render size, before any upscaling), for MGL_SHOT_DIR: the
+   frame between the two real ones before this one. 0 when the last swap made none. */
+int mglb_madeup_read(unsigned char **px, int *w, int *h)
+{
+    if (!fg.out || fg.out_frame != frames_presented)
+        return 0;
+    return read_rgba8(fg.out, px, w, h);
 }
 
 /* MetalFX must not blend across a pause in interpolation */
@@ -7486,6 +8155,7 @@ int mglb_denoise(const mglb_denoise_in *in)
         if (!put)
             return 0;
         end_encoders();
+        ov_side_begin(); /* MGL_OVERLAP: MetalFX and these passes don't use our fences */
         struct {
             float inv_proj[16], inv_view[16], prev_view[16], prev_proj[16];
             float cam_delta[4];
@@ -7574,6 +8244,7 @@ int mglb_denoise(const mglb_denoise_in *in)
         [e setFragmentTexture:dn.out atIndex:0];
         [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
         [e endEncoding];
+        ov_side_end();
         tex_dirty(ot);
         if (!dn.logged++)
             mgl_log("denoiser: first frame denoised by MetalFX (%dx%d, motion from %s)", w, h,
@@ -7661,6 +8332,9 @@ static void profile_frame(unsigned long draws)
     if (sl_checks)
         mgl_log("profile: smart load: %lu coverage checks, %lu draws found not to cover their target",
                 sl_checks, sl_partial);
+    if (prof.uploads)
+        mgl_log("profile: %.1f texture uploads per frame, %.1f of them moved ahead of an open pass", prof.uploads / f,
+                prof.hoisted / f);
     if (prof.sh_draws)
         mgl_log("profile: shadow-sized viewports (without geometry shaders) %.0f draws, %.0fk triangles per frame",
                 prof.sh_draws / f, prof.sh_tris / f * 1e-3);
@@ -7702,6 +8376,10 @@ static void profile_frame(unsigned long draws)
     if (prof.rs_sets + prof.rs_skips)
         mgl_log("profile: render-encoder state per frame: %.0f calls sent, %.0f repeats left out (%.0f%%)",
                 prof.rs_sets / f, prof.rs_skips / f, 100.0 * prof.rs_skips / (double)(prof.rs_sets + prof.rs_skips));
+    if (ov_on > 0)
+        mgl_log("profile: overlap (MGL_OVERLAP) per frame: %.1f fenced encoders, %.1f fence waits, %.2f barriers",
+                ov_encoders / f, ov_waits / f, ov_barriers / f);
+    ov_encoders = ov_waits = ov_barriers = 0;
     memset(&mgl_bstats, 0, sizeof mgl_bstats);
     if (pt_ok > 0 || (pt_ok == 0 && opt_profile >= 3))
         pt_report(f);
@@ -7821,20 +8499,32 @@ static void fg_decide(mgl_ctx *c)
 static atomic_int presents_waiting; /* drawn but not yet on screen */
 
 /* Count a drawable as waiting until it is shown, and feed pacing and MGL_PRESENT_STATS its time on screen. */
-static void watch_drawable(id<CAMetalDrawable> drawable)
+static uint64_t sim_cur; /* the drawable watched last, for sim_set_min */
+
+static void watch_drawable(mgl_ctx *c, id<CAMetalDrawable> drawable)
 {
-    [current_cb() addCompletedHandler:^(id<MTLCommandBuffer> done) {
-      (void)done;
-      atomic_fetch_add(&presents_waiting, 1);
-    }];
     static int stats = -1;
     if (stats < 0)
         stats = opt_profile > 0 || opt("MGL_PRESENT_STATS");
+    int model = stats || sim_display_on(), vsync = c->vsync;
+    pthread_mutex_lock(&sim_lock);
+    uint64_t idx = sim_cur = sim_next++;
+    sim_min[idx % SIM_RING] = 0;
+    pthread_mutex_unlock(&sim_lock);
+    [current_cb() addCompletedHandler:^(id<MTLCommandBuffer> done) {
+      atomic_fetch_add(&presents_waiting, 1);
+      if (model) {
+          double end = done.GPUEndTime;
+          sim_present(idx, end > 0 ? end : now_ns() * 1e-9, vsync);
+      }
+    }];
     [drawable addPresentedHandler:^(id<MTLDrawable> d) {
       atomic_fetch_sub(&presents_waiting, 1);
       static double last_shown;
       static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER; /* handlers may run on more than one thread */
       double when = d.presentedTime, iv = 0;
+      unsigned recent = atomic_load(&real_shown_recent);
+      atomic_store(&real_shown_recent, when > 0 ? 120 : recent ? recent - 1 : 0);
       if (when > 0) {
           pthread_mutex_lock(&lock);
           if (last_shown > 0 && when > last_shown)
@@ -7848,6 +8538,57 @@ static void watch_drawable(id<CAMetalDrawable> drawable)
       if (stats)
           present_stat(when);
     }];
+}
+
+/* The minimum time on screen the last watched drawable was presented with, for the display model */
+static void sim_set_min(double d)
+{
+    pthread_mutex_lock(&sim_lock);
+    sim_min[sim_cur % SIM_RING] = d;
+    pthread_mutex_unlock(&sim_lock);
+}
+
+/* MGL_PRESENT_STATS (or MGL_PROFILE): input lag, as the time from the start of a frame (the end of the swap before
+   it, when the game goes on to read the mouse and keys for the next frame) to its GPU work being done and to the
+   real frame reaching the screen (presentedTime; a window kept behind others never gets one, so then only the
+   first). With frame interpolation the real frame waits for the made-up one, so that is where its extra lag shows. */
+static _Atomic uint64_t lat_ns[2], lat_n[2];
+
+static void watch_latency(id<CAMetalDrawable> drawable, uint64_t begin_ns)
+{
+    static int on = -1;
+    if (on < 0)
+        on = opt_profile > 0 || opt("MGL_PRESENT_STATS");
+    if (!on || !begin_ns)
+        return;
+    [current_cb() addCompletedHandler:^(id<MTLCommandBuffer> done) {
+      uint64_t e = (uint64_t)(done.GPUEndTime * 1e9);
+      if (e > begin_ns && e - begin_ns < 1000000000ull) {
+          atomic_fetch_add(&lat_ns[0], e - begin_ns);
+          atomic_fetch_add(&lat_n[0], 1);
+      }
+    }];
+    [drawable addPresentedHandler:^(id<MTLDrawable> d) {
+      uint64_t w = (uint64_t)(d.presentedTime * 1e9);
+      if (w > begin_ns && w - begin_ns < 1000000000ull) {
+          atomic_fetch_add(&lat_ns[1], w - begin_ns);
+          atomic_fetch_add(&lat_n[1], 1);
+      }
+    }];
+}
+
+static void latency_report(void)
+{
+    uint64_t n0 = atomic_exchange(&lat_n[0], 0), s0 = atomic_exchange(&lat_ns[0], 0);
+    uint64_t n1 = atomic_exchange(&lat_n[1], 0), s1 = atomic_exchange(&lat_ns[1], 0);
+    if (!n0)
+        return;
+    if (n1)
+        mgl_log("input lag: frame start to GPU done %.1f ms, to the screen %.1f ms (%llu real frames)", s0 * 1e-6 / n0,
+                s1 * 1e-6 / n1, (unsigned long long)n0);
+    else
+        mgl_log("input lag: frame start to GPU done %.1f ms (%llu real frames; time on screen not reported, window "
+                "hidden?)", s0 * 1e-6 / n0, (unsigned long long)n0);
 }
 
 /* Draw a frame (GL row order) into the drawable the right way up, through MetalFX's upscaler when that's on. */
@@ -7865,6 +8606,9 @@ static void draw_to_drawable(mgl_ctx *c, id<MTLTexture> src, id<CAMetalDrawable>
     rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
     rp.colorAttachments[0].storeAction = MTLStoreActionStore;
     id<MTLRenderCommandEncoder> e = [current_cb() renderCommandEncoderWithDescriptor:rp];
+    ov_begin(e, 0, 0); /* MGL_OVERLAP: next frame's writes to the window image wait for this read */
+    if (src == OBJ(id<MTLTexture>, mgl->window_color->mtl))
+        ov_use(e, mgl->window_color, 0, 2);
     id<MTLRenderPipelineState> ps = blit_pipeline(MTLPixelFormatBGRA8Unorm);
     if (ps) {
         [e setRenderPipelineState:ps];
@@ -7876,6 +8620,7 @@ static void draw_to_drawable(mgl_ctx *c, id<MTLTexture> src, id<CAMetalDrawable>
         [e setFragmentSamplerState:blit_sampler(1) atIndex:0];
         [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     }
+    ov_end_for(e);
     [e endEncoding];
 }
 
@@ -7992,6 +8737,8 @@ static void mem_report(void)
 
 MGL_EXPORT void mgl_glfw_swap(void *ctx)
 {
+    static uint64_t frame_begin_ns; /* end of the last swap: where this frame started */
+    uint64_t begin_ns = frame_begin_ns;
     frame_times_tick();
     uint64_t sw_start = sw_last = now_ns();
     mgl_ctx *c = ctx;
@@ -8006,6 +8753,7 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
         commit();
         return;
     }
+    ov_side_begin(); /* MGL_OVERLAP: the screenshots and the present use MetalFX and passes without our fences */
     mgl_shot_tick(); /* MGL_SHOT_DIR test screenshots */
     sw_mark(SW_SHOT);
     end_encoders();
@@ -8019,13 +8767,15 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
         every_frame = getenv("MGL_PRESENT_EVERY_FRAME") && atoi(getenv("MGL_PRESENT_EVERY_FRAME"));
     int skip = !c->vsync && !every_frame && atomic_load(&presents_waiting) >= 2;
     uint64_t t_draw = now_ns();
+    if (!skip)
+        sim_wait_drawable(c->vsync);
     id<CAMetalDrawable> drawable = skip ? nil : [c->layer nextDrawable];
     prof.wait_ns += now_ns() - t_draw;
     pace_wait_ns += now_ns() - t_draw;
     prof.skipped_presents += skip;
     sw_mark(SW_DRAWABLE);
     if (drawable) {
-        watch_drawable(drawable);
+        watch_drawable(c, drawable);
         /* Frame interpolation: the made-up frame, then the real one half a frame after it. deltaTime is the paced
            real frame time once there is one. */
         double frame_s = c->paced_fps > 0 ? 1.0 / c->paced_fps : c->avg_frame_ms > 0 ? c->avg_frame_ms * 1e-3 : 1.0 / 60;
@@ -8044,6 +8794,10 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
                (on 120 Hz: 60 or 30 real, shown as 120 or 60), each shown frame for exactly half a real one.
                Not from the measured frame time: the GPU time per frame grows when presents wait, so that would
                slow the game down step by step (measured: SEUS fell to 10-12 fps). */
+            static int warned_vsync;
+            if (!c->vsync && !warned_vsync++)
+                mgl_log("frame interpolation: VSync is off, so made-up frames may tear and it can't pause itself when "
+                        "real frames alone would be smoother; turn VSync on in Video Settings");
             int fps = choose_paced_fps(c, 2);
             if (fps != c->paced_fps) {
                 c->paced_fps = fps;
@@ -8062,25 +8816,32 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
                 show_mid = opt("MCMETAL_FG_SHOW_MID");
             if (show_mid) { /* test: show only made-up frames (test screenshots of the upscaled frame then see them) */
                 [current_cb() presentDrawable:drawable afterMinimumDuration:2 * half];
+                sim_set_min(2 * half);
                 fg_time_stage(FG_SHOW_MID);
                 drawable = nil;
             } else {
                 [current_cb() presentDrawable:drawable afterMinimumDuration:half];
+                sim_set_min(half);
                 fg_time_stage(FG_SHOW_MID);
                 commit(); /* send the made-up frame on its way before waiting for the second drawable */
+                sim_wait_drawable(c->vsync);
                 uint64_t t_d2 = now_ns();
                 drawable = [c->layer nextDrawable];
                 prof.wait_ns += now_ns() - t_d2;
                 pace_wait_ns += now_ns() - t_d2;
                 if (drawable) {
-                    watch_drawable(drawable);
+                    watch_drawable(c, drawable);
+                    watch_latency(drawable, begin_ns);
                     draw_to_drawable(c, OBJ(id<MTLTexture>, mgl->window_color->mtl), drawable);
                     [current_cb() presentDrawable:drawable afterMinimumDuration:half];
+                    sim_set_min(half);
                     fg_time_stage(FG_SHOW_REAL);
                 }
             }
-        } else
+        } else {
+            watch_latency(drawable, begin_ns);
             draw_to_drawable(c, OBJ(id<MTLTexture>, mgl->window_color->mtl), drawable);
+        }
         uint64_t t = now_ns(), gpu = atomic_load(&pace_gpu_ns);
         if (c->last_swap_ns) {
             double cpu = (double)(t - c->last_swap_ns - (pace_wait_ns - c->last_wait_ns)) * 1e-6;
@@ -8106,14 +8867,17 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
             }
             if (pace_free(c, fps))
                 [current_cb() presentDrawable:drawable];
-            else
+            else {
                 [current_cb() presentDrawable:drawable afterMinimumDuration:1.0 / fps];
+                sim_set_min(1.0 / fps);
+            }
         } else {
             [current_cb() presentDrawable:drawable];
         }
         if (!mid && fg_enabled())
             fg_time_stage(FG_SHOW_REAL);
     }
+    ov_side_end();
     sw_mark(SW_PRESENT);
     commit();
     sw_mark(SW_COMMIT);
@@ -8127,8 +8891,15 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
                 frame_probes ? [NSString stringWithFormat:@", %lu probed draws", frame_probes].UTF8String : "");
     if (opt_profile > 0)
         profile_frame(frame_draws);
-    if (opt_profile > 0 || opt("MGL_PRESENT_STATS"))
+    if (opt_profile > 0 || opt("MGL_PRESENT_STATS")) {
+        static uint64_t lat_last;
+        uint64_t lt = now_ns();
+        if (lt - lat_last >= 1000000000ull) {
+            lat_last = lt;
+            latency_report();
+        }
         present_stats_report();
+    }
     fg_timing_report();
     frame_draws = frame_sections = frame_dispatches = frame_probes = 0;
     pthread_mutex_lock(&sl_lock); /* MGL_SMART_LOAD: coverage checks are good for 120 frames */
@@ -8145,4 +8916,5 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
         mglb_fence_wait(before_last, 100000000ull);
     sw_mark(SW_FENCE);
     sw_report(sw_start);
+    frame_begin_ns = now_ns();
 }

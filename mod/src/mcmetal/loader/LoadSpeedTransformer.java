@@ -45,6 +45,11 @@ import org.objectweb.asm.tree.VarInsnNode;
  * resource pack change of every session (27.8 s of a 77 s cloud F3+T, 2026-10-26); see load/PackTextHooks.
  * Entity Model Features: each custom model file it looks for and doesn't find was searched for in every resource pack
  * (~4 s of the render thread per F3+T in the cloud, 2026-10-26); see load/ModelFileHooks.
+ * Farmer's Delight: each "any knife"-style ingredient made and asked a stack of every registered item, once per recipe
+ * (and JEI and KubeJS ask every recipe); see load/AbilityItemsHooks.
+ * ModernFix with Puffish Attributes: ModernFix's attribute template set could never find Puffish's NaN-based templates
+ * and walked past all earlier ones for each (quadratic over mob types at startup); see load/AttributeTemplateHooks.
+ * These last two follow fixes 16 and 13 of Nitro (MIT, github.com/TinsleyDevers/Nitro), written again here.
  */
 final class LoadSpeedTransformer implements ITransformer<ClassNode> {
     static final String HEXEREI = "net.joefoxe.hexerei.data.recipes.WoodcutterRecipes";
@@ -63,6 +68,10 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
     static final String PACK_HOOKS = "mcmetal/loader/load/PackTextHooks";
     static final String EMF_CACHE = "traben.entity_model_features.utils.EMFResourceCaching";
     static final String MODEL_FILE_HOOKS = "mcmetal/loader/load/ModelFileHooks";
+    static final String FD_ABILITY = "vectorwing.farmersdelight.common.crafting.ingredient.ItemAbilityIngredient";
+    static final String ABILITY_HOOKS = "mcmetal/loader/load/AbilityItemsHooks";
+    static final String MF_TEMPLATES = "org.embeddedt.modernfix.entity.AttributeInstanceTemplates";
+    static final String TEMPLATE_HOOKS = "mcmetal/loader/load/AttributeTemplateHooks";
     static final String PREFIX = GpuCullTransformer.PREFIX;
     /** createRecipes() of Hexerei 0.5.0.3 (see fingerprint()); any other version keeps its own loop. */
     static final Set<String> KNOWN_CREATE_RECIPES = Set.of("1f31c51f74d9f41b");
@@ -91,6 +100,10 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
             packFingerprint(c);
         else if (c.name.equals(EMF_CACHE.replace('.', '/')))
             emfFiles(c);
+        else if (c.name.equals(FD_ABILITY.replace('.', '/')))
+            abilityItems(c);
+        else if (c.name.equals(MF_TEMPLATES.replace('.', '/')))
+            attributeTemplates(c);
         return c;
     }
 
@@ -389,6 +402,85 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
         MetalBootstrap.log("load fixes: Entity Model Features looks for model files in one listing of its folders (MCMETAL_LOAD_FIXES)");
     }
 
+    /**
+     * dissolve(): "if (itemStacks == null) itemStacks = BuiltInRegistries.ITEM.stream().map(ItemStack::new)
+     * .filter(s -> s.canPerformAction(itemAbility));" (Farmer's Delight 1.3.x) keeps its null check and store, and the
+     * stream between them becomes "mcmetal$stacks(itemAbility)", see load/AbilityItemsHooks. Only when the method is
+     * exactly that and its filter only asks canPerformAction(itemAbility).
+     */
+    static void abilityItems(ClassNode c) {
+        String ability = "Lnet/neoforged/neoforge/common/ItemAbility;", stream = "Ljava/util/stream/Stream;";
+        MethodNode dissolve = null;
+        boolean filterOk = false;
+        for (MethodNode m : c.methods) {
+            if (m.name.equals("dissolve") && m.desc.equals("()V"))
+                dissolve = m;
+            if (m.name.startsWith("lambda$dissolve$") && m.desc.equals("(Lnet/minecraft/world/item/ItemStack;)Z")) {
+                java.util.List<AbstractInsnNode> code = new java.util.ArrayList<>();
+                for (AbstractInsnNode n : m.instructions.toArray())
+                    if (n.getOpcode() >= 0)
+                        code.add(n);
+                filterOk = code.size() == 5 && code.get(2) instanceof FieldInsnNode f && f.name.equals("itemAbility")
+                        && code.get(3) instanceof MethodInsnNode can && can.name.equals("canPerformAction")
+                        && can.desc.equals("(" + ability + ")Z") && code.get(4).getOpcode() == Opcodes.IRETURN;
+            }
+        }
+        // getfield itemStacks, ifnonnull, aload 0, getstatic ITEM, stream, indy, map, aload 0, indy, filter, putfield itemStacks, return
+        java.util.List<AbstractInsnNode> code = new java.util.ArrayList<>();
+        if (dissolve != null)
+            for (AbstractInsnNode n : dissolve.instructions.toArray())
+                if (n.getOpcode() >= 0)
+                    code.add(n);
+        boolean shape = code.size() == 13 && code.get(0) instanceof VarInsnNode
+                && code.get(1) instanceof FieldInsnNode get && get.name.equals("itemStacks") && get.desc.equals(stream)
+                && code.get(2).getOpcode() == Opcodes.IFNONNULL && code.get(3) instanceof VarInsnNode
+                && code.get(4) instanceof FieldInsnNode reg && reg.name.equals("ITEM")
+                && reg.owner.equals("net/minecraft/core/registries/BuiltInRegistries")
+                && code.get(5) instanceof MethodInsnNode s1 && s1.name.equals("stream")
+                && code.get(7) instanceof MethodInsnNode s2 && s2.name.equals("map")
+                && code.get(10) instanceof MethodInsnNode s3 && s3.name.equals("filter")
+                && code.get(11) instanceof FieldInsnNode put && put.getOpcode() == Opcodes.PUTFIELD && put.name.equals("itemStacks")
+                && code.get(12).getOpcode() == Opcodes.RETURN;
+        ClassNode hooks = GpuCullTransformer.readHooks(ABILITY_HOOKS);
+        if (hooks != null && hooks.methods.stream().anyMatch(m -> m.name.equals("<clinit>")))
+            hooks = null;
+        if (!shape || !filterOk || hooks == null) {
+            MetalBootstrap.log("load fixes: Farmer's Delight's tool ingredients are not the expected ones, left as they are");
+            return;
+        }
+        GpuCullTransformer.merge(hooks, c);
+        for (int i = 4; i <= 10; i++) // ITEM ... filter(); the "this" for the store stays
+            dissolve.instructions.remove(code.get(i));
+        InsnList call = new InsnList();
+        call.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        call.add(new FieldInsnNode(Opcodes.GETFIELD, c.name, "itemAbility", ability));
+        call.add(new MethodInsnNode(Opcodes.INVOKESTATIC, c.name, PREFIX + "stacks", "(" + ability + ")" + stream, false));
+        dissolve.instructions.insertBefore(code.get(11), call);
+        MetalBootstrap.log("load fixes: Farmer's Delight finds each tool ingredient's items once (MCMETAL_LOAD_FIXES)");
+    }
+
+    /** intern(template): "INTERNER.addOrGet(template)" (exactly once) becomes "mcmetal$addOrGet(INTERNER, template)". */
+    static void attributeTemplates(ClassNode c) {
+        String set = "it/unimi/dsi/fastutil/objects/ObjectOpenCustomHashSet";
+        java.util.List<MethodInsnNode> calls = new java.util.ArrayList<>();
+        for (MethodNode m : c.methods)
+            if (m.name.equals("intern") && (m.access & Opcodes.ACC_STATIC) != 0)
+                for (AbstractInsnNode n : m.instructions.toArray())
+                    if (n instanceof MethodInsnNode mi && mi.getOpcode() == Opcodes.INVOKEVIRTUAL && mi.owner.equals(set)
+                            && mi.name.equals("addOrGet") && mi.desc.equals("(Ljava/lang/Object;)Ljava/lang/Object;"))
+                        calls.add(mi);
+        ClassNode hooks = GpuCullTransformer.readHooks(TEMPLATE_HOOKS);
+        if (hooks != null && hooks.methods.stream().anyMatch(m -> m.name.equals("<clinit>")))
+            hooks = null;
+        if (calls.size() != 1 || hooks == null) {
+            MetalBootstrap.log("load fixes: ModernFix's attribute templates are not the expected ones, left as they are");
+            return;
+        }
+        GpuCullTransformer.merge(hooks, c);
+        redirect(calls.get(0), c.name, "addOrGet", "(L" + set + ";Ljava/lang/Object;)Ljava/lang/Object;");
+        MetalBootstrap.log("load fixes: ModernFix leaves NaN attribute templates unshared without searching (MCMETAL_LOAD_FIXES)");
+    }
+
     /** A call on the object in front of its arguments becomes a static call of the merged hook with the same order. */
     static void redirect(MethodInsnNode mi, String owner, String hook, String desc) {
         mi.setOpcode(Opcodes.INVOKESTATIC);
@@ -444,7 +536,7 @@ final class LoadSpeedTransformer implements ITransformer<ClassNode> {
     public Set<Target<ClassNode>> targets() {
         return Set.of(Target.targetClass(HEXEREI), Target.targetClass(VEGAN), Target.targetClass(CARRYON), Target.targetClass(KUBEJS),
                 Target.targetClass(CREATE_STACK), Target.targetClass(SHAPER), Target.targetClass(MOONLIGHT_CACHE),
-                Target.targetClass(EMF_CACHE));
+                Target.targetClass(EMF_CACHE), Target.targetClass(FD_ABILITY), Target.targetClass(MF_TEMPLATES));
     }
 
     @Override

@@ -9,6 +9,9 @@
 
 #define MGL_MAX_UNITS 96
 
+/* glHint target only mcmetal knows ("mc"): the HUD cache's framebuffer, see glHint in mgl_state.c */
+#define MGL_HINT_HUD_FBO 0x6D63
+
 /* GL 4.6 / extension enums not in the 4.5 core header */
 #ifndef GL_TEXTURE_MAX_ANISOTROPY
 #define GL_TEXTURE_MAX_ANISOTROPY 0x84FE
@@ -188,6 +191,7 @@ typedef struct mgl_state {
     mgl_image_unit images[MGL_MAX_IMAGE_UNITS];
 
     GLuint draw_fbo, read_fbo;
+    GLuint hud_fbo; /* framebuffer mcmetal's HUD cache draws the HUD into (glHint MGL_HINT_HUD_FBO): alpha accumulates as "over" */
     GLuint current_program;
 
     /* fixed-function state */

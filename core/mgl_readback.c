@@ -265,4 +265,10 @@ void mgl_shot_tick(void)
             mgl_log("screenshot %s (%dx%d)", path, w, h);
         free(px);
     }
+    if (mglb_madeup_read(&px, &w, &h)) { /* MCMETAL_FRAMEGEN: the made-up frame shown before the last real one */
+        snprintf(path, sizeof path, "%s/shot-%03d-mid.png", dir, n - 1);
+        if (mgl_write_png(path, px, w, h))
+            mgl_log("screenshot %s (%dx%d)", path, w, h);
+        free(px);
+    }
 }

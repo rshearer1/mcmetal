@@ -283,7 +283,13 @@ void glDebugMessageControl(GLenum source, GLenum type, GLenum severity, GLsizei 
 void glDebugMessageInsert(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar *buf) {}
 void glPushDebugGroup(GLenum source, GLuint id, GLsizei length, const GLchar *message) {}
 void glPopDebugGroup(void) {}
-void glHint(GLenum target, GLenum mode) {}
+/* glHint carries one mcmetal-only setting from the mod's Java side: MGL_HINT_HUD_FBO names the framebuffer the HUD
+   cache draws the HUD into (0 = none). See build_draw in mgl_draw.c. Real GL hints change nothing here. */
+void glHint(GLenum target, GLenum mode)
+{
+    if (target == MGL_HINT_HUD_FBO)
+        mgl->hud_fbo = mode;
+}
 void glLineWidth(GLfloat width) {}
 void glPolygonMode(GLenum face, GLenum mode)
 {

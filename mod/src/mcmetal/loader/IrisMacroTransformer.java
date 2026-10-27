@@ -48,8 +48,8 @@ public final class IrisMacroTransformer implements ITransformationService {
     public List<? extends ITransformer<?>> transformers() {
         return List.of(new OsString(), new RtDefine(), new GpuCullTransformer(), new DhMacTransformer(),
                 new AudioTransformer(), new BiomeTransformer(), new SoundPhysicsTransformer(),
-                new ShadowEntityTransformer(), new LoadSpeedTransformer(), new MenuWorldTransformer(), new DhCompositeTransformer(),
-                new LightListTransformer());
+                new ShadowEntityTransformer(), new LoadSpeedTransformer(), new JeiStartTransformer(), new MenuWorldTransformer(), new HudCacheTransformer(), new DhCompositeTransformer(),
+                new LightListTransformer(), new DynLightTransformer());
     }
 
     static final class OsString implements ITransformer<MethodNode> {
