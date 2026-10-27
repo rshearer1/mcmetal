@@ -2,4 +2,5 @@
 package net.minecraft.resources;
 public class ResourceLocation {
     public String getPath() { return null; }
+    public String getNamespace() { return null; }
 }
