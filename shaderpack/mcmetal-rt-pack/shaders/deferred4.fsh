@@ -470,5 +470,13 @@ void main() {
         col = n * 0.5 + 0.5;
 #endif
     }
+#if DEBUG_VIEW == 8
+    // the material tag each pixel carries: magenta your own body, cyan the held item, yellow mobs and players, green
+    // faint glowing blocks, orange other light blocks, white glowing blocks, blue foliage, grey the rest
+    col = mat == MAT_BODY ? vec3(1.0, 0.0, 1.0) : mat == MAT_HAND ? vec3(0.0, 1.0, 1.0) : mat == MAT_ENTITY ? vec3(1.0, 1.0, 0.0)
+        : mat == MAT_EMISSIVE_DIM ? vec3(0.0, 1.0, 0.0) : mat == MAT_EMISSIVE ? vec3(1.0, 0.5, 0.0) : mat == MAT_GLOW ? vec3(1.0)
+        : mat == MAT_FOLIAGE ? vec3(0.1, 0.2, 1.0) : vec3(0.25);
+    col *= 0.3 + 0.7 * luma(texture(colortex0, texcoord).rgb);
+#endif
     outColor = vec4(col, 1.0);
 }
