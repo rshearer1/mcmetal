@@ -481,7 +481,7 @@ void main() {
         col = n * 0.5 + 0.5;
 #endif
     }
-#if DEBUG_VIEW == 9
+#if DEBUG_VIEW == 9 || DEBUG_VIEW == 10
     col = texture(colortex0, texcoord).rgb;   // the program, stage and tag code lib/gbuffer.glsl wrote in place of the albedo
 #endif
 #if DEBUG_VIEW == 8

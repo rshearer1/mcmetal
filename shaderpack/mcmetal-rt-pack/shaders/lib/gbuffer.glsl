@@ -478,5 +478,41 @@ void main() {
     outMaterial = vec4(float(MATERIAL == MAT_HAND ? MAT_HAND_LIT : MAT_LIT) / 255.0, 1.0, 0.0, 0.0);
   #endif
 #endif
+#if DEBUG_VIEW == 10
+    // which of our programs drew each pixel, as a flat colour (deferred4.fsh shows the G-buffer's as is; anything still
+    // textured was drawn by something else): r the program's material / 13, g its kind (1 opaque, 2 forward,
+    // +4 kept material, +8 traced shadow, +16 water, +32 terrain, +64 unlit) / 127, b always 1
+    float kind = 0.0;
+  #ifdef OPAQUE
+    kind += 1.0;
+  #endif
+  #ifdef FORWARD
+    kind += 2.0;
+  #endif
+  #ifdef KEEP_MATERIAL
+    kind += 4.0;
+  #endif
+  #ifdef TRACE_SHADOW
+    kind += 8.0;
+  #endif
+  #ifdef WATER
+    kind += 16.0;
+  #endif
+  #ifdef TERRAIN
+    kind += 32.0;
+  #endif
+  #ifdef UNLIT
+    kind += 64.0;
+  #endif
+    vec4 code = vec4(float(MATERIAL) / 13.0, kind / 127.0, 1.0, 1.0);
+  #if defined OPAQUE
+    outAlbedo = code;
+  #elif defined WATER
+    outColor = vec4(0.0, 0.0, 0.0, 1.0);
+    outAdd = vec4(code.rgb, 1.0);
+  #else
+    outColor = code;
+  #endif
+#endif
 }
 #endif
