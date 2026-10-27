@@ -25,11 +25,15 @@ G=$WORK/game
 mkdir -p "$G/config" "$G/saves"
 cp "$SRC/tests/game/options.txt" "$G/options.txt"
 # GAME_ENV goes to the game process; a PACK_OPTS=A=false,B=2 in it (commas: GAME_ENV is split on spaces) sets the
-# pack's options instead, so a manual run's "env" input can switch pack options for every phase
+# pack's options instead, so a manual run's "env" input can switch pack options for every phase (GAME_VSYNC=true too)
 if [ -n "${GAME_ENV:-}" ]; then
     rest=""
     for kv in $GAME_ENV; do
-        case $kv in PACK_OPTS=*) PACK_OPTS="${PACK_OPTS:-} $(printf '%s' "${kv#PACK_OPTS=}" | tr ',' ' ')" ;; *) rest="$rest $kv" ;; esac
+        case $kv in
+            PACK_OPTS=*) PACK_OPTS="${PACK_OPTS:-} $(printf '%s' "${kv#PACK_OPTS=}" | tr ',' ' ')" ;;
+            GAME_VSYNC=*) GAME_VSYNC=${kv#GAME_VSYNC=} ;;
+            *) rest="$rest $kv" ;;
+        esac
     done
     GAME_ENV=${rest# }
 fi
