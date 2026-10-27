@@ -1,9 +1,8 @@
 /* MCMETAL_DENOISE=1: MetalFX's denoiser (MTLFXTemporalDenoisedScaler, macOS 26, M3 and newer) in place of one of
    the pack's own passes.
 
-   A pack opts in with a full-screen pass whose fragment shader says, in #define lines or in a comment (Iris's
-   preprocessor removes #define lines from the source mcmetal gets but keeps comments, so a pack run through Iris
-   needs the comment form; the lines read the same either way, with or without "#define "):
+   A pack opts in with a full-screen pass whose fragment shader says, in #define lines (for a pack loaded without
+   Iris):
      #define MCMETAL_DENOISE_PASS
      #define MCMETAL_DENOISE_COLOR     colortex0       noisy lit colour (linear, HDR is fine)
      #define MCMETAL_DENOISE_DEPTH     depthtex0
@@ -13,6 +12,12 @@
      #define MCMETAL_DENOISE_SPECULAR  colortex10 a    optional: LabPBR F0 (>= 230/255 = metal), in that channel
      #define MCMETAL_DENOISE_MOTION    colortex15      optional: RG = previous - current position, in pixels;
                                                        without it mcmetal works out the camera's motion from depth
+   Iris's preprocessor removes #define lines and comments before mcmetal sees the source, so a pack run through
+   Iris says the same in unused constants, which survive: the role, two underscores, the sampler name, and
+   optionally two underscores and the channel:
+     const int MCMETAL_DENOISE_PASS = 1;
+     const int MCMETAL_DENOISE_COLOR__colortex0 = 1;
+     const int MCMETAL_DENOISE_ROUGHNESS__colortex10__b = 1;   (and so on for each role)
    Each named sampler must be declared, and read somewhere in the shader, or the compiler drops it. The pass writes
    its result to its first render target, and its own code is what runs when MetalFX can't (another Mac, the
    switch off): a plain copy of the colour, or the pack's own denoiser. With MetalFX the draw is replaced by
@@ -44,32 +49,26 @@ int mgl_denoise_on(void)
 
 mgl_denoise_decl *mgl_denoise_parse(const char *fs)
 {
-    if (!fs || !mgl_denoise_on())
+    if (!fs || !mgl_denoise_on() || !strstr(fs, "MCMETAL_DENOISE_PASS"))
         return NULL;
-    if (!strstr(fs, "MCMETAL_DENOISE_PASS")) {
-        if (getenv("MCMETAL_DENOISE_DEBUG") && strstr(fs, "colortex15") && strstr(fs, "colortex10") && strlen(fs) < 20000) {
-            const char *b = strstr(fs, "#version");
-            mgl_log("denoiser debug: a pass reading colortex10 and colortex15 has no marker (%zu chars); it starts:", strlen(fs));
-            char line[200];
-            for (int n = 0; b && *b && n < 40; n++) {
-                const char *e = strchr(b, '\n');
-                size_t len = e ? (size_t)(e - b) : strlen(b);
-                snprintf(line, sizeof line, "%.*s", (int)(len < 190 ? len : 190), b);
-                mgl_log("denoiser debug: | %s", line);
-                b = e ? e + 1 : NULL;
-            }
-        }
-        return NULL;
-    }
     mgl_denoise_decl *d = calloc(1, sizeof *d);
     for (int r = 0; r < DN_ROLES; r++) {
         char key[64], ch = 0;
-        snprintf(key, sizeof key, "MCMETAL_DENOISE_%s ", role_key[r]);
+        snprintf(key, sizeof key, "#define MCMETAL_DENOISE_%s ", role_key[r]);
         const char *at = strstr(fs, key);
         d->channel[r] = r == DN_ROUGHNESS ? 0 : r == DN_SPECULAR ? 1 : 0; /* LabPBR: smoothness r, F0 g */
         char line[160];
-        if (!at || sscanf(at + strlen(key), "%159[^\n]", line) != 1 || sscanf(line, "%63s %c", d->name[r], &ch) < 1)
-            continue;
+        if (at) {
+            if (sscanf(at + strlen(key), "%159[^\n]", line) != 1 || sscanf(line, "%63s %c", d->name[r], &ch) < 1)
+                continue;
+        } else {   /* the constant form: MCMETAL_DENOISE_ROLE__sampler[__c] */
+            snprintf(key, sizeof key, "MCMETAL_DENOISE_%s__", role_key[r]);
+            if (!(at = strstr(fs, key)) || sscanf(at + strlen(key), "%63[A-Za-z0-9]", d->name[r]) != 1)
+                continue;
+            const char *rest = at + strlen(key) + strlen(d->name[r]);
+            if (rest[0] == '_' && rest[1] == '_')
+                ch = rest[2];
+        }
         if (ch == 'r' || ch == 'g' || ch == 'b' || ch == 'a')
             d->channel[r] = ch == 'r' ? 0 : ch == 'g' ? 1 : ch == 'b' ? 2 : 3;
     }
