@@ -1,0 +1,12 @@
+// Compile-only stand-in (signatures only) so mod/src can be compiled without the real game; never packaged.
+package mezz.jei.library.load;
+public class PluginLoader {
+    public static mezz.jei.api.runtime.IScreenHelper createGuiScreenHelper(java.util.List<mezz.jei.api.IModPlugin> a0, mezz.jei.api.helpers.IJeiHelpers a1, mezz.jei.library.ingredients.IngredientManager a2) { throw new AbstractMethodError(); }
+    public static mezz.jei.library.runtime.JeiHelpers createJeiHelpers(com.google.common.collect.ImmutableSetMultimap<java.lang.String, java.lang.String> a0, mezz.jei.library.config.IModIdFormatConfig a1, mezz.jei.api.helpers.IColorHelper a2, mezz.jei.library.config.EditModeConfig a3, mezz.jei.library.focus.FocusFactory a4, mezz.jei.library.helpers.CodecHelper a5, mezz.jei.api.runtime.IIngredientManager a6, mezz.jei.library.ingredients.subtypes.SubtypeManager a7) { throw new AbstractMethodError(); }
+    public static mezz.jei.library.recipes.RecipeManager createRecipeManager(java.util.List<mezz.jei.api.IModPlugin> a0, mezz.jei.library.plugins.vanilla.VanillaPlugin a1, mezz.jei.library.config.RecipeCategorySortingConfig a2, mezz.jei.library.runtime.JeiHelpers a3, mezz.jei.api.runtime.IIngredientManager a4) { throw new AbstractMethodError(); }
+    public static mezz.jei.api.recipe.transfer.IRecipeTransferManager createRecipeTransferManager(mezz.jei.library.plugins.vanilla.VanillaPlugin a0, java.util.List<mezz.jei.api.IModPlugin> a1, mezz.jei.library.runtime.JeiHelpers a2, mezz.jei.common.network.IConnectionToServer a3) { throw new AbstractMethodError(); }
+    public static mezz.jei.api.search.ISearchStorageBuilderFactory createSearchStorageFactory(java.util.List<mezz.jei.api.IModPlugin> a0) { throw new AbstractMethodError(); }
+    public static mezz.jei.library.ingredients.IngredientManager registerIngredients(mezz.jei.library.startup.StartData a0, mezz.jei.library.ingredients.subtypes.SubtypeManager a1, mezz.jei.api.helpers.IColorHelper a2, mezz.jei.common.config.IIngredientFilterConfig a3) { throw new AbstractMethodError(); }
+    public static com.google.common.collect.ImmutableSetMultimap<java.lang.String, java.lang.String> registerModAliases(mezz.jei.library.startup.StartData a0, mezz.jei.common.config.IIngredientFilterConfig a1) { throw new AbstractMethodError(); }
+    public static mezz.jei.library.ingredients.subtypes.SubtypeManager registerSubtypes(mezz.jei.library.startup.StartData a0) { throw new AbstractMethodError(); }
+}
