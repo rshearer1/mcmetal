@@ -44,8 +44,23 @@ int mgl_denoise_on(void)
 
 mgl_denoise_decl *mgl_denoise_parse(const char *fs)
 {
-    if (!fs || !mgl_denoise_on() || !strstr(fs, "MCMETAL_DENOISE_PASS"))
+    if (!fs || !mgl_denoise_on())
         return NULL;
+    if (!strstr(fs, "MCMETAL_DENOISE_PASS")) {
+        if (getenv("MCMETAL_DENOISE_DEBUG") && strstr(fs, "colortex15") && strstr(fs, "colortex10") && strlen(fs) < 20000) {
+            const char *b = strstr(fs, "#version");
+            mgl_log("denoiser debug: a pass reading colortex10 and colortex15 has no marker (%zu chars); it starts:", strlen(fs));
+            char line[200];
+            for (int n = 0; b && *b && n < 40; n++) {
+                const char *e = strchr(b, '\n');
+                size_t len = e ? (size_t)(e - b) : strlen(b);
+                snprintf(line, sizeof line, "%.*s", (int)(len < 190 ? len : 190), b);
+                mgl_log("denoiser debug: | %s", line);
+                b = e ? e + 1 : NULL;
+            }
+        }
+        return NULL;
+    }
     mgl_denoise_decl *d = calloc(1, sizeof *d);
     for (int r = 0; r < DN_ROLES; r++) {
         char key[64], ch = 0;
