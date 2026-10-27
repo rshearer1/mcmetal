@@ -119,6 +119,8 @@ typedef struct mgl_shader {
     int refs;                   /* attachments */
 } mgl_shader;
 
+typedef struct mgl_denoise_decl mgl_denoise_decl; /* mgl_denoise.c */
+
 typedef struct mgl_program {
     GLuint attached[4];         /* shader names by stage; [3] = geometry (MGL_GEOMETRY_SLOT) */
     int linked;
@@ -150,6 +152,7 @@ typedef struct mgl_program {
     unsigned name_hash_mask;
     int copy_fs;                /* the fragment stage outputs its one texture's sample unchanged (vanilla blit) */
     int jitter_loc;             /* mcm_jitter's location + 1 (MCMETAL_UPSCALE=2), 0 = not looked up yet, -1 = none */
+    mgl_denoise_decl *denoise;  /* the pack's MCMETAL_DENOISE_PASS inputs (MCMETAL_DENOISE=1), or NULL */
 } mgl_program;
 
 typedef struct mgl_query {
@@ -236,6 +239,11 @@ void mgl_window_resize(int w, int h);
 void mgl_rt_link(mgl_program *p);
 void mgl_program_jitter(mgl_program *p, GLuint name, const mgl_target *t, int world); /* MCMETAL_UPSCALE=2, see mgl_program.c */
 void mgl_rt_record(mgl_program *p, const mgl_draw *d);
+/* mgl_denoise.c: MetalFX's denoiser in place of a pack pass */
+int mgl_denoise_on(void);
+mgl_denoise_decl *mgl_denoise_parse(const char *fragment_source);
+void mgl_denoise_free(mgl_denoise_decl *d);
+int mgl_denoise_draw(const mgl_program *p, const mgl_draw *d); /* 1: done instead of the draw */
 void mgl_rt_note_write(mglb_buffer *m, size_t offset, size_t size);
 void mgl_rt_note_free(mglb_buffer *m); /* the backend frees buffer memory for good */
 void mgl_rt_end_frame(void); /* called by the backend before present */

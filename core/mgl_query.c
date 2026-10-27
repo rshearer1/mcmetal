@@ -19,6 +19,9 @@ static const char *const extensions[] = {
     "GL_ARB_explicit_attrib_location",
     "GL_ARB_clear_texture",
     "GL_KHR_debug",
+    /* 16-bit float maths (half on Apple GPUs): our RT pack gates its half-precision code on
+       MC_GL_EXT_shader_explicit_arithmetic_types_float16, so other GL drivers keep 32-bit floats */
+    "GL_EXT_shader_explicit_arithmetic_types_float16",
 };
 #define NUM_EXTENSIONS ((GLint)(sizeof(extensions) / sizeof(extensions[0])))
 

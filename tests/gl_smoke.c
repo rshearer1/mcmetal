@@ -147,6 +147,7 @@ int main(int argc, char **argv)
     static unsigned px[64 * 64];
     signal(SIGSEGV, on_crash);
     signal(SIGBUS, on_crash);
+    setenv("MCMETAL_DENOISE", "1", 1); /* only programs with MCMETAL_DENOISE_PASS see it (test 13) */
     setvbuf(stdout, NULL, _IOLBF, 0); /* piped through tee in CI: keep the lines a crash would otherwise lose */
     const char *r = (const char *)glGetString(GL_RENDERER);
     printf("renderer: %s\n", r ? r : "?");
@@ -962,6 +963,137 @@ int main(int argc, char **argv)
                         "layout(std430, binding = 0) buffer B { float r[]; };\n"
                         "void main() { r[0] = mcm_trace(vec3(0.0), vec3(0.0, 1.0, 0.0), 100.0); }\n");
     check(really_linked(rt), "ray-query (mcm_trace) program compiles on Metal");
+    /* every trace call in a fragment shader (the offline MSL check also compiles its intersector version) */
+    GLuint rtf = program("#version 330 core\nlayout(location = 0) in vec2 pos;\n"
+                         "void main() { gl_Position = vec4(pos, 0.0, 1.0); }\n",
+                         "#version 430\nout vec4 frag;\nuniform vec3 dir;\n"
+                         "float mcm_trace(vec3 origin, vec3 dir, float tmax);\n"
+                         "float mcm_trace_cut(vec3 origin, vec3 dir, float tmax, out uint cut);\n"
+                         "float mcm_trace_coarse(vec3 origin, vec3 dir, float tmax);\n"
+                         "float mcm_trace_tinted(vec3 origin, vec3 dir, float tmax, out vec3 transmit);\n"
+                         "float mcm_trace_hit(vec3 origin, vec3 dir, float tmax, out vec3 normal, out vec4 albedo,\n"
+                         "                    out vec2 lightmap, out int blockId);\n"
+                         "float mcm_trace_hit_coarse(vec3 origin, vec3 dir, float tmax, out vec3 normal,\n"
+                         "                           out vec4 albedo, out vec2 lightmap, out int blockId);\n"
+                         "void main() {\n"
+                         "  uint c; vec3 t, n; vec4 a; vec2 l; int b; float s = 0.0;\n"
+                         "  for (int i = 0; i < 6; i++) s += mcm_trace(vec3(0.0), dir + float(i), 10.0);\n"
+                         "  s += mcm_trace_cut(vec3(0.0), dir, 9.0, c) + mcm_trace_coarse(vec3(0.0), dir, 8.0);\n"
+                         "  s += mcm_trace_tinted(vec3(0.0), dir, 7.0, t) + mcm_trace_hit(vec3(0.0), dir, 6.0, n, a, l, b);\n"
+                         "  s += mcm_trace_hit_coarse(vec3(0.0), dir, 5.0, n, a, l, b);\n"
+                         "  frag = vec4(s, t.x + n.x + a.x, l.x + float(b), float(c));\n"
+                         "}\n", NULL);
+    check(really_linked(rtf), "fragment shader with every mcm_trace call compiles on Metal");
+
+    /* 13. a pack's MCMETAL_DENOISE_PASS (MetalFX's denoiser, MCMETAL_DENOISE=1). Here, without Iris's camera
+       uniforms (and on CI's Mac, without an M3), MetalFX must step aside and the pack's own pass run: a copy. */
+    {
+        GLuint dt[5], dfbo, dout, dvao, dvbo;
+        static const GLenum fmt[4] = {GL_RGBA16F, GL_RGBA16_SNORM, GL_RGBA8, GL_RGBA8};
+        static unsigned char texel[64 * 64 * 4];
+        static float zero[64 * 64];
+        for (int i = 0; i < 64 * 64; i++) {
+            texel[i * 4] = 64; texel[i * 4 + 1] = 128; texel[i * 4 + 2] = 192; texel[i * 4 + 3] = 255;
+        }
+        glGenTextures(5, dt);
+        for (int i = 0; i < 4; i++) {
+            glBindTexture(GL_TEXTURE_2D, dt[i]);
+            glTexImage2D(GL_TEXTURE_2D, 0, fmt[i], 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, texel);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        }
+        glBindTexture(GL_TEXTURE_2D, dt[4]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, 64, 64, 0, GL_DEPTH_COMPONENT, GL_FLOAT, zero);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glGenTextures(1, &dout);
+        glBindTexture(GL_TEXTURE_2D, dout);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glGenFramebuffers(1, &dfbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, dfbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dout, 0);
+        glViewport(0, 0, 64, 64);
+        GLuint dp = program("#version 330 core\nlayout(location = 0) in vec2 pos;\n"
+                            "void main() { gl_Position = vec4(pos, 0.0, 1.0); }\n",
+                            "#version 330 core\n"
+                            "#define MCMETAL_DENOISE_PASS\n"
+                            "#define MCMETAL_DENOISE_COLOR colortex0\n"
+                            "#define MCMETAL_DENOISE_DEPTH depthtex0\n"
+                            "#define MCMETAL_DENOISE_NORMAL colortex1\n"
+                            "#define MCMETAL_DENOISE_ALBEDO colortex2\n"
+                            "#define MCMETAL_DENOISE_ROUGHNESS colortex10 b\n"
+                            "uniform sampler2D colortex0, colortex1, colortex2, colortex10, depthtex0;\n"
+                            "uniform float never;\nout vec4 frag;\n"
+                            "void main() {\n"
+                            "  ivec2 c = ivec2(gl_FragCoord.xy);\n"
+                            "  frag = texelFetch(colortex0, c, 0);\n"
+                            "  if (never > 1.0) frag += texelFetch(colortex1, c, 0) + texelFetch(colortex2, c, 0)\n"
+                            "                          + texelFetch(colortex10, c, 0) + texelFetch(depthtex0, c, 0);\n"
+                            "}\n", NULL);
+        check(really_linked(dp), "denoise pass program links");
+        float quad[] = {-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1};
+        glGenVertexArrays(1, &dvao);
+        glBindVertexArray(dvao);
+        glGenBuffers(1, &dvbo);
+        glBindBuffer(GL_ARRAY_BUFFER, dvbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof quad, quad, GL_STATIC_DRAW);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8, (void *)0);
+        glUseProgram(dp);
+        static const char *names[5] = {"colortex0", "colortex1", "colortex2", "colortex10", "depthtex0"};
+        for (int i = 0; i < 5; i++) {
+            glActiveTexture(GL_TEXTURE0 + (GLenum)i);
+            glBindTexture(GL_TEXTURE_2D, dt[i]);
+            glUniform1i(glGetUniformLocation(dp, names[i]), i);
+        }
+        glActiveTexture(GL_TEXTURE0);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        read_texture(rb, dout, ssbo, px);
+        char what[160];
+        snprintf(what, sizeof what, "denoise pass without MetalFX runs the pack's own copy (pixel %08x)", px[32 * 64 + 32]);
+        check(near(px[32 * 64 + 32], rgba(64, 128, 192, 255)) && near(px[64 + 1], rgba(64, 128, 192, 255)), what);
+    }
+
+    /* 14. 16-bit floats (GL_EXT_shader_explicit_arithmetic_types_float16, Metal's half): compiles and draws */
+    {
+        int listed = 0;
+        GLint n = 0;
+        glGetIntegerv(GL_NUM_EXTENSIONS, &n);
+        for (GLint i = 0; i < n; i++)
+            listed |= !strcmp((const char *)glGetStringi(GL_EXTENSIONS, (GLuint)i), "GL_EXT_shader_explicit_arithmetic_types_float16");
+        check(listed, "GL_EXT_shader_explicit_arithmetic_types_float16 is listed (Iris: MC_GL_EXT_...)");
+        GLuint hp = program("#version 330 core\nlayout(location = 0) in vec2 pos;\n"
+                            "void main() { gl_Position = vec4(pos, 0.0, 1.0); }\n",
+                            "#version 330 core\n#extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable\n"
+                            "uniform vec4 color;\nout vec4 frag;\n"
+                            "void main() { f16vec4 c = f16vec4(color) * float16_t(0.5) + f16vec4(0.25hf); frag = vec4(c); }\n", NULL);
+        check(really_linked(hp), "half-precision fragment shader compiles on Metal");
+        GLuint ht, hfbo, hvao, hvbo;
+        glGenTextures(1, &ht);
+        glBindTexture(GL_TEXTURE_2D, ht);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glGenFramebuffers(1, &hfbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, hfbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ht, 0);
+        glViewport(0, 0, 64, 64);
+        float quad[] = {-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1};
+        glGenVertexArrays(1, &hvao);
+        glBindVertexArray(hvao);
+        glGenBuffers(1, &hvbo);
+        glBindBuffer(GL_ARRAY_BUFFER, hvbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof quad, quad, GL_STATIC_DRAW);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8, (void *)0);
+        glUseProgram(hp);
+        glUniform4f(glGetUniformLocation(hp, "color"), 1.0f, 0.5f, 0.0f, 1.0f);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        read_texture(rb, ht, ssbo, px);
+        char what[160];
+        snprintf(what, sizeof what, "half-precision maths draws the right colour (pixel %08x)", px[32 * 64 + 32]);
+        check(near(px[32 * 64 + 32], rgba(191, 128, 64, 191)), what);
+    }
 
     printf("%d check(s) failed\n", failed);
     return failed;
