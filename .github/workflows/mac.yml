@@ -77,6 +77,11 @@ jobs:
         run: |
           MGL_LOG=$PWD/smoke-ut-mgl.log MGL_GS_UNTRACKED=1 ./build/gl_smoke | tee smoke-ut.txt
           cat smoke-ut-mgl.log || true
+      - name: Smoke test, our own hazard tracking (MGL_OVERLAP=1)
+        run: |
+          MGL_LOG=$PWD/smoke-ov-mgl.log MGL_OVERLAP=1 MGL_PROFILE=2 ./build/gl_smoke | tee smoke-ov.txt
+          cat smoke-ov-mgl.log || true
+          diff <(grep -E '^(PASS|FAIL|SKIP)' smoke.txt) <(grep -E '^(PASS|FAIL|SKIP)' smoke-ov.txt) && echo "same results as the tracked run"
       - name: Smoke test repeats (an exit crash showed up once in ~8 runs, 10-22)
         run: |
           for i in 1 2 3 4 5; do
