@@ -369,8 +369,9 @@ void main() {
         // (only as far as they get a reflection below: a rough metal reflects its surroundings blurred, which
         // the diffuse light stands in for, instead of going black)
         if (metal) col = emission(a, mat) + (col - emission(a, mat)) * mix(1.0, 0.08, smoothstep(0.45, 0.75, smoothness));
-        // LabPBR emission (specular map alpha)
-        col += a * m.a * (4.0 * EMISSIVE_STRENGTH);
+        // LabPBR emission (specular map alpha); faint light blocks (glowing maples: a resource pack marks every texel)
+        // only as softly as their own glow, or a grove at night is a white blaze
+        col += a * m.a * ((mat == MAT_EMISSIVE_DIM ? 0.2 : 4.0) * EMISSIVE_STRENGTH);
 #ifdef LABPBR
         // shiny surfaces: the sun's highlight (GGX), and ray-traced reflections where smooth enough
         if ((smoothness > 0.01 || metal) && m.b < 0.01 && !handLike(mat)) {
