@@ -6,6 +6,7 @@
 #   effects effects-off effects-shaders effects-PACK ab-effects[-...] (water effect mods: Wakes, Particular, ...)
 #   pack-NAME packnight-NAME packshadow-NAME (third-party packs, see PACKS below; pack-NAME@OPT=value,... adds pack options)
 #   herd-NAME (the pack over a busy farm: 240 mobs and 64 chests, for entity costs; ab-herd-NAME for A/B)
+#   hud-NAME (the pack in the pool scene in survival, hotbar, effects, boss bar and chat on screen; ab-hud-NAME for A/B)
 #   glcount-pack-NAME (the pack on Apple's OpenGL, draws counted by tools/glcount.c)
 #   ab-pack-NAME ab-packnight-NAME (the pack three times in one job: new, old = with GAME_AB_OFF's env, new)
 #   archive-NAME (pipeline binary archive: cold, warm, warm without archive)
@@ -567,6 +568,7 @@ third_party() { # pack-NAME / packnight-NAME / packshadow-NAME / herd-NAME [OUTN
     packnight-*|packshadow-*) scene midnight clear "$([ "${p%%-*}" = packshadow ] && echo shadows || echo scene)"
         grep "^${name%%+*}|" <<< "$PACK_LIGHT" | cut -d'|' -f2 > "$opts"; [ -s "$opts" ] || rm -f "$opts" ;;
     herd-*) scene noon clear herd ;; # herd-NAME: the busy farm (240 mobs, 64 chests) for entity costs
+    hud-*) scene noon clear hud ;; # hud-NAME: the pool scene in survival with the HUD full (hud.mcfunction)
     *) scene noon ;;
     esac
     [ -n "$extra" ] && tr ',' '\n' <<< "$extra" >> "$opts"
@@ -832,7 +834,7 @@ for p in $PHASES; do
         third_party "$inner" "$p-new1"
         third_party "$inner" "$p-old" ${GAME_AB_OFF:-}
         third_party "$inner" "$p-new2" ;;
-    pack-*|packnight-*|packshadow-*|herd-*) third_party "$p" ;; # compatibility sweep: pack-photon, packnight-bsl, pack-complementary+euphoria, ...
+    pack-*|packnight-*|packshadow-*|herd-*|hud-*) third_party "$p" ;; # compatibility sweep: pack-photon, packnight-bsl, pack-complementary+euphoria, ...
         # packshadow-NAME: night in the shadows room (shadows.mcfunction)
     archive-*) # Metal pipeline binary archive: the pack from an empty shader cache (archive written), again with the
                # archive, and again with the shader cache but no archive. Run with bench=true settle=0 so the fps

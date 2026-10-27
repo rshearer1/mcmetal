@@ -371,6 +371,14 @@ static int build_draw(mgl_draw *d)
         b->eq_a = (int)f[5];
         b->color_mask = cm;
     }
+    /* The HUD cache (mod: hud/HudHooks) draws the HUD onto a clear texture and lays that over the world later with
+       (ONE, ONE_MINUS_SRC_ALPHA). For that the texture's alpha must build up the way "over" does: whatever alpha
+       factors the HUD's draws ask for (vanilla's default is ONE, ZERO), alpha = src + dst * (1 - src alpha). */
+    if (mgl->hud_fbo && mgl->draw_fbo == mgl->hud_fbo && d->blend[0].enabled) {
+        d->blend[0].src_a = GL_ONE;
+        d->blend[0].dst_a = GL_ONE_MINUS_SRC_ALPHA;
+        d->blend[0].eq_a = GL_FUNC_ADD;
+    }
     d->depth_test = mgl->depth_test;
     d->depth_write = mgl->depth_mask && mgl->depth_test; /* GL: no depth writes while the test is disabled */
     d->depth_func = (int)mgl->depth_func;
