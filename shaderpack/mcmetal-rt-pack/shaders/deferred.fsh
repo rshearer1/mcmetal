@@ -63,6 +63,9 @@ bool cachedGI(vec3 hp, out vec3 gi) {
     #include "/lib/reflect.glsl"
 #endif
 #include "/lib/lights.glsl"
+#if defined PATH_TRACED && defined USE_RT && defined RT_GI
+    #include "/lib/pathtrace.glsl"
+#endif
 
 
 in vec2 texcoord;
@@ -129,7 +132,11 @@ void main() {
     vec3 o = mat == MAT_FOLIAGE ? p + d * 0.05 : p + n * 0.02;
     float hit;
   #ifdef RT_GI
-  #ifdef GI_SHORT_RAYS
+  #ifdef PATH_TRACED
+    // the whole bounce light as one path of up to PT_BOUNCES bounces, each asking the sun and a light block
+    // directly (lib/pathtrace.glsl)
+    gi = pathTrace(o, d, texture(colortex1, texcoord).w, lightDir, sunCol, skyAmb, sunDir, gl_FragCoord.xy, hit);
+  #elif defined GI_SHORT_RAYS
     // short rays (most bounce light comes from within a few blocks; long rays cost the most): a ray that leaves
     // the short range without a hit takes the sky, but only as much as Minecraft's sky light says reaches here,
     // so a big hall doesn't fill with sky light through walls the ray never got to
@@ -143,7 +150,9 @@ void main() {
   #endif
     // skylight through openings: less saturated than the raw sky, so rooms aren't tinted slate-blue (the eye
     // white-balances indoors); Sky Light scales it like it scales the sky ambient
+  #ifndef PATH_TRACED   // (the path pales its own sky light, at every bounce)
     if (hit < 0.0) gi = mix(vec3(luma(gi)), gi, SKY_GI_SATURATION) * SKY_LIGHT_STRENGTH;
+  #endif
     gi = min(gi, vec3(16.0));   // one lucky ray into the sun-lit sky must not leave a bright speck
     #ifdef USE_LIGHTS
     // coloured block light: one nearby light per pixel and frame, averaged and filtered along with the GI. Where

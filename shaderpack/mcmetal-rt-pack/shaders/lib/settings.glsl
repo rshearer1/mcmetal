@@ -12,6 +12,9 @@
 #endif
 
 #define RT_GI // ray-traced global illumination: bounce light, colour bleeding, sky light through openings
+//#define PATH_TRACED // path tracing like Bedrock RTX: bounce light follows several bounces, each lit by the sun and light blocks directly (slower; for M3 and newer)
+#define PT_BOUNCES 3 // [1 2 3 4 6] with Path Traced: how many times light bounces
+#define PT_DISTANCE 48.0 // [16.0 24.0 32.0 48.0 64.0 96.0] with Path Traced: how far each bounce looks, in blocks
 #define GI_RATE 2 // [1 2 4] trace bounce light and AO for 1 in GI_RATE pixels each frame (the rest keep their average)
 #define GI_ADAPTIVE // rays where needed: just-uncovered pixels trace every frame, settled ones 1 frame in 4
 #define UNIFIED_TARGETS // see-through things share water's buffer list, so they draw in one Metal render pass
@@ -223,6 +226,8 @@ const float sunPathRotation = -30.0; // [-45.0 -40.0 -30.0 -20.0 -10.0 0.0 10.0 
 #ifdef WATER_FOAM
 #endif
 #ifdef GI_COARSE_RAYS
+#endif
+#ifdef PATH_TRACED
 #endif
 // MetalFX denoises the whole picture: our own GI denoiser steps aside
 #ifdef METALFX_DENOISE
