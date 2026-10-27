@@ -19,6 +19,7 @@
 #include <mach/mach_time.h>
 #include <pthread.h>
 #include <pthread/qos.h>
+#include <sys/time.h>
 #include "mgl_state.h"
 
 #define MGL_EXPORT __attribute__((visibility("default")))
@@ -53,7 +54,8 @@ static int cenc_concurrent; /* cenc lets its dispatches overlap (geometry-shader
                           =0 turns it off. Waits on completion signals instead of polling, and presents at an even rate
                           (120/60/40/30/24/20/15 fps, 12 with interpolation, whichever the last frames' cost sustains, only rates that divide the screen's
                           refresh rate; MGL_TARGET_FPS forces one, over the power cap too: it's a test override).
-                          Only with vsync on. MGL_PRESENT_STATS=1 logs how evenly frames reach the screen.
+                          Only with vsync on. MGL_PRESENT_STATS=1 logs how evenly frames reach the screen (also
+                          estimated by a display model, for hidden test windows; MGL_SIM_DISPLAY=1, see sim_present).
                           MGL_PACE_FREE_FPS=N leaves frames that fit N fps or more unpaced (see pace_free). */
 static int opt(const char *name)
 {
@@ -6457,10 +6459,7 @@ static int power_cap_fps(void)
 static const int pace_rates[] = {120, 60, 40, 30, 24, 20, 15, 12};
 enum { PACE_N = sizeof pace_rates / sizeof pace_rates[0] };
 
-/* Which rates may be used with shown_per_frame frames on screen per real frame; returns the slowest one's index.
-   Only rates that are a whole number of the screen's refreshes (40 on a 60 Hz screen would judder) and within the
-   power cap. A screen none of them divides (e.g. 144 Hz) gets them all, as before. */
-static int pace_allowed(int shown_per_frame, int allowed[PACE_N])
+static int screen_hz(void)
 {
     static int hz;
     if (!hz) {
@@ -6469,7 +6468,15 @@ static int pace_allowed(int shown_per_frame, int allowed[PACE_N])
             hz = 60;
         mgl_log("frame pacing: screen refreshes at %d Hz", hz);
     }
-    int cap = power_cap_fps(), any = 0;
+    return hz;
+}
+
+/* Which rates may be used with shown_per_frame frames on screen per real frame; returns the slowest one's index.
+   Only rates that are a whole number of the screen's refreshes (40 on a 60 Hz screen would judder) and within the
+   power cap. A screen none of them divides (e.g. 144 Hz) gets them all, as before. */
+static int pace_allowed(int shown_per_frame, int allowed[PACE_N])
+{
+    int hz = screen_hz(), cap = power_cap_fps(), any = 0;
     for (int i = 0; i < PACE_N; i++)
         any |= allowed[i] = hz % (pace_rates[i] * shown_per_frame) == 0 && pace_rates[i] * shown_per_frame <= hz &&
                             (!cap || pace_rates[i] <= cap) && (shown_per_frame > 1 || pace_rates[i] >= 15);
@@ -6610,35 +6617,66 @@ static int pace_free(mgl_ctx *c, int fps)
    and judder = share of frames whose time on screen differs from the previous frame's by more than 2 ms.
    MGL_PRESENT_STATS=2 also logs the first 16 times on screen of each second, in ms. */
 static pthread_mutex_t pstat_lock = PTHREAD_MUTEX_INITIALIZER;
-static struct {
+typedef struct pstat_t {
     double last, sum, sum2, worst, prev_iv, seq[16];
     unsigned long n, judder, dropped;
-} pstat;
+} pstat_t;
+static pstat_t pstat, pstat_est; /* from presentedTime; estimated by the display model (see sim_present) */
+
+static void present_stat_add(pstat_t *ps, double when)
+{
+    if (when <= 0)
+        ps->dropped++;
+    else {
+        if (ps->last > 0) {
+            double iv = (when - ps->last) * 1000.0;
+            if (iv > 0 && iv < 250) {
+                if (ps->n < 16)
+                    ps->seq[ps->n] = iv;
+                ps->n++;
+                ps->sum += iv;
+                ps->sum2 += iv * iv;
+                if (iv > ps->worst)
+                    ps->worst = iv;
+                if (ps->prev_iv > 0 && fabs(iv - ps->prev_iv) > 2.0)
+                    ps->judder++;
+                ps->prev_iv = iv;
+            }
+        }
+        ps->last = when;
+    }
+}
 
 static void present_stat(double when)
 {
     pthread_mutex_lock(&pstat_lock);
-    if (when <= 0)
-        pstat.dropped++;
-    else {
-        if (pstat.last > 0) {
-            double iv = (when - pstat.last) * 1000.0;
-            if (iv > 0 && iv < 250) {
-                if (pstat.n < 16)
-                    pstat.seq[pstat.n] = iv;
-                pstat.n++;
-                pstat.sum += iv;
-                pstat.sum2 += iv * iv;
-                if (iv > pstat.worst)
-                    pstat.worst = iv;
-                if (pstat.prev_iv > 0 && fabs(iv - pstat.prev_iv) > 2.0)
-                    pstat.judder++;
-                pstat.prev_iv = iv;
-            }
-        }
-        pstat.last = when;
-    }
+    present_stat_add(&pstat, when);
     pthread_mutex_unlock(&pstat_lock);
+}
+
+static void present_stat_log(pstat_t *ps, const char *what)
+{
+    if (!ps->n)
+        return;
+    double mean = ps->sum / ps->n, var = ps->sum2 / ps->n - mean * mean;
+    mgl_log("present stats%s: %.1f shown fps, on screen %.2f ms avg, %.2f ms spread, %.2f ms worst, %.1f%% judder, %lu dropped",
+            what, 1000.0 / mean, mean, var > 0 ? sqrt(var) : 0.0, ps->worst, 100.0 * ps->judder / ps->n, ps->dropped);
+    static int seq = -1;
+    if (seq < 0) {
+        const char *e = getenv("MGL_PRESENT_STATS");
+        seq = e && atoi(e) >= 2;
+    }
+    if (seq) {
+        char line[200];
+        int k = 0;
+        for (unsigned long i = 0; i < ps->n && i < 16 && k < (int)sizeof line; i++)
+            k += snprintf(line + k, sizeof line - k, " %.1f", ps->seq[i]);
+        mgl_log("present stats%s: times on screen (ms):%s", what, line);
+    }
+    double last = ps->last, prev_iv = ps->prev_iv;
+    memset(ps, 0, sizeof *ps);
+    ps->last = last;
+    ps->prev_iv = prev_iv;
 }
 
 static void present_stats_report(void)
@@ -6651,28 +6689,102 @@ static void present_stats_report(void)
         return;
     start = t;
     pthread_mutex_lock(&pstat_lock);
-    if (pstat.n) {
-        double mean = pstat.sum / pstat.n, var = pstat.sum2 / pstat.n - mean * mean;
-        mgl_log("present stats: %.1f shown fps, on screen %.2f ms avg, %.2f ms spread, %.2f ms worst, %.1f%% judder, %lu dropped",
-                1000.0 / mean, mean, var > 0 ? sqrt(var) : 0.0, pstat.worst, 100.0 * pstat.judder / pstat.n, pstat.dropped);
-        static int seq = -1;
-        if (seq < 0) {
-            const char *e = getenv("MGL_PRESENT_STATS");
-            seq = e && atoi(e) >= 2;
-        }
-        if (seq) {
-            char line[200];
-            int k = 0;
-            for (unsigned long i = 0; i < pstat.n && i < 16 && k < (int)sizeof line; i++)
-                k += snprintf(line + k, sizeof line - k, " %.1f", pstat.seq[i]);
-            mgl_log("present stats: times on screen (ms):%s", line);
+    present_stat_log(&pstat, "");
+    present_stat_log(&pstat_est, " (estimated)");
+    pstat.dropped = 0;
+    pthread_mutex_unlock(&pstat_lock);
+}
+
+/* The display model, for test runs whose window macOS never shows (MCMETAL_BACKGROUND=behind keeps it under
+   Robert's apps, so no drawable gets a presentedTime and present stats stayed empty: DC2v). With present stats on,
+   each frame's time on screen is also worked out from its GPU end time the way a 120 Hz (the screen's rate)
+   vsynced CAMetalLayer shows frames: at the first refresh after the GPU finishes it, in order, each shown for at
+   least one refresh and at least its presentDrawable:afterMinimumDuration:. Logged as "present stats
+   (estimated)", next to the real stats when there are any, so the model can be checked against a shown window.
+   MGL_SIM_DISPLAY=1 (test option, vsync on) also makes a hidden window behave like a shown one: the game waits
+   for a free drawable as it would when the screen holds them (3 drawables: one on screen, two queued), and
+   pacing counts missed deadlines from the estimates. A covered window otherwise hands out drawables at once, so
+   pacing never holds frames back and the fps isn't what a player sees (DC2v: 78 fps paced at 60). */
+enum { SIM_RING = 16 };
+static pthread_mutex_t sim_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t sim_cond = PTHREAD_COND_INITIALIZER;
+static double sim_min[SIM_RING], sim_shown[SIM_RING]; /* per drawable: minimum duration, estimated time shown */
+static uint64_t sim_next, sim_done;                   /* drawables watched, and estimated so far */
+static double sim_prev_shown, sim_prev_min;
+static _Atomic unsigned real_shown_recent;            /* drawables with a real presentedTime lately */
+
+static int sim_display_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        on = opt("MGL_SIM_DISPLAY");
+        if (on)
+            mgl_log("present: hidden window shown through the display model (MGL_SIM_DISPLAY)");
+    }
+    return on;
+}
+
+/* Drawable `idx` finished on the GPU at `end` (host seconds) */
+static void sim_present(uint64_t idx, double end, int vsync)
+{
+    double period = 1.0 / screen_hz(), shown, iv = 0;
+    pthread_mutex_lock(&sim_lock);
+    if (!vsync)
+        shown = end;
+    else {
+        shown = ceil(end / period - 1e-6) * period;
+        if (sim_prev_shown > 0) {
+            double hold = sim_prev_min > period ? ceil(sim_prev_min / period - 0.01) * period : period;
+            if (shown < sim_prev_shown + hold - 1e-6)
+                shown = sim_prev_shown + hold;
         }
     }
-    double last = pstat.last, prev_iv = pstat.prev_iv;
-    memset(&pstat, 0, sizeof pstat);
-    pstat.last = last;
-    pstat.prev_iv = prev_iv;
+    if (sim_prev_shown > 0 && shown > sim_prev_shown)
+        iv = (shown - sim_prev_shown) * 1000.0;
+    sim_prev_shown = shown;
+    sim_prev_min = sim_min[idx % SIM_RING];
+    sim_shown[idx % SIM_RING] = shown;
+    if (idx + 1 > sim_done)
+        sim_done = idx + 1;
+    pthread_cond_broadcast(&sim_cond);
+    pthread_mutex_unlock(&sim_lock);
+    pthread_mutex_lock(&pstat_lock);
+    present_stat_add(&pstat_est, shown);
     pthread_mutex_unlock(&pstat_lock);
+    if (iv > 0 && sim_display_on() && !atomic_load(&real_shown_recent))
+        pace_presented(iv);
+}
+
+/* MGL_SIM_DISPLAY=1, window not shown: wait until the next drawable would be free on a shown window, i.e. until
+   the frame two before it is on screen (that releases the drawable of the one before that). At most 100 ms. */
+static void sim_wait_drawable(int vsync)
+{
+    if (!vsync || !sim_display_on() || atomic_load(&real_shown_recent))
+        return;
+    pthread_mutex_lock(&sim_lock);
+    if (sim_next >= 2) {
+        uint64_t need = sim_next - 2;
+        double give_up = now_ns() * 1e-9 + 0.1;
+        for (;;) {
+            double t = now_ns() * 1e-9, wake;
+            if (t >= give_up)
+                break;
+            if (sim_done > need) {
+                double shown = sim_shown[need % SIM_RING];
+                if (t >= shown)
+                    break;
+                wake = shown < give_up ? shown : give_up;
+            } else
+                wake = t + 0.001 < give_up ? t + 0.001 : give_up;
+            uint64_t ns = (uint64_t)((wake - t) * 1e9) + 1;
+            struct timeval tv;
+            gettimeofday(&tv, NULL);
+            uint64_t abs_ns = (uint64_t)tv.tv_sec * 1000000000ull + (uint64_t)tv.tv_usec * 1000ull + ns;
+            struct timespec ts = {(time_t)(abs_ns / 1000000000ull), (long)(abs_ns % 1000000000ull)};
+            pthread_cond_timedwait(&sim_cond, &sim_lock, &ts);
+        }
+    }
+    pthread_mutex_unlock(&sim_lock);
 }
 
 static mgl_ctx *current;
@@ -7821,20 +7933,32 @@ static void fg_decide(mgl_ctx *c)
 static atomic_int presents_waiting; /* drawn but not yet on screen */
 
 /* Count a drawable as waiting until it is shown, and feed pacing and MGL_PRESENT_STATS its time on screen. */
-static void watch_drawable(id<CAMetalDrawable> drawable)
+static uint64_t sim_cur; /* the drawable watched last, for sim_set_min */
+
+static void watch_drawable(mgl_ctx *c, id<CAMetalDrawable> drawable)
 {
-    [current_cb() addCompletedHandler:^(id<MTLCommandBuffer> done) {
-      (void)done;
-      atomic_fetch_add(&presents_waiting, 1);
-    }];
     static int stats = -1;
     if (stats < 0)
         stats = opt_profile > 0 || opt("MGL_PRESENT_STATS");
+    int model = stats || sim_display_on(), vsync = c->vsync;
+    pthread_mutex_lock(&sim_lock);
+    uint64_t idx = sim_cur = sim_next++;
+    sim_min[idx % SIM_RING] = 0;
+    pthread_mutex_unlock(&sim_lock);
+    [current_cb() addCompletedHandler:^(id<MTLCommandBuffer> done) {
+      atomic_fetch_add(&presents_waiting, 1);
+      if (model) {
+          double end = done.GPUEndTime;
+          sim_present(idx, end > 0 ? end : now_ns() * 1e-9, vsync);
+      }
+    }];
     [drawable addPresentedHandler:^(id<MTLDrawable> d) {
       atomic_fetch_sub(&presents_waiting, 1);
       static double last_shown;
       static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER; /* handlers may run on more than one thread */
       double when = d.presentedTime, iv = 0;
+      unsigned recent = atomic_load(&real_shown_recent);
+      atomic_store(&real_shown_recent, when > 0 ? 120 : recent ? recent - 1 : 0);
       if (when > 0) {
           pthread_mutex_lock(&lock);
           if (last_shown > 0 && when > last_shown)
@@ -7848,6 +7972,14 @@ static void watch_drawable(id<CAMetalDrawable> drawable)
       if (stats)
           present_stat(when);
     }];
+}
+
+/* The minimum time on screen the last watched drawable was presented with, for the display model */
+static void sim_set_min(double d)
+{
+    pthread_mutex_lock(&sim_lock);
+    sim_min[sim_cur % SIM_RING] = d;
+    pthread_mutex_unlock(&sim_lock);
 }
 
 /* Draw a frame (GL row order) into the drawable the right way up, through MetalFX's upscaler when that's on. */
@@ -8019,13 +8151,15 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
         every_frame = getenv("MGL_PRESENT_EVERY_FRAME") && atoi(getenv("MGL_PRESENT_EVERY_FRAME"));
     int skip = !c->vsync && !every_frame && atomic_load(&presents_waiting) >= 2;
     uint64_t t_draw = now_ns();
+    if (!skip)
+        sim_wait_drawable(c->vsync);
     id<CAMetalDrawable> drawable = skip ? nil : [c->layer nextDrawable];
     prof.wait_ns += now_ns() - t_draw;
     pace_wait_ns += now_ns() - t_draw;
     prof.skipped_presents += skip;
     sw_mark(SW_DRAWABLE);
     if (drawable) {
-        watch_drawable(drawable);
+        watch_drawable(c, drawable);
         /* Frame interpolation: the made-up frame, then the real one half a frame after it. deltaTime is the paced
            real frame time once there is one. */
         double frame_s = c->paced_fps > 0 ? 1.0 / c->paced_fps : c->avg_frame_ms > 0 ? c->avg_frame_ms * 1e-3 : 1.0 / 60;
@@ -8062,20 +8196,24 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
                 show_mid = opt("MCMETAL_FG_SHOW_MID");
             if (show_mid) { /* test: show only made-up frames (test screenshots of the upscaled frame then see them) */
                 [current_cb() presentDrawable:drawable afterMinimumDuration:2 * half];
+                sim_set_min(2 * half);
                 fg_time_stage(FG_SHOW_MID);
                 drawable = nil;
             } else {
                 [current_cb() presentDrawable:drawable afterMinimumDuration:half];
+                sim_set_min(half);
                 fg_time_stage(FG_SHOW_MID);
                 commit(); /* send the made-up frame on its way before waiting for the second drawable */
+                sim_wait_drawable(c->vsync);
                 uint64_t t_d2 = now_ns();
                 drawable = [c->layer nextDrawable];
                 prof.wait_ns += now_ns() - t_d2;
                 pace_wait_ns += now_ns() - t_d2;
                 if (drawable) {
-                    watch_drawable(drawable);
+                    watch_drawable(c, drawable);
                     draw_to_drawable(c, OBJ(id<MTLTexture>, mgl->window_color->mtl), drawable);
                     [current_cb() presentDrawable:drawable afterMinimumDuration:half];
+                    sim_set_min(half);
                     fg_time_stage(FG_SHOW_REAL);
                 }
             }
@@ -8106,8 +8244,10 @@ MGL_EXPORT void mgl_glfw_swap(void *ctx)
             }
             if (pace_free(c, fps))
                 [current_cb() presentDrawable:drawable];
-            else
+            else {
                 [current_cb() presentDrawable:drawable afterMinimumDuration:1.0 / fps];
+                sim_set_min(1.0 / fps);
+            }
         } else {
             [current_cb() presentDrawable:drawable];
         }
