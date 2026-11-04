@@ -22,6 +22,7 @@
 #include <pthread/qos.h>
 #include <sys/time.h>
 #include "mgl_state.h"
+#include "mgl_render_size.h"
 
 #define MGL_EXPORT __attribute__((visibility("default")))
 #define OBJ(T, p) ((__bridge T)(p))
@@ -7300,31 +7301,33 @@ static int upscale_on(void)
 }
 
 /* MCMETAL_UPSCALE_SCALE=N: with the upscaler on, the game renders at N% of the Retina size each way (34-100,
-   default 50 = the window's point size). The patched GLFW reports the same size (see build_mac.sh), computed the
-   same way: floor(points * backing scale * N / 100). */
+   default 50 = the window's point size). */
 static int render_pct(void)
 {
-    static int pct;
-    if (!pct) {
-        const char *e = getenv("MCMETAL_UPSCALE_SCALE");
-        pct = e ? atoi(e) : 50;
-        pct = pct < 34 ? 34 : pct > 100 ? 100 : pct;
-    }
-    return pct;
+    int pct = mgl_upscale_pct();
+    return pct ? pct : 100;
 }
 
+/* The render size: the drawable's size, or less with MCMETAL_UPSCALE or the render cap (MCMETAL_RENDER_CAP,
+   default 2560x1440 worth of pixels), then MetalFX upscales to the drawable. The patched GLFW reports the same
+   size as the framebuffer, from the same function (core/mgl_render_size.h). */
 static void update_size(mgl_ctx *c)
 {
     CGSize pt = c->layer.bounds.size, px = pt;
-    px.width *= c->layer.contentsScale;
-    px.height *= c->layer.contentsScale;
+    double cs = c->layer.contentsScale;
+    px.width *= cs;
+    px.height *= cs;
     if (px.width < 1 || px.height < 1)
         return;
     if (!CGSizeEqualToSize(c->layer.drawableSize, px))
         c->layer.drawableSize = px;
-    int up = upscale_on() && c->layer.contentsScale > 1;
-    c->w = (int)(up ? floor(pt.width * c->layer.contentsScale * render_pct() / 100.0) : px.width);
-    c->h = (int)(up ? floor(pt.height * c->layer.contentsScale * render_pct() / 100.0) : px.height);
+    int w, h, below = mgl_render_size(px.width, px.height, cs, &w, &h);
+    if (below && (w != c->w || h != c->h))
+        mgl_log("render size %dx%d, MetalFX upscales to the window's %dx%d (MCMETAL_RENDER_CAP=%d, MCMETAL_UPSCALE=%s)",
+                w, h, (int)px.width, (int)px.height, mgl_render_cap(),
+                getenv("MCMETAL_UPSCALE") ? getenv("MCMETAL_UPSCALE") : "off");
+    c->w = w;
+    c->h = h;
 }
 
 static id<MTLTexture> upscaled; /* last MetalFX output, for test screenshots */
@@ -7818,7 +7821,7 @@ static float halton(unsigned i, unsigned base)
    the snapshot is stored). The cycle covers each output pixel ~8 times: 8 x (output / input pixels), at most 64. */
 static void tu_jitter_px(uint64_t n, float j[2])
 {
-    double ratio = 100.0 / render_pct();
+    double ratio = current && current->w > 0 ? current->layer.drawableSize.width / current->w : 100.0 / render_pct();
     unsigned len = (unsigned)(8.0 * ratio * ratio + 0.5);
     len = len < 8 ? 8 : len > 64 ? 64 : len;
     unsigned i = (unsigned)(n % len) + 1;
@@ -8594,7 +8597,8 @@ static void latency_report(void)
 /* Draw a frame (GL row order) into the drawable the right way up, through MetalFX's upscaler when that's on. */
 static void draw_to_drawable(mgl_ctx *c, id<MTLTexture> src, id<CAMetalDrawable> drawable)
 {
-    if (upscale_on()) {
+    /* also when the render cap made the frame smaller than the window */
+    if (upscale_on() || src.width != drawable.texture.width || src.height != drawable.texture.height) {
         if (src == OBJ(id<MTLTexture>, mgl->window_color->mtl) && tu_frame(src, drawable.texture))
             return;
         id<MTLTexture> up = upscale(c, src, drawable.texture.width, drawable.texture.height);

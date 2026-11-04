@@ -75,6 +75,12 @@ public final class MetalBootstrap implements GraphicsBootstrapper {
             Files.writeString(options, """
                     # mcmetal options, read when the game starts. Remove the # in front of a line to turn it on.
                     #
+                    # The most the game draws before MetalFX upscales to the window, as a 16:9 height: 1440 = as many
+                    # pixels as 2560x1440 (the window's shape is kept). Retina and scaled external screens are 5-8K
+                    # behind the scenes; above this the game draws at the cap and MetalFX sharpens it to full size.
+                    # Higher = sharper and slower (2160 = 4K), 0 = always draw at the screen's full size.
+                    #MCMETAL_RENDER_CAP=1440
+                    #
                     # Heavy shader packs (SEUS PTGI, path tracing) on a Retina screen: draw at half the resolution
                     # each way and sharpen to full size with Apple's MetalFX upscaler. About 2.5x faster, a little
                     # softer than native.
