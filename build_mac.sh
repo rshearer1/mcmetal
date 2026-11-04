@@ -40,15 +40,15 @@ clang "${CFLAGS[@]}" -std=gnu11 -Icore -Itools -dynamiclib -o build/libglprof-mc
     -install_name @rpath/libglprof-mcmetal.dylib
 
 # 4. Patched GLFW 3.4 (nsgl_context.m replaced by glfw/mtl_context.m)
-if [ ! -d build/glfw-3.4 ]; then
-    curl -fsSL -o build/glfw-3.4.zip https://github.com/glfw/glfw/releases/download/3.4/glfw-3.4.zip
-    (cd build && unzip -q glfw-3.4.zip)
-fi
+# Unpacked fresh every build, so the patches below always start from GLFW's own files (an older patched copy
+# left in build/ would otherwise keep older patches).
+[ -f build/glfw-3.4.zip ] || curl -fsSL -o build/glfw-3.4.zip https://github.com/glfw/glfw/releases/download/3.4/glfw-3.4.zip
+rm -rf build/glfw-3.4 && (cd build && unzip -q glfw-3.4.zip)
 G=build/glfw-3.4/src
 cp glfw/mtl_context.m $G/nsgl_context.m
 # MCMETAL_BACKGROUND=behind|front (test runs): the game never takes focus or the Dock; "behind" also opens the
-# window behind other windows. Patched in once; the markers keep it idempotent.
-grep -q MCMETAL_BACKGROUND $G/cocoa_window.m || python3 - "$G" <<'PY'
+# window behind other windows.
+python3 - "$G" <<'PY'
 import sys
 g = sys.argv[1]
 w = open(g + "/cocoa_window.m").read()
@@ -69,42 +69,44 @@ i = i.replace("        [NSApp setActivationPolicy:NSApplicationActivationPolicyR
               "                                                       reason:@\"mcmetal test run\"] retain];\n", 1)
 open(g + "/cocoa_init.m", "w").write(i)
 PY
-# MCMETAL_RETINA=0: on a Retina screen the game renders at the window's point size instead of 2x
-# and the layer scales it up, about 4x fewer pixels for heavy shader packs.
-grep -q MCMETAL_RETINA $G/cocoa_window.m || python3 - "$G" <<'PY'
+# The framebuffer size GLFW reports is the size libmcmetal renders at, from the same function
+# (core/mgl_render_size.h): below the window's pixels with MCMETAL_UPSCALE (MCMETAL_UPSCALE_SCALE % each way) or
+# the render cap (MCMETAL_RENDER_CAP, default 2560x1440 worth of pixels), and libmcmetal upscales to the window
+# with MetalFX. The content scale GLFW reports stays the real one.
+# MCMETAL_RETINA=0: on a Retina screen the game renders at the window's point size instead of 2x and the layer
+# scales it up, about 4x fewer pixels for heavy shader packs.
+python3 - "$G" <<'PY'
 import sys
 g = sys.argv[1]
 w = open(g + "/cocoa_window.m").read()
-w = w.replace("[window->ns.view convertRectToBacking:contentRect]",
-              "(window->ns.scaleFramebuffer ? [window->ns.view convertRectToBacking:contentRect] : contentRect)")
-w = w.replace("    window->ns.scaleFramebuffer = wndconfig->scaleFramebuffer;\n",
-              "    window->ns.scaleFramebuffer = wndconfig->scaleFramebuffer;\n"
-              "    const char* retina = getenv(\"MCMETAL_RETINA\");\n"
-              "    if (retina && !strcmp(retina, \"0\")) window->ns.scaleFramebuffer = GLFW_FALSE;\n", 1)
-open(g + "/cocoa_window.m", "w").write(w)
-PY
-# MCMETAL_UPSCALE + MCMETAL_UPSCALE_SCALE=N: the framebuffer GLFW reports is N% of the Retina size each way
-# (default 50 = the point size), matching what libmcmetal renders (update_size in mac/mgl_metal.m).
-grep -q MCMETAL_UPSCALE_SCALE $G/cocoa_window.m || python3 - "$G" <<'PY'
-import sys
-g = sys.argv[1]
-w = open(g + "/cocoa_window.m").read()
-w = w.replace(": contentRect)", ": mcmetalFramebufferRect(window, contentRect))")
-w = w.replace("#include <string.h>\n",
-              "#include <string.h>\n#include <stdlib.h>\n#include <math.h>\n\n"
-              "static NSRect mcmetalFramebufferRect(_GLFWwindow* window, NSRect r)\n"
-              "{\n"
-              "    const char* up = getenv(\"MCMETAL_UPSCALE\");\n"
-              "    if (!up || atoi(up) <= 0) return r;\n"
-              "    const char* e = getenv(\"MCMETAL_UPSCALE_SCALE\");\n"
-              "    int pct = e ? atoi(e) : 50;\n"
-              "    pct = pct < 34 ? 34 : pct > 100 ? 100 : pct;\n"
-              "    const double s = [window->ns.object backingScaleFactor];\n"
-              "    if (s <= 1) return r; // no Retina: no upscaler (libmcmetal does the same)\n"
-              "    r.size.width = floor(r.size.width * s * pct / 100.0);\n"
-              "    r.size.height = floor(r.size.height * s * pct / 100.0);\n"
-              "    return r;\n"
-              "}\n", 1)
+def sub(old, new, count):
+    global w
+    assert w.count(old) == count, (old, w.count(old))
+    w = w.replace(old, new)
+sub("const NSRect fbRect = [window->ns.view convertRectToBacking:contentRect];",
+    "NSRect fbRect = [window->ns.view convertRectToBacking:contentRect];", 3)
+sub("    if (fbRect.size.width != window->ns.fbWidth ||\n",
+    "    fbRect = mcmetalFramebufferRect(window, contentRect);\n    if (fbRect.size.width != window->ns.fbWidth ||\n", 2)
+sub("\n    if (width)\n        *width = (int) fbRect.size.width;",
+    "\n    fbRect = mcmetalFramebufferRect(window, contentRect);\n    if (width)\n        *width = (int) fbRect.size.width;", 1)
+sub("    window->ns.scaleFramebuffer = wndconfig->scaleFramebuffer;\n",
+    "    window->ns.scaleFramebuffer = wndconfig->scaleFramebuffer;\n"
+    "    const char* retina = getenv(\"MCMETAL_RETINA\");\n"
+    "    if (retina && !strcmp(retina, \"0\")) window->ns.scaleFramebuffer = GLFW_FALSE;\n", 1)
+sub("#include <string.h>\n",
+    "#include <string.h>\n#include <stdlib.h>\n#include \"mgl_render_size.h\"\n\n"
+    "// The layer's contentsScale is the backing scale when the framebuffer is scaled or MCMETAL_UPSCALE is on\n"
+    "// (glfw/mtl_context.m), else 1; the render size comes from it the same way as in libmcmetal.\n"
+    "static NSRect mcmetalFramebufferRect(_GLFWwindow* window, NSRect r)\n"
+    "{\n"
+    "    const char* up = getenv(\"MCMETAL_UPSCALE\");\n"
+    "    const double s = (window->ns.scaleFramebuffer || (up && atoi(up) > 0)) ? [window->ns.object backingScaleFactor] : 1;\n"
+    "    int fw, fh;\n"
+    "    mgl_render_size(r.size.width * s, r.size.height * s, s, &fw, &fh);\n"
+    "    r.size.width = fw;\n"
+    "    r.size.height = fh;\n"
+    "    return r;\n"
+    "}\n", 1)
 open(g + "/cocoa_window.m", "w").write(w)
 PY
 GLFW_SRC=(context.c init.c input.c monitor.c platform.c vulkan.c window.c egl_context.c osmesa_context.c
@@ -113,7 +115,7 @@ GLFW_SRC=(context.c init.c input.c monitor.c platform.c vulkan.c window.c egl_co
 rm -rf build/glfwobj && mkdir build/glfwobj
 for f in "${GLFW_SRC[@]}"; do
     clang -arch arm64 -O2 -mmacosx-version-min=13.0 -D_GLFW_COCOA -D_GLFW_BUILD_DLL -fvisibility=hidden \
-        -Wno-deprecated-declarations -I$G -Ibuild/glfw-3.4/include -c "$G/$f" -o "build/glfwobj/${f%.*}.o"
+        -Wno-deprecated-declarations -I$G -Icore -Ibuild/glfw-3.4/include -c "$G/$f" -o "build/glfwobj/${f%.*}.o"
 done
 clang -arch arm64 -dynamiclib -o build/libglfw.dylib build/glfwobj/*.o -install_name @rpath/libglfw.dylib \
     -framework Cocoa -framework IOKit -framework CoreFoundation -framework QuartzCore
